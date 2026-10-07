@@ -136,3 +136,60 @@ it('opens, takes and closes a portable box in one action and preserves last insp
   expect(await restored.restoreAuthoritativeArchive(capabilities.disasterRecovery, exported.storyArchive)).toMatchObject({ kind: 'restored' });
   expect((await restored.observe(ALICE) as Data).readModel.controlledCharacter.inventory).toEqual(before);
 }, 30_000);
+
+// SPEC 0001 §16, SPEC 0016 §7.3: the same finite filling expands for a
+// carried box and a map container, through the actual Room journal and Rules.
+it('containerTransfer fills only inventory and commits existing identities for held and mapped containers', async () => {
+  const { stub } = await initializeObjectRoom('container-transfer-wire-room');
+  await withObjectRoomScenario(stub, async (act, target, calls) => {
+    await act('discover', '我查看储物间入口。', [newPlace('location', 'prospective:store-room', { geometry }),
+      newPlace('passage', 'prospective:store-way', { passage: { fromLocationRef: 'wake', toLocationRef: 'prospective:store-room', bidirectional: true,
+        traversal: '沿通路走进储物间', travelDurationMicros: '60000000' } })], '0');
+    const location = Object.values(target.authoritativeReplay().state.campaignRuntime.definitions).find((value: any) => value.semanticKind === 'location') as Data;
+    await act('enter', '我沿通路进入储物间。', [go('wake', location.definitionId)], '0');
+    const sceneRef = target.authoritativeReplay().state.entities[ACTOR].sceneId;
+    const createDefinition = (label: string, handle: string, stackable: boolean) => ({ ...common(sceneRef), kind: 'materializeDefinition',
+      source: { kind: 'item', content: itemContent(label, stackable) }, produces: [{ handle, kind: 'itemDefinition', outcomeBinding: 'always' }],
+      visibilityPolicyRef: 'visibility:public', summary: '确定原物品定义。' });
+    const create = (definitionRef: string, handle: string, quantity: number, extra: Data = {}) => ({ ...common(sceneRef), kind: 'materializeItem',
+      definitionRef, sceneRef, quantity, ownership: { kind: 'unowned', ownerRef: null }, visibilityPolicyRef: 'visibility:scene-observers',
+      produces: [{ handle, kind: 'itemEntry', outcomeBinding: 'always' }], summary: '固化原实物。', ...extra });
+    await act('create', '我拿起小箱，把布条带在身上。', [createDefinition('测试小箱', 'prospective:boxdef', false),
+      create('prospective:boxdef', 'prospective:box', 1, { initialState: 'closed' }),
+      inventory(sceneRef, { kind: 'acquire', entryRef: 'prospective:box', quantity: 1 }),
+      createDefinition('测试布条', 'prospective:clothdef', true), create('prospective:clothdef', 'prospective:cloth', 3),
+      inventory(sceneRef, { kind: 'acquire', entryRef: 'prospective:cloth', quantity: 3 })]);
+    const box = find(target.authoritativeReplay().state, '测试小箱').entryId;
+    let cloth = find(target.authoritativeReplay().state, '测试布条').entryId;
+    const script = (direction: string, containerRef: string, entryRef: string, quantity: number, access: string, after: string) => (wire: Data) => {
+      wire.steps.inventoryOperation[0].operation = { kind: 'containerTransfer', direction, containerRef, entryRef, quantity, access, after };
+      return wire;
+    };
+    const beforeDenied = structuredClone(target.authoritativeReplay().state), deniedEvents = structuredClone(target.authorityStore.events());
+    await act('overdraw', '我打开小箱，放进四块布条，再合盖。', [inventory(sceneRef,
+      { kind: 'store', entryRef: cloth, quantity: 4, containerRef: box })], '300000000', script('putIn', box, cloth, 4, 'openNormally', 'close'), 'needsKp');
+    expect(target.authoritativeReplay().state).toEqual(beforeDenied);
+    expect(target.authorityStore.events()).toEqual(deniedEvents);
+    const countBefore = calls.length;
+    await act('store-box', '我打开随身小箱，放进两块布条，合盖。', [inventory(sceneRef,
+      { kind: 'store', entryRef: cloth, quantity: 2, containerRef: box })], '300000000', script('putIn', box, cloth, 2, 'openNormally', 'close'));
+    expect(calls.length - countBefore).toBe(2);
+    expect(JSON.stringify(calls.at(-1)?.tools)).toContain('containerTransfer');
+    expect(JSON.stringify(calls.at(-1)?.tools)).not.toContain('"commonAction"');
+    let state = target.authoritativeReplay().state;
+    const boxed = find(state, '测试布条', box).entryId;
+    expect(state.campaignRuntime.itemSystem.entries[box].stateMachine.state).toBe('closed');
+    await act('take-box', '我打开原小箱，取出其中一块，再合盖。', [inventory(sceneRef,
+      { kind: 'acquire', entryRef: boxed, quantity: 1 })], '300000000', script('takeOut', box, boxed, 1, 'openNormally', 'close'));
+    state = target.authoritativeReplay().state;
+    expect(state.campaignRuntime.itemSystem.entries[boxed]).toMatchObject({ entryId: boxed, quantity: 1, containerRef: box });
+    cloth = (Object.values(state.campaignRuntime.itemSystem.entries).find((entry: any) => entry.holderRef === ACTOR
+      && entry.containerRef === undefined && entry.definitionRef === state.campaignRuntime.itemSystem.entries[boxed].definitionRef) as Data).entryId;
+    await act('store-map', '我把手里这块布条放进原木桶。', [inventory(sceneRef,
+      { kind: 'store', entryRef: cloth, quantity: 1, containerRef: BARREL })], '300000000', script('putIn', BARREL, cloth, 1, 'alreadyOpen', 'leaveAsIs'));
+    state = target.authoritativeReplay().state;
+    expect(find(state, '测试布条', BARREL)).toMatchObject({ containerRef: BARREL, quantity: 1 });
+    expect(Object.values(state.campaignRuntime.itemSystem.entries).filter((entry: any) => entry.definitionRef === state.campaignRuntime.itemSystem.entries[boxed].definitionRef)
+      .reduce((sum: number, entry: any) => sum + entry.quantity, 0)).toBe(3);
+  });
+}, 30_000);

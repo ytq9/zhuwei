@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { bindProposalWire, proposalReferenceDialect } from '../../../app/_runtime/lib/kp/vnext/proposal-reference-dialect.ts';
 import test from 'node:test';
 import { VNEXT_ALWAYS_OFFERED_TERMINAL_KINDS as OFFERED } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as ACTOR } from '../../../tools/lib/vnext-authored-probe-fixture.mjs';
@@ -80,8 +81,8 @@ test('an addressed NPC is shown by default and the selection tool offers only th
   assert.deepEqual(proposalNpcRecall(context).defaultRefs, [A]);
   const selection = proposalModelContext(context);
   assert.deepEqual(decisionRefs(selection), [npcDecisionEntryRef(A)]);
-  const tool = createVNextProposalOfferModelInput('bound', context).tools[0].function;
-  assert.deepEqual(tool.parameters.properties.requestedNpcRefs?.items?.enum, proposalNpcRecall(context).requestableRefs);
+  const tool = createVNextProposalOfferModelInput(vnextProposalContextBody(context), context).tools[0].function;
+  assert.deepEqual(tool.parameters.properties.requestedNpcRefs?.items?.enum, proposalNpcRecall(context).requestableRefs.map(ref => proposalReferenceDialect(context).forward.get(ref) ?? ref));
   const alone = fixture('alone-addressed', [A, B]).requiredContext;
   assert.deepEqual(proposalNpcRecall(alone).requestableRefs, []);
   assert.equal(createVNextProposalOfferModelInput('bound', alone).tools[0].function.parameters.properties.requestedNpcRefs, undefined);
@@ -99,10 +100,10 @@ test('reselecting the already loaded addressee is read as not requested, while a
 
 test('the selection tool enumerates the requestable views, and the reply is read strictly', () => {
   const f = fixture('tool'), context = f.requiredContext;
-  const input = createVNextProposalOfferModelInput('bound', context);
+  const input = createVNextProposalOfferModelInput(vnextProposalContextBody(context), context);
   const parameters = input.tools[0].function.parameters;
   assert.deepEqual(deepSeekStrictToolSchemaIssues(parameters), []);
-  assert.deepEqual(parameters.properties.requestedNpcRefs.items.enum, [A, B]);
+  assert.deepEqual(parameters.properties.requestedNpcRefs.items.enum, [A, B].map(ref => proposalReferenceDialect(context).forward.get(ref)));
   assert.deepEqual(parameters.required.sort(), ['requestedCapabilities', 'requestedNpcRefs']);
   assert.match(sentInstructions(input), /requestedNpcRefs/);
   assert.deepEqual(parseVNextProposalOfferResponse(offer({ requestedCapabilities: ['observe'], requestedNpcRefs: [B] }), context).npcRefs, [B]);
@@ -129,7 +130,7 @@ test('an amendment adds views by union, tickets carry the loaded views, and Room
   assert.doesNotThrow(() => assertRepairTicket(ticket, context.binding.contextHash, context));
   const forged = { ...ticket, npcRefs: [B] }; const { ticketHash: _hash, ...body } = forged; forged.ticketHash = canonicalHash(body);
   assert.throws(() => assertRepairTicket(forged, context.binding.contextHash, context));
-  assert.deepEqual(sentContext(createVNextProposalRevisionModelInput(ticket, context)).requiredContext, proposalModelContext(context, [A]));
+  assert.deepEqual(bindProposalWire(sentContext(createVNextProposalRevisionModelInput(ticket, context)).requiredContext, context), proposalModelContext(context, [A]));
   // Room rebuilds ordinal 2 over the selection's views: the guard's view is
   // absent and still requestable through the amendment tool.
   const view = proposalContextView(context, [A]);
@@ -137,11 +138,11 @@ test('an amendment adds views by union, tickets carry the loaded views, and Room
     JSON.stringify({ requiredContext: proposalModelContext(context, npcRefs) }), ['observe'],
     proposalItemEntryRefs(view), proposalObservationSubjectRefs(view), OFFERED, proposalNpcSourceChoices(view), requiredContextBasisReferences(view),
     proposalCreatureTargetRefs(view), amendable, proposalItemDefinitionRefs(view), requestable, proposalKnowledgeRecall(context, npcRefs).map(record => record.handle),
-    undefined, proposalUnofferedCapabilities(context));
+    undefined, proposalUnofferedCapabilities(context), undefined, context);
   const saved = response => ({ status: 'completed', context_hash: context.binding.contextHash, binding_hash: 'sha256:fixture', response_json: JSON.stringify(response) });
   const prior = ordinal => ordinal === 1 ? saved(offer({ requestedCapabilities: ['observe'], requestedNpcRefs: [A] })) : undefined;
   const request = surface([A], [B]);
-  assert.deepEqual(request.tools[1].function.parameters.properties.requestedNpcRefs.items.enum, [B]);
+  assert.deepEqual(request.tools[1].function.parameters.properties.requestedNpcRefs.items.enum, [proposalReferenceDialect(context).forward.get(B)]);
   assert.doesNotThrow(() => assertVNextInvocationTransition({ ordinal: 2, contextHash: context.binding.contextHash, bindingHash: 'sha256:fixture', requestHash: 'sha256:fixture', request: kpRequestBody(DEFAULT_KP_MODEL, request) }, prior, context));
   for (const wrong of [surface([], [A, B]), surface([A, B], []), surface([A], [])]) {
     assert.throws(() => assertVNextInvocationTransition({ ordinal: 2, contextHash: context.binding.contextHash, bindingHash: 'sha256:fixture', requestHash: 'sha256:fixture', request: kpRequestBody(DEFAULT_KP_MODEL, wrong) }, prior, context), /PROPOSAL_REPAIR_EXHAUSTED/);
@@ -170,7 +171,7 @@ test('an addressed NPC freezes its whole memory; the topic sends part of it and 
   assert.equal(view.unloadedKnowledgeCount, 1);
   assert.ok(!proposalNpcSourceChoices(proposalContextView(context)).find(choice => choice.npcRef === A).refs.includes(tea));
   // The selection tool offers the handle; the reply names it; the filling view then carries the body and its citation.
-  const tool = createVNextProposalOfferModelInput('bound', context).tools[0].function.parameters;
+  const tool = createVNextProposalOfferModelInput(vnextProposalContextBody(context), context).tools[0].function.parameters;
   assert.deepEqual(deepSeekStrictToolSchemaIssues(tool), []);
   assert.deepEqual(tool.properties.requestedKnowledgeRefs.items.enum, [handle]);
   const parsed = parseVNextProposalOfferResponse(offer({ requestedCapabilities: ['social'], requestedNpcRefs: [], requestedKnowledgeRefs: [handle] }), context);
@@ -191,13 +192,13 @@ test('an addressed NPC freezes its whole memory; the topic sends part of it and 
   const ticket = createVNextUnparsedRevisionTicket(vnextProposalUnparsedArguments(broken), recalled, ['social'], [], [], [tea]);
   assert.deepEqual(ticket.knowledgeRefs, [tea]);
   assert.doesNotThrow(() => assertRepairTicket(ticket, context.binding.contextHash, recalled));
-  assert.deepEqual(sentContext(createVNextProposalRevisionModelInput(ticket, recalled)).requiredContext, filling);
+  assert.deepEqual(bindProposalWire(sentContext(createVNextProposalRevisionModelInput(ticket, recalled)).requiredContext, recalled), filling);
   const view2 = proposalContextView(recalled, [], [tea]);
   const surface = (knowledgeRefs, handles) => createSubmitKpProposalBundleModelInput(
     JSON.stringify({ requiredContext: proposalModelContext(recalled, [], knowledgeRefs) }), ['social'],
     proposalItemEntryRefs(view2), proposalObservationSubjectRefs(view2), OFFERED, proposalNpcSourceChoices(view2), requiredContextBasisReferences(view2),
     proposalCreatureTargetRefs(view2), true, proposalItemDefinitionRefs(view2), [B], handles,
-    undefined, proposalUnofferedCapabilities(recalled));
+    undefined, proposalUnofferedCapabilities(recalled), undefined, recalled);
   const saved = response => ({ status: 'completed', context_hash: context.binding.contextHash, binding_hash: 'sha256:fixture', response_json: JSON.stringify(response) });
   const prior = ordinal => ordinal === 1 ? saved(offer({ requestedCapabilities: ['social'], requestedNpcRefs: [], requestedKnowledgeRefs: [handle] })) : undefined;
   const input = request => ({ ordinal: 2, contextHash: context.binding.contextHash, bindingHash: 'sha256:fixture', requestHash: 'sha256:fixture', request: kpRequestBody(DEFAULT_KP_MODEL, request) });
@@ -236,7 +237,7 @@ test('a loaded memory or view is sent after every entry the selection already sa
   const plain = createAuthoredProbeFixture('npc-recall:prefix:plain', {});
   const context = freezeAuthoredProbeContext(plain, plain.state, { rootActionId: plain.rootActionId, focusRefs: [], intentText: '我环顾四周。' }).context;
   assert.deepEqual(proposalModelContext(context).entries.map(entry => entry.entryRef),
-    context.entries.map(entry => entry.entryRef).filter(ref => !ref.startsWith('knowledge-catalog:')));
+    ['profile-context:module:authored-probe', ...context.entries.map(entry => entry.entryRef).filter(ref => !ref.startsWith('knowledge-catalog:') && !ref.startsWith('profile-context:'))]);
 });
 
 // ADR 0049: a decision view gathered a line for everything its NPC holds, so

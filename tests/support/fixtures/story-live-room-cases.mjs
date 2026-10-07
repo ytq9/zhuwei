@@ -4,6 +4,9 @@ const LOCAL_INTENT = "今晚我先留在黑橡居酒屋，花些时间协助莉�
 const CONTAINER_INTENT = "我打开随身木盒，从里面取出一块干净布条，然后把盒盖合上。";
 const CONTAINER_HISTORY = "Declared native-Rules prehistory: the owner last inspected three cloths, another character took one, and the owner now holds the closed box. Real sampled actions begin with two actual cloths and a stale remembered three. Setup is not a real-model sample.";
 export const STORY_ROOM_PROBE_CASES = Object.freeze([
+  Object.freeze({ caseId: "dynamic-container-put-back", implemented: true, dailyGroup: "containerPutBack", withdrawBeforeSample: true,
+    text: "我把刚拿出的那块干净布条放回同一个随身木盒，再合上盒盖。",
+    initialFixture: `${CONTAINER_HISTORY} Additional disclosed native history: the actor opened, took one and closed the same box. One original cloth remains inside, one loose split is actor-held and one split is peer-held. Only put-back is a real-model sample.` }),
   Object.freeze({ caseId: "dynamic-container-atomic", implemented: true, dailyGroup: "containerContinuity",
     text: CONTAINER_INTENT, initialFixture: CONTAINER_HISTORY }),
   Object.freeze({ caseId: "dynamic-container-continuity", implemented: true, dailyGroup: "containerContinuity",

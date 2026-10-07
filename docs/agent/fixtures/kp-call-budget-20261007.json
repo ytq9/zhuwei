@@ -1,0 +1,241 @@
+{
+  "format": "zhuwei.kp-call-budget-evidence/v1",
+  "date": "2026-10-07",
+  "baseCommit": "8102dd84",
+  "trials": [
+    {
+      "caseId": "dynamic-container-continuity",
+      "status": "failed",
+      "failureCode": "PROBE_HTTP_ACCEPTANCE_FAILED",
+      "physicalCalls": 9,
+      "sourceUnchanged": true,
+      "sourceSha": "sha256:d3cfc77570d48939bf495dbe125d6814ddabacac7a976cce31d91b2476282f3e",
+      "calls": [
+        {
+          "ordinal": 1,
+          "tool": "offer_kp_proposal_bundle",
+          "repair": false,
+          "elapsedMs": 2903,
+          "input": 28022,
+          "output": 89,
+          "cacheHit": 512,
+          "cacheMiss": 27510,
+          "cacheHitFraction": 0.018271358218542574
+        },
+        {
+          "ordinal": 2,
+          "tool": "submit_kp_proposal_bundle",
+          "repair": false,
+          "elapsedMs": 5042,
+          "input": 37747,
+          "output": 1050,
+          "cacheHit": 20480,
+          "cacheMiss": 17267,
+          "cacheHitFraction": 0.5425596736164463
+        },
+        {
+          "ordinal": 3,
+          "tool": null,
+          "repair": false,
+          "elapsedMs": 1172,
+          "input": 1452,
+          "output": 31,
+          "cacheHit": 896,
+          "cacheMiss": 556,
+          "cacheHitFraction": 0.6170798898071626
+        },
+        {
+          "ordinal": 4,
+          "tool": "review_frozen_narration",
+          "repair": false,
+          "elapsedMs": 1249,
+          "input": 1443,
+          "output": 142,
+          "cacheHit": 768,
+          "cacheMiss": 675,
+          "cacheHitFraction": 0.5322245322245323
+        },
+        {
+          "ordinal": 5,
+          "tool": null,
+          "repair": false,
+          "elapsedMs": 876,
+          "input": 2526,
+          "output": 30,
+          "cacheHit": 1024,
+          "cacheMiss": 1502,
+          "cacheHitFraction": 0.4053840063341251
+        },
+        {
+          "ordinal": 6,
+          "tool": "review_frozen_narration",
+          "repair": false,
+          "elapsedMs": 1504,
+          "input": 3072,
+          "output": 173,
+          "cacheHit": 768,
+          "cacheMiss": 2304,
+          "cacheHitFraction": 0.25
+        },
+        {
+          "ordinal": 7,
+          "tool": "offer_kp_proposal_bundle",
+          "repair": false,
+          "elapsedMs": 2234,
+          "input": 29715,
+          "output": 85,
+          "cacheHit": 7040,
+          "cacheMiss": 22675,
+          "cacheHitFraction": 0.2369173817937069
+        },
+        {
+          "ordinal": 8,
+          "tool": "submit_kp_proposal_bundle",
+          "repair": false,
+          "elapsedMs": 3910,
+          "input": 33294,
+          "output": 362,
+          "cacheHit": 22272,
+          "cacheMiss": 11022,
+          "cacheHitFraction": 0.6689493602450892
+        },
+        {
+          "ordinal": 9,
+          "tool": "submit_kp_proposal_bundle",
+          "repair": true,
+          "elapsedMs": 3627,
+          "input": 33304,
+          "output": 368,
+          "cacheHit": 32256,
+          "cacheMiss": 1048,
+          "cacheHitFraction": 0.9685323084314197
+        }
+      ],
+      "usage": {
+        "input": 170575,
+        "output": 2330,
+        "cacheHit": 86016,
+        "cacheMiss": 84559
+      },
+      "estimatedCny": {
+        "offPeak": 0.09559932,
+        "peak": 0.19119864
+      },
+      "outcomes": [
+        {
+          "step": 1,
+          "action": "committed",
+          "narration": "published",
+          "code": null
+        },
+        {
+          "step": 2,
+          "action": "notCommitted",
+          "narration": "notApplicable",
+          "code": "PROPOSAL_REPAIR_EXHAUSTED"
+        }
+      ]
+    },
+    {
+      "caseId": "dynamic-container-put-back",
+      "status": "failed",
+      "failureCode": "PROBE_BUDGET_EXHAUSTED",
+      "physicalCalls": 3,
+      "sourceUnchanged": true,
+      "sourceSha": "sha256:d51f9272107f62dfb77c7abd721d2975734fb60a426c6b12a6364b930d75604a",
+      "calls": [
+        {
+          "ordinal": 1,
+          "tool": "offer_kp_proposal_bundle",
+          "repair": false,
+          "elapsedMs": 1531,
+          "input": 29491,
+          "output": 91,
+          "cacheHit": 1536,
+          "cacheMiss": 27955,
+          "cacheHitFraction": 0.05208368654843851
+        },
+        {
+          "ordinal": 2,
+          "tool": "submit_kp_proposal_bundle",
+          "repair": false,
+          "elapsedMs": 2326,
+          "input": 33992,
+          "output": 299,
+          "cacheHit": 22016,
+          "cacheMiss": 11976,
+          "cacheHitFraction": 0.6476818074841139
+        },
+        {
+          "ordinal": 3,
+          "tool": "submit_kp_proposal_bundle",
+          "repair": true,
+          "elapsedMs": 1443,
+          "input": 34056,
+          "output": 297,
+          "cacheHit": 33024,
+          "cacheMiss": 1032,
+          "cacheHitFraction": 0.9696969696969697
+        }
+      ],
+      "usage": {
+        "input": 97539,
+        "output": 687,
+        "cacheHit": 56576,
+        "cacheMiss": 40963
+      },
+      "estimatedCny": {
+        "offPeak": 0.04484252,
+        "peak": 0.08968504
+      },
+      "outcomes": [
+        {
+          "step": 1,
+          "action": "notCommitted",
+          "narration": "retryableFailure",
+          "code": null
+        }
+      ]
+    }
+  ],
+  "stateChecks": {
+    "firstAction": {
+      "actualInitialInside": 2,
+      "initialRemembered": 3,
+      "insideAfter": 1,
+      "actorLooseAfter": 1,
+      "totalClothAfter": 3,
+      "boxStateAfter": "closed",
+      "rememberedAfter": 1,
+      "newItemMaterializationEvents": 0,
+      "originalStackIdentityRetained": true
+    },
+    "failedPutBack": {
+      "fullStateUnchanged": true,
+      "eventsUnchanged": true
+    },
+    "finalSourceReplyReplay": {
+      "originalSuccessfulTakeAccepted": true,
+      "correctedPutBackAccepted": true,
+      "rawResponsesEdited": false
+    },
+    "contrast": {
+      "fullCommitVerified": false,
+      "reason": "Budget gate stopped before the next narration dispatch; maxOutputTokens=8000 was below the narration reservation."
+    }
+  },
+  "followupTotals": {
+    "physicalCalls": 12,
+    "usage": {
+      "input": 268114,
+      "output": 3017,
+      "cacheHit": 142592,
+      "cacheMiss": 125522
+    },
+    "estimatedCny": {
+      "offPeak": 0.14044183999999998,
+      "peak": 0.28088367999999997
+    }
+  },
+  "scope": "Four invocation/form/cache fixes only; no merge, push, deployment or remote migration. Actual complete put-back and subsequent reopening remain unverified."
+}

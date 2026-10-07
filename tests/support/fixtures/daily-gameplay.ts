@@ -230,8 +230,8 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
       expect(target, "the named place is on the map").toBeDefined();
       expect(nextTo(walker, target!), `the actor ends next to ${selected.approachTo}`).toBe(true);
     }
-    if (selected.dailyGroup === "containerContinuity") {
-      assertContainerLiveStep(initial, after, actor, index);
+    if (["containerContinuity", "containerPutBack"].includes(String(selected.dailyGroup))) {
+      assertContainerLiveStep(initial, after, actor, selected.dailyGroup === "containerPutBack" ? 1 : index);
     } else if (selected.dailyGroup === "storyContinuity") {
       // SPEC 0009 §§1、8: actual model choice, no forced capability or ending.
       const questions = Object.values(after.state.campaignRuntime.sceneQuestions);

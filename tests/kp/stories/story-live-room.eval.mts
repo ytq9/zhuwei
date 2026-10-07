@@ -265,12 +265,12 @@ it("one real HTTP action: admission, narration, optional fault recovery and exac
       }
     }
     const owner = await historyHttpAccount("真实功能链路验收");
-    const peer = ["multiplayer", "help", "containerContinuity"].includes(String(selected.dailyGroup)) ? await historyHttpAccount("真实同桌验收") : undefined;
+    const peer = ["multiplayer", "help", "containerContinuity", "containerPutBack"].includes(String(selected.dailyGroup)) ? await historyHttpAccount("真实同桌验收") : undefined;
     // A probe plays the module version a new room gets (ADR 0087 opening places).
     const source = await historyHttpSource(owner, peer, { moduleVersion: CURRENT_AUTHORITATIVE_MODULE_VERSION,
-      ...(selected.dailyGroup === "containerContinuity" ? { containerProbe: true } : selected.dailyGroup === "items" ? { injured: true, groundHealingPotion: true } : selected.dailyGroup === "spell"
+      ...(["containerContinuity", "containerPutBack"].includes(String(selected.dailyGroup)) ? { containerProbe: true } : selected.dailyGroup === "items" ? { injured: true, groundHealingPotion: true } : selected.dailyGroup === "spell"
         ? { injured: true, draft: dailyClericDraft } : selected.caseId === "pick-cellar-lock" ? { draft: dailyRogueDraft } : {}) });
-    if (selected.dailyGroup === "containerContinuity") await prepareContainerLiveHistory(source);
+    if (["containerContinuity", "containerPutBack"].includes(String(selected.dailyGroup))) await prepareContainerLiveHistory(source, selected.withdrawBeforeSample === true);
     const initialTable = await historyHttpPost("fetchTable", source.code, owner);
     const initial = await authoritySnapshot(source);
     await evidence("initial", { roomId: source.roomId, characterId: source.characters[0].characterId,

@@ -4,6 +4,7 @@ import type { NpcMaterializationSource } from "../../rules/v2/npc-materializatio
 import { NPC_MATERIALIZATION_WIRE_SCHEMA } from "./npc-materialization-wire";
 import { STORY_SELECTION_IDS, parseStorySelection, storySelectionIds, type StorySelection } from "./story-selection";
 import type { VNextRequiredContext } from "./required-context";
+import { proposalDialectModelInput, proposalUsesTypedReplacement } from "./proposal-reference-dialect";
 import { CONCEALMENT_ATTENTION, CONCEALMENT_SENSES, PROMISE_DUE_TIERS } from "../../rules/shapes";
 import { SKILLS } from "../../dnd/types";
 import { VNEXT_ACTION_DURATION_TIER_IDS } from "./action-duration";
@@ -1094,12 +1095,12 @@ export function createVNextProposalOfferModelInput(message: string, context?: VN
   const offer = offerKpProposalBundleTool(requestable, vnextProposalSchemaRequestIds(context), handles);
   const targets = context === undefined || retryQuestion !== undefined ? [] : vnextRetryQuestionTargets(context);
   const unoffered = context === undefined ? [] : proposalUnofferedCapabilities(context);
-  return Object.freeze({
+  return Object.freeze(proposalDialectModelInput({
     messages: vnextProposalRequestMessages(message,
       vnextProposalReferenceRules("offer", [], VNEXT_INITIAL_PROPOSAL_DECISION_KINDS, unoffered),
       vnextRetryAnswerTask(vnextProposalTaskInstruction("offer"), retryQuestion), !noObjectCompletionOffered(unoffered)),
     tools: Object.freeze(targets.length === 0 ? [offer] : [offer, retryQuestionTool(targets)]),
-    tool_choice: "required" as const, parallel_tool_calls: false as const, max_completion_tokens: 4_000 });
+    tool_choice: "required" as const, parallel_tool_calls: false as const, max_completion_tokens: 4_000 }, context));
 }
 
 export const CORRECT_KP_PROPOSAL_BUNDLE_TOOL = Object.freeze({
@@ -1161,20 +1162,21 @@ export function createSubmitKpProposalBundleModelInput(
   /** Frozen contents that become accessible after the same action opens
    * their container. Kept separate from current evidence and social subjects. */
   inventoryEntryRefs?: readonly string[],
+  context?: VNextRequiredContext,
 ): StrictToolBundleModelInput {
   const submitTool = { ...SUBMIT_KP_PROPOSAL_BUNDLE_TOOL,
     function: Object.freeze({ ...SUBMIT_KP_PROPOSAL_BUNDLE_TOOL.function,
       parameters: createVNextProposalBundleSchema(capabilities, itemEntryRefs, observationSubjectRefs, terminalKinds, npcSources, basisChoices, creatureRefs, itemDefinitionRefs, npcMove, inventoryEntryRefs) }),
   };
-  return Object.freeze({
+  return Object.freeze(proposalDialectModelInput({
     messages: vnextProposalRequestMessages(message,
       vnextProposalReferenceRules("expandedProposal", capabilities, terminalKinds, unofferedCapabilities),
       vnextProposalTaskInstruction("expandedProposal", amendable), !noObjectCompletionOffered(unofferedCapabilities)),
     tools: Object.freeze(amendable ? [submitTool, amendKpProposalSelectionTool([...capabilities, ...terminalKinds], requestableNpcRefs, requestableKnowledgeHandles, unofferedCapabilities)] as const : [submitTool] as const),
-    tool_choice: "required",
-    parallel_tool_calls: false,
+    tool_choice: "required" as const,
+    parallel_tool_calls: false as const,
     max_completion_tokens: 4_000,
-  });
+  }, context));
 }
 
 /** A correction is the next turn of the conversation its reply came from.
@@ -1194,16 +1196,18 @@ export function createCorrectKpProposalBundleModelInput(
 ) {
   if (!Array.isArray(turns) || turns.length === 0) throw new TypeError("CORRECT_KP_PROPOSAL_BUNDLE_TURNS_REQUIRED");
   const submit = createSubmitKpProposalBundleModelInput(contextBody, ...selection);
-  const instructions = VNEXT_PROPOSAL_GUIDANCE_POLICY.stages.correction;
+  const typedOnly = proposalUsesTypedReplacement(selection[0] ?? VNEXT_PROPOSAL_CAPABILITY_IDS, selection[14]);
+  const instructions = typedOnly ? VNEXT_PROPOSAL_GUIDANCE_POLICY.stages.typedCorrection : VNEXT_PROPOSAL_GUIDANCE_POLICY.stages.correction;
   return Object.freeze({ ...submit,
-    messages: Object.freeze([...submit.messages, ...turns.flatMap(turn => [
+    messages: Object.freeze([...submit.messages, ...turns.flatMap((turn, index) => [
       Object.freeze({ role: "assistant" as const, content: turn.content,
         tool_calls: Object.freeze([Object.freeze({ id: turn.call.id, type: "function" as const,
           function: Object.freeze({ name: turn.call.name, arguments: turn.call.arguments }) })]) }),
       Object.freeze({ role: "tool" as const, tool_call_id: turn.call.id,
-        content: `${instructions}\n${VNEXT_PROPOSAL_REVISION_TICKET_LABEL}${turn.body}` }),
+        content: `${index === 0 ? `${instructions}\n` : ""}${VNEXT_PROPOSAL_REVISION_TICKET_LABEL}${turn.body}` }),
     ])]),
-    tools: Object.freeze([submit.tools[0], CORRECT_KP_PROPOSAL_BUNDLE_TOOL] as const),
+    tools: Object.freeze(typedOnly
+      ? [submit.tools[0]] : [submit.tools[0], CORRECT_KP_PROPOSAL_BUNDLE_TOOL]),
   });
 }
 

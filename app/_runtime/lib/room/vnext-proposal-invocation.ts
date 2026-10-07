@@ -19,6 +19,7 @@ import { proposalContextView, proposalCreatureTargetRefs, proposalItemDefinition
 import { requiredContextBasisReferences } from "../kp/vnext/required-context-runtime";
 import type { VNextRequiredContext } from "../kp/vnext/required-context";
 import { isPlainRecord, sameCanonical } from "../kp/vnext/canonical-json";
+import { proposalWireReferences } from "../kp/vnext/proposal-reference-dialect";
 import { vnextProposalReferenceRules, vnextProposalTaskInstruction, type VNextProposalStage } from "../kp/vnext/proposal-guidance";
 import type { VNextProposalCapabilityId } from "../kp/vnext/proposal-capabilities";
 import { deriveEntryRef } from "../kp/vnext/proposal-graph";
@@ -124,7 +125,10 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
    * another order, so there only the values have to match. */
   const sameContextBody = (content: unknown, npcRefs: readonly string[], knowledgeRefs: readonly string[]): boolean => {
     if (typeof content !== "string") return false;
-    const rebuilt = vnextProposalContextBody(surfaceContext, npcRefs, knowledgeRefs);
+    // Mapping uses the original frozen authority, not a filtered view: an
+    // unread NPC fact may still be referenced by a visible pending plan.
+    const rebuilt = JSON.stringify(proposalWireReferences(JSON.parse(vnextProposalContextBody(surfaceContext, npcRefs, knowledgeRefs)),
+      surfaceContext));
     return content === rebuilt || (presentation !== "exact" && samePresentation(content, rebuilt));
   };
   const shapedMessage = (message: unknown, role: string): boolean => isPlainRecord(message)
@@ -147,7 +151,7 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
   };
   if (input.ordinal === 1) {
     if (input.repairTicket !== undefined) invalid();
-    assertSurface(createVNextProposalOfferModelInput("bound", selectionContext, retryQuestion).tools, "offer", [], VNEXT_INITIAL_PROPOSAL_DECISION_KINDS);
+    assertSurface(createVNextProposalOfferModelInput(vnextProposalContextBody(selectionContext), selectionContext, retryQuestion).tools, "offer", [], VNEXT_INITIAL_PROPOSAL_DECISION_KINDS);
     return;
   }
   function response(ordinal: number): unknown {
@@ -165,11 +169,11 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
     const view = proposalContextView(requiredContext, npcRefs, knowledgeRefs);
     const requestable = proposalNpcRecall(requiredContext).requestableRefs.filter(ref => !npcRefs.includes(ref));
     const handles = proposalRequestableKnowledgeHandles(requiredContext, npcRefs, knowledgeRefs);
-    return createSubmitKpProposalBundleModelInput("bound", capabilities,
+    return createSubmitKpProposalBundleModelInput(vnextProposalContextBody(requiredContext, npcRefs, knowledgeRefs), capabilities,
       proposalItemEntryRefs(view), proposalObservationSubjectRefs(view), terminalKinds,
       proposalNpcSourceChoices(view), requiredContextBasisReferences(view),
       proposalCreatureTargetRefs(view), amendable, proposalItemDefinitionRefs(view), amendable ? requestable : [], amendable ? handles : [],
-      undefined, proposalUnofferedCapabilities(requiredContext), proposalInventoryEntryRefs(view)).tools;
+      undefined, proposalUnofferedCapabilities(requiredContext), proposalInventoryEntryRefs(view), requiredContext).tools;
   };
   if (input.ordinal === 2) {
     if (input.repairTicket !== undefined) invalid();
@@ -219,7 +223,7 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
           if (!vnextProposalHasThirdCallBudget(capabilities)) return invalid();
           expected = createVNextUnparsedRevisionTicket(unparsed, requiredContext, capabilities, terminalKinds, npcRefs, knowledgeRefs, round);
         } else {
-          const candidate = vnextProposalRevisionCandidate(reply, capabilities, terminalKinds);
+          const candidate = vnextProposalRevisionCandidate(reply, capabilities, terminalKinds, requiredContext);
           const draft = candidate.kind === "accepted" ? candidate.bundle as unknown as JsonRecord : candidate.draft;
           if (!(vnextProposalDraftIsEmpty(draft) ? vnextProposalHasThirdCallBudget(capabilities)
             : vnextProposalHasExecutionRepairBudget(draft, capabilities))) return invalid();
@@ -307,7 +311,7 @@ export function vnextSavedAcceptedProposal(prior: (ordinal: number) => SavedInvo
     while (last < 6 && response(last + 1) !== undefined) last += 1;
     if (last < 6 && prior(last + 1) !== undefined) return undefined;
     if (last === fillOrdinal) {
-      const candidate = vnextProposalRevisionCandidate(response(last), filling.capabilities, filling.terminalKinds);
+      const candidate = vnextProposalRevisionCandidate(response(last), filling.capabilities, filling.terminalKinds, requiredContext);
       return candidate.kind === "accepted" ? { bundle: candidate.bundle, bundleHash: candidate.bundleHash, ordinal: last, ...view } : undefined;
     }
     const chain: VNextProposalBundleRepairTicket[] = [];

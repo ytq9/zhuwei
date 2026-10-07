@@ -28,7 +28,7 @@ import { isRetryHistoryEntryRef } from "./retry-history";
 // shows a long directory's older memories as group lines; a directory with
 // groups depends on what the selection asked for and is sent last (ADR 0111).
 // v15 separates inventory planning after opening from current visible evidence.
-export const VNEXT_PROPOSAL_CONTEXT_SCHEMA = "zhuwei.proposal-context/vnext-15" as const;
+export const VNEXT_PROPOSAL_CONTEXT_SCHEMA = "zhuwei.proposal-context/vnext-16" as const;
 
 export type ProposalNpcRecall = Readonly<{ defaultRefs: readonly string[]; requestableRefs: readonly string[] }>;
 
@@ -784,7 +784,11 @@ function selectionIndependentEntriesFirst(context: VNextRequiredContext, entries
     [npcDecisionEntryRef(entry.holderRef), ...((entry.groups ?? []).length === 0 ? [] : [knowledgeDirectoryEntryRef(entry.holderRef)])]));
   const independent = new Set(proposalContextView(context).entries.filter(entry => frozen.has(entry) && !changing.has(entry.entryRef))
     .map(entry => entry.entryRef));
-  return [...entries.filter(entry => independent.has(entry.entryRef)), ...entries.filter(entry => !independent.has(entry.entryRef))];
+  const stable = (entry: VNextRequiredContext["entries"][number]) => entry.kind === "known" && isPlainRecord(entry.value)
+    && (entry.value.schema === ITEM_DEFINITION_SCHEMA || entry.value.schema === VNEXT_STORED_SEMANTIC_DEFINITION_SCHEMA
+      || entry.entryRef.startsWith("profile-context:"));
+  const base = entries.filter(entry => independent.has(entry.entryRef));
+  return [...base.filter(stable), ...base.filter(entry => !stable(entry)), ...entries.filter(entry => !independent.has(entry.entryRef))];
 }
 
 export function proposalModelContext(context: VNextRequiredContext, requestedNpcRefs: readonly string[] = [],
@@ -811,8 +815,6 @@ export function proposalModelContext(context: VNextRequiredContext, requestedNpc
       ? [[entryRef, value.combatScene.geometry] as const] : [])) });
   return Object.freeze({
     schema: VNEXT_PROPOSAL_CONTEXT_SCHEMA,
-    contextHash: view.binding.contextHash,
-    intent: view.intent,
     // A holder's knowledge catalog binds versions for Rules; the model reads
     // the loaded bodies and the gist directory instead. The question history
     // is the server's (ADR 0083).
@@ -835,6 +837,10 @@ export function proposalModelContext(context: VNextRequiredContext, requestedNpc
       npcSourceChoices: proposalNpcSourceChoices(view), itemEntryRefs,
       ...(deferredInventoryEntryRefs.length ? { deferredInventoryEntryRefs: Object.freeze(deferredInventoryEntryRefs) } : {}),
       itemDefinitionRefs: proposalItemDefinitionRefs(view) }),
+    // SPEC 0016 §7.2: changing action metadata must not cut off the
+    // definition prefix. These are still the exact same frozen values.
+    intent: view.intent,
+    contextHash: view.binding.contextHash,
   });
 }
 

@@ -1,3 +1,4 @@
+import { canonicalHash } from "../../../app/_runtime/lib/kp/vnext/canonical-json";
 import { env } from "cloudflare:workers";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { expect, it, vi, afterEach } from "vitest";
@@ -454,7 +455,7 @@ it("a reply that keeps to Lian's own records against the ruling's result returns
     && message.content.includes("ruling-conflicts-with-npc") ? [JSON.parse(message.content.split(VNEXT_PROPOSAL_REVISION_TICKET_LABEL)[1]!)] : []);
   expect(round.map(body => body.diagnostics)).toEqual([[expect.objectContaining({ constraint: "npc-review:ruling-conflicts-with-npc",
     path: ["steps", "social", 0, "result", "summary"], actual: { type: "string", value: "RULING_SUMMARY_CANARY" },
-    expected: expect.objectContaining({ npcRef: LIAN, npcReply: REPLY, npcRecords: [LIAN] }) })]]);
+    expected: expect.objectContaining({ npcRef: `r${canonicalHash(LIAN).slice(7, 19)}`, npcReply: REPLY, npcRecords: [`r${canonicalHash(LIAN).slice(7, 19)}`] }) })]]);
   expect(JSON.stringify(c.correctionRequests)).not.toContain("HOST_ONLY_REVIEW_REASON");
   expect(spoken(committed.events)).toEqual([SPEECH, REPLY]);
   expect(JSON.stringify(committed.events)).toContain(REVISED);

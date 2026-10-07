@@ -26,7 +26,7 @@ import { invokeSubmitKpProposalBundleFirstPass, vnextProposalAmendmentRequest, c
   evaluateVNextProposalRevisionResponse, parseVNextProposalOfferResponse } from '../../../app/_runtime/lib/kp/vnext/proposal-provider.ts';
 import { assertVNextInvocationTransition } from '../../../app/_runtime/lib/room/vnext-proposal-invocation.ts';
 import { proposalModelContext, proposalItemEntryRefs, proposalObservationSubjectRefs,
-  proposalCreatureTargetRefs, proposalNpcSourceChoices, proposalUnofferedCapabilities, proposalCompletableObjectRefs } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
+  proposalCreatureTargetRefs, proposalNpcSourceChoices, proposalUnofferedCapabilities, proposalCompletableObjectRefs, proposalInventoryEntryRefs } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
 import { requiredContextBasisReferences } from '../../../app/_runtime/lib/kp/vnext/required-context-runtime.ts';
 import { assertDeepSeekStrictToolModelInput } from '../../../app/_runtime/lib/kp/deepseek.ts';
 
@@ -160,7 +160,7 @@ test('Room recovers the exact NPC completion selection and its amended combat fo
   const surface = capabilities => createSubmitKpProposalBundleModelInput(message, capabilities,
     proposalItemEntryRefs(ctx), proposalObservationSubjectRefs(ctx), OFFERED,
     proposalNpcSourceChoices(ctx), requiredContextBasisReferences(ctx), proposalCreatureTargetRefs(ctx), false,
-    undefined, [], [], undefined, proposalUnofferedCapabilities(ctx));
+    undefined, [], [], undefined, proposalUnofferedCapabilities(ctx), proposalInventoryEntryRefs(ctx), ctx);
   const saved = response => ({ status: 'completed', context_hash: ctx.binding.contextHash,
     binding_hash: 'sha256:fixture', response_json: JSON.stringify(response) });
   const rows = [saved(amendmentResponse(['completeNpcCombat'])), saved(amendmentResponse(['startCombat']))];
@@ -202,7 +202,7 @@ test('a repeated selection refills once without the selection tool, and Room pro
   const surface = (capabilities, amendable) => createSubmitKpProposalBundleModelInput(message, capabilities,
     proposalItemEntryRefs(ctx), proposalObservationSubjectRefs(ctx), OFFERED,
     proposalNpcSourceChoices(ctx), requiredContextBasisReferences(ctx), proposalCreatureTargetRefs(ctx), amendable,
-    undefined, [], [], undefined, proposalUnofferedCapabilities(ctx));
+    undefined, [], [], undefined, proposalUnofferedCapabilities(ctx), proposalInventoryEntryRefs(ctx), ctx);
   const saved = response => ({ status: 'completed', context_hash: ctx.binding.contextHash,
     binding_hash: 'sha256:fixture', response_json: JSON.stringify(response) });
   const repeated = ordinal => ordinal === 1 || ordinal === 2 ? saved(amendmentResponse(['social'])) : undefined;
@@ -263,7 +263,7 @@ test('a refill with no form member is resent once as the fourth call, and Room p
   const message = JSON.stringify({ requiredContext: proposalModelContext(ctx) });
   const surface = createSubmitKpProposalBundleModelInput(message, ['social'], proposalItemEntryRefs(ctx), proposalObservationSubjectRefs(ctx), OFFERED,
     proposalNpcSourceChoices(ctx), requiredContextBasisReferences(ctx), proposalCreatureTargetRefs(ctx), false,
-    undefined, [], [], undefined, proposalUnofferedCapabilities(ctx));
+    undefined, [], [], undefined, proposalUnofferedCapabilities(ctx), proposalInventoryEntryRefs(ctx), ctx);
   assert.deepEqual(resend, surface, 'the refill request again, without the selection tool');
   const saved = response => ({ status: 'completed', context_hash: ctx.binding.contextHash, binding_hash: 'sha256:fixture', response_json: JSON.stringify(response) });
   const prior = ordinal => ordinal === 1 || ordinal === 2 ? saved(amendmentResponse(['social'])) : ordinal === 3 ? saved(junk) : undefined;
@@ -279,7 +279,7 @@ test('Room proves the amended round and the fourth call from the saved responses
   const surface = (capabilities, amendable) => createSubmitKpProposalBundleModelInput(message, capabilities,
     proposalItemEntryRefs(ctx), proposalObservationSubjectRefs(ctx), OFFERED,
     proposalNpcSourceChoices(ctx), requiredContextBasisReferences(ctx), proposalCreatureTargetRefs(ctx), amendable,
-    undefined, [], [], undefined, proposalUnofferedCapabilities(ctx));
+    undefined, [], [], undefined, proposalUnofferedCapabilities(ctx), proposalInventoryEntryRefs(ctx), ctx);
   const saved = response => ({ status: 'completed', context_hash: ctx.binding.contextHash,
     binding_hash: 'sha256:fixture', response_json: JSON.stringify(response) });
   const offer = saved(amendmentResponse(['social']));
@@ -320,7 +320,7 @@ test('the amendable proposal surface is what Room reconstructs at ordinal 2', ()
   const surface = amendable => createSubmitKpProposalBundleModelInput(message, ['social'],
     proposalItemEntryRefs(ctx), proposalObservationSubjectRefs(ctx), OFFERED,
     proposalNpcSourceChoices(ctx), requiredContextBasisReferences(ctx), proposalCreatureTargetRefs(ctx), amendable,
-    undefined, [], [], undefined, proposalUnofferedCapabilities(ctx));
+    undefined, [], [], undefined, proposalUnofferedCapabilities(ctx), proposalInventoryEntryRefs(ctx), ctx);
   const prior = () => ({ status: 'completed', context_hash: ctx.binding.contextHash,
     binding_hash: 'sha256:fixture', response_json: JSON.stringify(amendmentResponse(['social'])) });
   const at2 = request => ({ ordinal: 2, contextHash: ctx.binding.contextHash,
@@ -374,7 +374,7 @@ test('a selection naming a ruling kind is read without it, and an unreadable ame
   const surface = (capabilities, amendable) => createSubmitKpProposalBundleModelInput(message, capabilities,
     proposalItemEntryRefs(ctx), proposalObservationSubjectRefs(ctx), OFFERED,
     proposalNpcSourceChoices(ctx), requiredContextBasisReferences(ctx), proposalCreatureTargetRefs(ctx), amendable,
-    undefined, [], [], undefined, proposalUnofferedCapabilities(ctx));
+    undefined, [], [], undefined, proposalUnofferedCapabilities(ctx), proposalInventoryEntryRefs(ctx), ctx);
   const saved = response => ({ status: 'completed', context_hash: ctx.binding.contextHash,
     binding_hash: 'sha256:fixture', response_json: JSON.stringify(response) });
   const prior = ordinal => ordinal === 1 ? saved(amendmentResponse(['social']))
@@ -413,7 +413,7 @@ test('completeObject is offered for authorized existing gaps and omitted when th
   assert.ok(offerIds(offer).includes('observe') && !offerIds(offer).includes('completeObject'), JSON.stringify(offerIds(offer)));
   assert.ok(!sentInstructions(offer).includes('completeObject'), 'the catalogue, filling boundaries and guide leave it out');
   const filling = createSubmitKpProposalBundleModelInput('冻结上下文', ['observe', 'worldInteraction'], [], [], OFFERED,
-    undefined, undefined, undefined, false, undefined, [], [], undefined, proposalUnofferedCapabilities(ctx));
+    undefined, undefined, undefined, false, undefined, [], [], undefined, proposalUnofferedCapabilities(ctx), proposalInventoryEntryRefs(ctx), ctx);
   assert.ok(!sentInstructions(filling).includes('completeObject'), 'nor does a filling tell the KP to use it');
   assert.ok(sentInstructions(createSubmitKpProposalBundleModelInput('冻结上下文', ['observe'])).includes('completeObject'));
   const first = parseVNextProposalOfferResponse(amendmentResponse(['observe', 'completeObject']), ctx);

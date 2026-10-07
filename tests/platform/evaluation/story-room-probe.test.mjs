@@ -12,6 +12,7 @@ test("default is configuration-only dry-run; unimplemented cases cannot enable l
   const options = parseStoryProbeOptions([]), report = storyProbeDryRun(options);
   assert.equal(options.live, false); assert.equal(report.realProviderCalls, 0); assert.equal(report.workerRuns, 0);
   assert.deepEqual(report.cases.map(value => [value.caseId, value.implemented]), [
+    ["dynamic-container-put-back", true],
     ["dynamic-container-atomic", true],
     ["dynamic-container-continuity", true],
     ["sandbox-story-conclusion", true],

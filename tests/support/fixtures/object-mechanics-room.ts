@@ -24,13 +24,13 @@ export async function initializeObjectRoom(name: string) {
   return { stub, capabilities: result.serviceCapabilities };
 }
 
-export async function withObjectRoomScenario<T>(stub: ReturnType<typeof env.VNEXT_ROOMS.getByName>, body: (act: (id: string, text: string, proposals: Data[], duration?: string) => Promise<Data>, target: Data, calls: Data[]) => Promise<T>) {
+export async function withObjectRoomScenario<T>(stub: ReturnType<typeof env.VNEXT_ROOMS.getByName>, body: (act: (id: string, text: string, proposals: Data[], duration?: string, filling?: (wire: Data) => Data, expectedKind?: string) => Promise<Data>, target: Data, calls: Data[]) => Promise<T>) {
   return runInDurableObject(stub, async instance => {
     const target = instance as unknown as Data, calls: Data[] = [];
     const authority = Object.fromEntries(["prepare", "commit", "observe", "acknowledge", "publishDelivery", "deliveryPublicationStatus",
       "beginDeliveryAudiencePublication", "failDeliveryAudiencePublication", "beginViewerNarrationRecovery", "publishViewerNarrationRecovery", "failViewerNarrationRecovery"]
       .map(name => [name, (...args: unknown[]) => target[name](...args)])) as unknown as RoomAuthorityCapability;
-    const act = async (id: string, text: string, proposals: Data[], duration = "300000000") => {
+    const act = async (id: string, text: string, proposals: Data[], duration = "300000000", filling?: (wire: Data) => Data, expectedKind = "committed") => {
       const kp = createVNextKpAdapter({ narrationAdapter: { async narrate() { return { body: "你完成了眼前的操作。" }; },
         async propose() { throw new Error("unused"); } } as unknown as AuthoritativeKpAdapter,
         journal: { begin: (key, request) => target.beginVNextProposalInvocation(ALICE, key, request), complete: (key, completion) => target.completeVNextProposalInvocation(ALICE, key, completion) },
@@ -39,10 +39,10 @@ export async function withObjectRoomScenario<T>(stub: ReturnType<typeof env.VNEX
           const wire = name === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME ? { requestedCapabilities: [...new Set(proposals.map(p => { const capability = vnextProposalCapabilityForEntry(p); if (!capability) throw new Error(`Unknown capability for ${p.kind}`); return capability; }))] }
             : encodeVNextStrictToolBundle({ mode: "adjudication", basisRefs: [...new Set(proposals.flatMap(p => p.basisRefs))], terminal: null,
               adjudication: { kind: "directSuccess", durationMicros: duration, risk: "按实际条件操作。", successOutcome: "操作完成。" }, proposals } as never);
-          return { choices: [{ finish_reason: "tool_calls", message: { tool_calls: [{ type: "function", function: { name, arguments: JSON.stringify(wire) } }] } }] };
+          return { choices: [{ finish_reason: "tool_calls", message: { tool_calls: [{ type: "function", function: { name, arguments: JSON.stringify(name !== OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME && filling ? filling(wire) : wire) } }] } }] };
         } } });
       const result = await handleRoomAction({ principal: ALICE, authority, kp }, { kind: "intent", submissionId: id, text }) as Data;
-      expect(result.kind, JSON.stringify({ result, last: calls.at(-1)?.messages.at(-1)?.content })).toBe("committed");
+      expect(result.kind, JSON.stringify({ result, last: calls.at(-1)?.messages.at(-1)?.content })).toBe(expectedKind);
       return result;
     };
     return body(act, target, calls);

@@ -5,6 +5,7 @@ import { proposalSourceDraftVersion } from "../../../app/_runtime/lib/kp/vnext/p
 import { wrapScriptedRevision } from "../../support/fixtures/vnext-revision-response.mjs";
 import { roomServiceCapabilities } from "../../../app/_runtime/lib/room/archive";
 import { deepSeekRequestBody } from "../../../app/_runtime/lib/kp/deepseek";
+import { bindProposalWire, proposalWireReferences } from "../../../app/_runtime/lib/kp/vnext/proposal-reference-dialect";
 import { proposalModelContext } from "../../../app/_runtime/lib/kp/vnext/proposal-context";
 import { npcDecisionContext, npcDecisionEntryRef } from "../../../app/_runtime/lib/kp/vnext/context/npc-decision";
 import { encodeVNextStrictToolBundle, vnextProposalSystemContent, vnextProposalSystemParts } from "../../../app/_runtime/lib/kp/vnext/proposal-schema";
@@ -28,12 +29,11 @@ import { closeVNextProposalCapabilities } from "../../../app/_runtime/lib/kp/vne
 import type { AuthoritativeWorldState, EventEnvelope, RuntimeProfileManifest, RuntimeGenesis, step as rulesStep, replay as rulesReplay } from "../../../app/_runtime/lib/rules";
 import { scriptedNpcReply, scriptedNpcReview } from "../../support/fixtures/vnext-npc-replies.mjs";
 import { npcReplyRequestBody } from "../../../app/_runtime/lib/kp/vnext/npc-reply";
-/** The tool a request expects to be answered with: a correction request now
- * carries the filling form first (for the provider's cached prefix) and the
- * correction tool after it, so the round is told by the tool set. */
-const sentToolName = (request: JsonRecord): unknown => {
+/** Scripted stage identification, distinct from the actual offered tool:
+ * a correction retains the submit form and may omit the generic patch tool. */
+const scriptedStageTool = (request: JsonRecord): unknown => {
   const names = (request.tools as JsonRecord[]).map(tool => record(tool.function).name);
-  return names.includes("correct_kp_proposal_bundle") ? "correct_kp_proposal_bundle" : names[0];
+  return names.includes("correct_kp_proposal_bundle") || (request.messages as JsonRecord[]).some(message => message.role === "tool") ? "correct_kp_proposal_bundle" : names[0];
 };
 
 
@@ -88,9 +88,9 @@ it.each([DEFAULT_KP_MODEL, GPT_6_LUNA_MODEL].flatMap(modelId => [1, 2, 3].map(st
   const input = action(`submission:explicit-recovery:${stage}`);
   const capture: Capture = { starts: [], providerRequests: [], verifyModelBinding: true };
   const before = await snapshot(stub);
-  const success: Provider = async request => sentToolName(request) === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME
+  const success: Provider = async request => scriptedStageTool(request) === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME
     ? toolResponse({ kind: "schemaRequest", capabilities: ["worldInteraction"] })
-    : toolResponse(proposal(stage === 3 && sentToolName(request) === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME ? "" : "打开控制件。"));
+    : toolResponse(proposal(stage === 3 && scriptedStageTool(request) === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME ? "" : "打开控制件。"));
   await run(stub, input, capture, async (request, target, captured) => {
     if (capture.starts.at(-1)!.request.ordinal === stage) throw new Error("simulated transport timeout");
     return success(request, target, captured);
@@ -178,7 +178,7 @@ it.each([DEFAULT_KP_MODEL, GPT_6_LUNA_MODEL])("%s asks an unfrozen proposal agai
   const stub = await initialize(`provider-version-change-proposal-${modelId}`, undefined, [], { kpModelId: modelId });
   const input = action("submission:version-change:proposal");
   const capture: Capture = { starts: [], providerRequests: [] };
-  const success: Provider = async request => sentToolName(request) === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME
+  const success: Provider = async request => scriptedStageTool(request) === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME
     ? toolResponse({ kind: "schemaRequest", capabilities: ["worldInteraction"] }) : toolResponse(proposal("打开控制件。"));
   await run(stub, input, capture, async (request, target, captured) => {
     if (capture.starts.at(-1)!.request.ordinal === 2) throw new Error("simulated transport timeout");
@@ -296,7 +296,7 @@ it("explicit recovery settles an expired dispatch, but reuses an original reply 
     });
     await evictDurableObject(stub);
     expect(await run(stub, { ...input, recoverProposal: true }, capture, async request =>
-      sentToolName(request) === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME ? selection : toolResponse(proposal())))
+      scriptedStageTool(request) === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME ? selection : toolResponse(proposal())))
       .toMatchObject({ kind: "committed" });
     expect(capture.providerRequests).toHaveLength(lateReply ? 2 : 3);
   }
@@ -323,7 +323,7 @@ it.each(["empty-groups", "misplaced-concealed-groups"] as const)("repairs an inv
   });
   expect(interrupted, JSON.stringify(interrupted)).toMatchObject({ kind: "retryableFailure", action: "notCommitted" });
   expect(attempts).toBe(2);
-  expect(sentToolName(correctionRequest!)).toBe(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
+  expect((correctionRequest!.tools as JsonRecord[]).map(tool => record(tool.function).name)).toEqual([SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME]);
   expect(sentRevision(correctionRequest).diagnostics).toContainEqual(expect.objectContaining({
     pathBase: "arguments", path: variant === "empty-groups" ? ["steps"] : ["decision", "check"],
   }));
@@ -434,7 +434,7 @@ it("an empty social draft retains the natural-language intent and NPC context th
       return reply;
     }
     proposals++;
-    const body = sentContext(request);
+    const body = sentContext(request, capture);
     expect(body.requiredContext).toEqual(proposalModelContext(capture.prepared!.requiredContext as never, [npcRef]));
     expect(body.requiredContext.intent.text).toBe(input.text);
     // The model view lists the NPC's decision entry without server hashes; the
@@ -457,7 +457,7 @@ it("an empty social draft retains the natural-language intent and NPC context th
   expect(committed.invocations.map(row => [row.ordinal, row.status])).toEqual([[1, "completed"], [2, "completed"], [3, "completed"], [11, "completed"], [139, "completed"]]);
   expect(committed.events.filter(event => event.eventType === "SourceClaimCreated").map(event => record(event.payload).semanticContent)).toContain("请说。");
   const saved = JSON.parse(committed.invocations[2]!.request_json);
-  expect(sentContext(saved).requiredContext).toEqual(proposalModelContext(capture.prepared!.requiredContext as never, [npcRef]));
+  expect(sentContext(saved, capture).requiredContext).toEqual(proposalModelContext(capture.prepared!.requiredContext as never, [npcRef]));
   await evictDurableObject(stub);
   expect(await run(stub, input, capture, async () => { throw new Error("a completed submission must not call the model again"); })).toEqual(result);
   expect((await snapshot(stub, capture)).events).toEqual(committed.events);
@@ -480,8 +480,9 @@ function sentRules(request: unknown): string {
 function sentContextBody(request: unknown): string {
   return sentParts(request).contextBody;
 }
-function sentContext(request: unknown): JsonRecord {
-  return record(JSON.parse(sentContextBody(request)));
+function sentContext(request: unknown, capture?: Capture): JsonRecord {
+  const value = record(JSON.parse(sentContextBody(request)));
+  return capture?.prepared ? bindProposalWire(value, capture.prepared.requiredContext as never) as JsonRecord : value;
 }
 function sentInstructions(request: unknown): string {
   return `${sentRules(request)}\n${String(record((record(request).messages as JsonRecord[])[1]).content)}`;
@@ -740,7 +741,7 @@ it("resumes a frozen authored attack at its native choice after eviction and con
   }
   const opened = await run(stub, { kind: "intent", submissionId: "submission:frozen-native:open",
     text: "取用测试控制件旁的新器具，先确认是否攻击 character:provider:bob。" }, capture, async request => {
-      const name = sentToolName(request);
+      const name = scriptedStageTool(request);
       // SPEC 0015 §6.1: a clarification selects every family its continuation needs.
       return name === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME
         ? toolResponse({ kind: "schemaRequest", capabilities: ["authorItem", "authorAbility", "materializeItem", "inventoryOperation"] })
@@ -964,7 +965,7 @@ async function run(stub: Awaited<ReturnType<typeof initialize>>, input: RoomActi
         capture.providerRequests.push(structuredClone(request));
         // An explicit fixture selection is an actual persisted provider round;
         // the callback below supplies only the requested execution/correction.
-        const toolName = sentToolName(request);
+        const toolName = scriptedStageTool(request);
         if (capture.selectedCapabilities && toolName === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME) {
           const response = toolResponse({ kind: "schemaRequest", capabilities: capture.selectedCapabilities });
           if (capture.selectedNpcRefs !== undefined) {
@@ -1023,7 +1024,7 @@ async function run(stub: Awaited<ReturnType<typeof initialize>>, input: RoomActi
           if (capture.verifyGuidanceBeforeBegin) {
             const before = target.vnextInvocation(preparedActionId, request.ordinal);
             if (request.ordinal <= 2) {
-              const expected = JSON.stringify({ requiredContext: proposalModelContext(capture.prepared!.requiredContext as never) });
+              const expected = JSON.stringify(proposalWireReferences({ requiredContext: proposalModelContext(capture.prepared!.requiredContext as never) }, capture.prepared!.requiredContext as never));
               expect(sentContextBody(request.request)).toBe(expected);
               for (const content of ["unbound context", JSON.stringify({ requiredContext: {} }),
                 JSON.stringify({ requiredContext: { ...JSON.parse(expected).requiredContext, entries: [] } })]) {
@@ -1192,13 +1193,13 @@ describe("vNext Provider invocation and Room persistence", () => {
         outcomeBinding: 'always', operation: { kind: 'acquire', entryRef: SOURCE, quantity: 1 }, summary: '错误地把控制件当成库存实物。' }] };
       const input = action(`submission:rules-revision:${accepted}`);
       const result = await run(stub, input, capture, async request => {
-        if (sentToolName(request) === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) return toolResponse(invalid);
+        if (scriptedStageTool(request) === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) return toolResponse(invalid);
         const body = sentRevision(request);
         expect(body.diagnostics).toContainEqual(expect.objectContaining({ code: 'REFERENCE_UNAVAILABLE', pathBase: 'arguments',
           path: ['steps', 'inventoryOperation', 0, 'operation', 'entryRef'],
           constraint: 'inventory:entry-ref-must-resolve-to-item-entry', expected: { referenceKind: 'itemEntry' },
           repair: { allowed: true, reason: 'uncommitted-proposal-may-be-revised-once' } }));
-        expect(record(sentContext(request).requiredContext).intent).toMatchObject({ text: input.text });
+        expect(record(sentContext(request, capture).requiredContext).intent).toMatchObject({ text: input.text });
         // The requested action is turning the control. KP removes its own
         // erroneous inventory operation and submits the complete real action.
         return toolResponse(accepted ? draft : invalid, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
@@ -1731,7 +1732,7 @@ describe("vNext Provider invocation and Room persistence", () => {
       return value;
     }
     const provider: Provider = async request => {
-      const name = sentToolName(request);
+      const name = scriptedStageTool(request);
       const instructions = sentInstructions(request);
       if (name === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME) {
         // The offer omits absent completion families and endCombat outside an encounter.
@@ -1794,7 +1795,7 @@ describe("vNext Provider invocation and Room persistence", () => {
     for (let ordinal = 0; ordinal < 2; ordinal++) {
       const request = JSON.parse(waiting.invocations[ordinal]!.request_json);
       expect(request).toEqual(capture.providerRequests[ordinal]);
-      expect(sentContext(request).requiredContext)
+      expect(sentContext(request, capture).requiredContext)
         .toEqual(proposalModelContext(frozenContext as never));
     }
     // The timed action has reached its result, but the healing dice still
@@ -1851,7 +1852,7 @@ describe("vNext Provider invocation and Room persistence", () => {
           expect(await target.beginVNextProposalInvocation(ALICE, String(capture.prepared!.preparedActionId), { ...current, ordinal: 3 }))
             .toMatchObject({ kind: "rejected" });
         }
-        return toolResponse({ requestedCapabilities: [selected] }, String(sentToolName(request)));
+        return toolResponse({ requestedCapabilities: [selected] }, String(scriptedStageTool(request)));
       });
     expect(result, JSON.stringify(result)).toMatchObject({ kind: "rejected", action: "notCommitted" });
     expect(capture.providerRequests).toHaveLength(2);
@@ -1887,7 +1888,7 @@ describe("vNext Provider invocation and Room persistence", () => {
     const originalOffer = toolResponse({ kind: "schemaRequest", capabilities: ["inWorldRefusal"] });
     const draft = timedAttempt("1");
     const provider: Provider = async request => {
-      const tool = sentToolName(request);
+      const tool = scriptedStageTool(request);
       if (tool === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME) return structuredClone(originalOffer);
       expect(tool).toBe(SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
       return toolResponse(draft);
@@ -1992,7 +1993,7 @@ describe("vNext Provider invocation and Room persistence", () => {
     expect(waiting.invocations).toHaveLength(2);
     expect(waiting.invocations[0]!.status).toBe("completed");
     expect(capture.providerRequests).toHaveLength(2);
-    const sent = sentContext(capture.providerRequests[0]!);
+    const sent = sentContext(capture.providerRequests[0]!, capture);
     const visible = record(sent.requiredContext);
     const frozen = record(capture.prepared!.requiredContext);
     expect(visible).not.toHaveProperty("binding");
@@ -2018,7 +2019,7 @@ describe("vNext Provider invocation and Room persistence", () => {
     const input = action(`submission:provider:json-${retrieval}`);
     const before = await snapshot(stub);
     const provider: Provider = async (request, target) => {
-      const name = sentToolName(request);
+      const name = scriptedStageTool(request);
       if (name === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME) return toolResponse({ kind: "schemaRequest", capabilities: [retrieval] });
       if (name !== CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME) {
         const response = toolResponse(retrieval === "observe" ? observationProposal() : proposal());
@@ -2097,7 +2098,7 @@ describe("vNext Provider invocation and Room persistence", () => {
       effects: [], sensoryEvidence: [], pressures: [], opportunities: [] };
     const original = structuredClone(draft);
     const result = await run(stub, input, capture, async request => toolResponse(draft,
-      String(sentToolName(request))));
+      String(scriptedStageTool(request))));
     expect(result).toMatchObject({ kind: "needsKp", code: "PROPOSAL_REPAIR_EXHAUSTED", action: "notCommitted" });
     expect(record(record(result).proposal).diagnostics).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: "REPAIR_OUT_OF_SCOPE", constraint: "revision:unchanged-draft" }),
@@ -2126,7 +2127,7 @@ describe("vNext Provider invocation and Room persistence", () => {
       entry.method = ` ${String(entry.method)} `;
       const original = structuredClone(draft);
       const result = await run(stub, input, capture, async request => {
-        const tool = sentToolName(request);
+        const tool = scriptedStageTool(request);
         return tool === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME ? toolResponse(draft)
           : toolResponse(legacy ? legacyPatch : observationProposal(), CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
       });
@@ -2167,7 +2168,7 @@ describe("vNext Provider invocation and Room persistence", () => {
     raw.steps.npcRecall = [];
     call.arguments = JSON.stringify(raw);
     const provider: Provider = async (request, target) => {
-      const tool = sentToolName(request);
+      const tool = scriptedStageTool(request);
       if (tool === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) return malformed;
       expect(tool).toBe(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
       expect(target.authoritativeReplay().state).toEqual(before.state);
@@ -2176,7 +2177,7 @@ describe("vNext Provider invocation and Room persistence", () => {
       const ticket = JSON.parse(row.repair_ticket_json!);
       const prompt = sentRevision(request);
       expect(prompt.diagnostics.every((d: JsonRecord) => d.pathBase === "arguments")).toBe(true);
-      expect(sentContext(request).requiredContext).toEqual(proposalModelContext(capture.prepared!.requiredContext as never));
+      expect(sentContext(request, capture).requiredContext).toEqual(proposalModelContext(capture.prepared!.requiredContext as never));
       expect(prompt.diagnostics.map((d: JsonRecord) => d.path)).toEqual(expect.arrayContaining([
         ["steps", "npcRecall"], ["steps", kind, 0, "method"], ["decision", "risk"],
       ]));
@@ -2207,7 +2208,8 @@ describe("vNext Provider invocation and Room persistence", () => {
 
   it("revises a missing ability and DC then keeps the accepted check frozen across eviction and rolls only once after resuming its saved correction", async () => {
     const stub = await initialize("provider-room-structured-repair-dice");
-    const capture: Capture = { selectedCapabilities: ["worldInteraction"], starts: [], providerRequests: [], failAfterSaveOrdinal: 3 };
+    // This case tests the generic patch audit; simple world-only repairs now use typed replacement.
+    const capture: Capture = { selectedCapabilities: ["worldInteraction", "observe"], starts: [], providerRequests: [], failAfterSaveOrdinal: 3 };
     const input = action("submission:structured-repair:dice");
     const before = await snapshot(stub);
     const draft = proposal() as JsonRecord;
@@ -2224,7 +2226,7 @@ describe("vNext Provider invocation and Room persistence", () => {
     await installRoller();
     const pending = await run(stub, input, capture, async request => {
       expect(draws).toBe(0);
-      const tool = sentToolName(request);
+      const tool = scriptedStageTool(request);
       if (tool === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) return toolResponse(draft);
       const prompt = sentRevision(request);
       expect(prompt.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({
@@ -2298,7 +2300,7 @@ describe("vNext Provider invocation and Room persistence", () => {
     // conversation. No Rules effect ever runs.
     let unauthorizedRound: JsonRecord | undefined;
     const result = await run(stub, action("submission:structured-repair:escape"), capture, async request => {
-      const tool = sentToolName(request);
+      const tool = scriptedStageTool(request);
       if (tool === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) return toolResponse(draft);
       const prompt = sentRevision(request);
       if (prompt.round === 2) unauthorizedRound = prompt;
@@ -2322,7 +2324,7 @@ describe("vNext Provider invocation and Room persistence", () => {
       const capture: Capture = { selectedCapabilities: ["worldInteraction"], starts: [], providerRequests: [] };
       const input = action(`submission:provider:noncanonical:${stage}`);
       const before = await snapshot(stub);
-      const provider: Provider = async request => sentToolName(request) === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME
+      const provider: Provider = async request => scriptedStageTool(request) === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME
         ? toolResponse(proposal(stage === 'offer' ? 'Cafe\u0301' : ''))
         : toolResponse(proposal('Cafe\u0301'), CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
       const result = await run(stub, input, capture, provider);
@@ -2348,7 +2350,7 @@ describe("vNext Provider invocation and Room persistence", () => {
     const input = action("submission:provider:repair");
     const before = await snapshot(stub);
     const provider: Provider = async (request, target) => {
-      const tool = sentToolName(request);
+      const tool = scriptedStageTool(request);
       if (tool === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) return toolResponse(proposal(""));
       expect(tool).toBe(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
       const persisted = target.vnextInvocation(String(capture.prepared!.preparedActionId), 3);
@@ -2518,7 +2520,7 @@ it("restores the archive of a room whose committed action was recorded on an ear
   const stub = await initialize("provider-earlier-version-archive");
   const input = action("submission:earlier-version:archive");
   const capture: Capture = { starts: [], providerRequests: [] };
-  const success: Provider = async request => sentToolName(request) === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME
+  const success: Provider = async request => scriptedStageTool(request) === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME
     ? toolResponse({ kind: "schemaRequest", capabilities: ["worldInteraction"] }) : toolResponse(proposal("打开控制件。"));
   const outcome = await run(stub, input, capture, success);
   expect(outcome, JSON.stringify(outcome)).toMatchObject({ kind: "committed", action: "committed" });
@@ -2552,7 +2554,7 @@ it("prepares an action whose frozen context has outgrown the story budget", asyn
   const stub = await initialize("provider-large-frozen-context", undefined, memories);
   const capture: Capture = { starts: [], providerRequests: [] };
   const outcome = await run(stub, action("submission:large-frozen-context"), capture, async request =>
-    sentToolName(request) === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME
+    scriptedStageTool(request) === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME
       ? toolResponse({ kind: "schemaRequest", capabilities: ["worldInteraction"] }) : toolResponse(proposal("打开控制件。")));
   expect(JSON.stringify(outcome)).not.toContain("STORY_CONTEXT_INSUFFICIENT");
   expect(capture.prepared, JSON.stringify(outcome)).toBeDefined();

@@ -23,6 +23,8 @@
 
 ## 当前待办任务书
 
+- 四项调用与表单优化已在隔离 worktree 完成本地实现（2026-10-07）：[ADR 0131](../adr/0131-frozen-wire-references-and-declared-container-transfer.md)、[测试回执](receipts/kp-call-budget-20261007.md)。真实取物通过；放回对照仅到正确修订，旁白受测试输出预算阻断，完整放回与回访未通过。尚未合并或部署。
+
 - 容器查看记录与 review 修复已完成本地实现（2026-10-07）：[ADR 0130](../adr/0130-container-inspection-and-original-content-provenance.md)、[本地回执](receipts/container-inspection-local-20261007.md)。四项 review 缺陷与本轮容器产品决定在同一通用路径验收；最新真实调用及未覆盖范围见[实测回执](receipts/dynamic-object-live-20261007.md)，部署未执行。
 
 - 补全表单按需加载已完成本地实现（2026-10-06）：[ADR 0129](../adr/0129-completion-schemas-follow-selected-mechanics.md)、[成本与验证回执](receipts/completion-schema-routing-local-20261006.md)。不增加调用阶段；最终 107 个规格测试文件通过，尚未做真实模型调用或部署。

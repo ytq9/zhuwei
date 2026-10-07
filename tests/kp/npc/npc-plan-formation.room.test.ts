@@ -1,3 +1,4 @@
+import { canonicalHash } from "../../../app/_runtime/lib/kp/vnext/canonical-json";
 import { replacementArguments } from "../../support/fixtures/vnext-revision-response.mjs";
 import { env } from "cloudflare:workers";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
@@ -20,6 +21,7 @@ import { sentBody, sentContextBody, sentRevision } from "../../support/fixtures/
 import { scriptedNpcReply, scriptedNpcReview } from "../../support/fixtures/vnext-npc-replies.mjs";
 import { NPC_REPLY_TOOL_NAME } from "../../../app/_runtime/lib/kp/vnext/npc-reply";
 
+const wireRef = (ref: string) => ref.length < 16 ? ref : `r${canonicalHash(ref).slice(7, 19)}`;
 type RecordValue = Record<string, unknown>;
 type Principal = { principal: { id: string; sessionVersion: number } };
 type Invocation = { invocation_id: string; ordinal: number; status: string; request_json: string; response_json: string | null; request_hash: string; repair_ticket_json: string | null; context_hash: string; binding_hash: string; lease_until: number };
@@ -214,7 +216,7 @@ it("NPC source choices cross the real Room journal and replay once, while a wrap
       const choices = record(context.references).npcSourceChoices as { npcRef: string; refs: string[] }[];
       contextDiagnostics = { choices, entries: (context.entries as RecordValue[]).filter(entry => String(entry.entryRef).includes("npc"))
         .map(entry => ({ entryRef: entry.entryRef, kind: entry.kind, reason: entry.reason })) };
-      ownRefs = choices.find(value => value.npcRef === npc)?.refs;
+      ownRefs = choices.find(value => value.npcRef === wireRef(npc))?.refs;
       return JSON.stringify({ decision: { kind: "directSuccess", duration: "5min", risk: "这是普通交谈。", successOutcome: "值班人作出回答。" },
         steps: { social: [{ basisRefs: [npc], sceneRef: SCENE, npcRef: npc,
           actorSpeech: "交接现在是怎么安排的？", goal: "说明目前的交接安排。", method: "当面回应。", audience: "participants", outcomeBinding: "always",
@@ -230,14 +232,15 @@ it("NPC source choices cross the real Room journal and replay once, while a wrap
         introducedContent: [], relationshipChanges: [], newPromises: [], promiseChanges: [], newDebts: [] } };
     };
     const outcome = await run(stub, input, c), saved = await snapshot(stub, c.preparedActionId);
-    expect(ownRefs, JSON.stringify({ contextDiagnostics, outcome })).toContain(`knowledge:${npc}:${PREMISE}`);
+    expect(ownRefs, JSON.stringify({ contextDiagnostics, outcome })).toContain(wireRef(`knowledge:${npc}:${PREMISE}`));
     expect(ownRefs).not.toContain(`npc-decision:${npc}`);
     expect(ownRefs).not.toContain(`knowledge:${ACTOR}:${PRIVATE_REF}`);
     expect(c.playerRequests).toHaveLength(2); expect(c.replyRequests).toHaveLength(allowed ? 1 : 2);
     expect(c.httpCalls.flat()).toEqual(Array(allowed ? 4 : 5).fill("proposal"));
     expect(sentContextBody(c.playerRequests[0])).toBe(frozenUserContent);
     // The reply's form offers the NPC its own sources, the same the ruling's context lists for it.
-    expect(offeredRefs).toEqual([...ownRefs!, "playerExpression"]);
+    expect(ownRefs!.map(ref => offeredRefs!.find(source => source === ref || wireRef(source) === ref) ?? ref))
+      .toEqual(offeredRefs!.filter(ref => ref !== "playerExpression"));
     expect(JSON.stringify(c.replyRequests[0])).not.toMatch(/NPC_PRIVATE_ORDER_CANARY.*PLAYER_PRIVATE_ROUTE_CANARY|PLAYER_PRIVATE_ROUTE_CANARY/);
     expect(c.draws).toBe(0); expect(saved.state.canonicalFacts).toEqual(before.state.canonicalFacts);
     if (allowed) {

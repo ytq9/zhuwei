@@ -29,7 +29,7 @@ export const VNEXT_PROPOSAL_CAPABILITIES = deepFreeze([
   { id: "authorHazard", proposalKind: "materializeDefinition", definitionKind: "hazard", description: "创作危险的触发、可感知迹象、解除方法与环境后果，并以 Ability 表达其机械。危险实例所需的新场景对象或本次操作另选 materializeObject、worldInteraction。", dependencies: ["authorAbility"] },
   { id: "authorItem", proposalKind: "materializeDefinition", definitionKind: "item", description: "创作物品类别与属性定义；普通无机械效果的物件也先有定义，再物化和取得实物。所有权在实物上填写；使用或装备机械才需要 Ability，且须同束另选 authorAbility，未选时只能引用已有 Ability。", dependencies: ["materializeItem", "inventoryOperation"] },
   { id: "materializeItem", proposalKind: "materializeItem", description: "从冻结 itemDefinitionRefs 中已有定义或同束新物品定义创建实物实例；没有匹配定义时还须选择 authorItem，名称或知识描写不是定义ID。唯一性、数量和所有权由 Rules 验证。", dependencies: [] },
-  { id: "inventoryOperation", proposalKind: "inventoryOperation", description: "取得、放下、放入容器、转交、识别、装备、使用、损坏、修复或毁坏已存在的 ItemEntry；若对象只有描写、尚无实物实例，还需 materializeItem，缺少物品定义时再选 authorItem。由 Rules 执行资源和库存转换。", dependencies: [] },
+  { id: "inventoryOperation", proposalKind: "inventoryOperation", description: "取得、放下、放入容器、转交、识别、装备、使用、损坏、修复或毁坏已存在的 ItemEntry；若对象只有描写、尚无实物实例，还需 materializeItem，缺少物品定义时再选 authorItem。普通容器开盖、取放、合盖可只选本类型的 containerTransfer；上锁、隐蔽或未定机制另行裁决/补全。由 Rules 执行资源和库存转换。", dependencies: [] },
 ] as const);
 
 export type VNextProposalCapabilityId = (typeof VNEXT_PROPOSAL_CAPABILITIES)[number]["id"];

@@ -31,7 +31,7 @@ export function containerLiveSeed(actor: string) {
  * one while the box was shut; the owner then picked up the box. Native Rules
  * and event folds establish this before sampling. No real-provider success
  * is claimed for these setup operations. */
-export async function prepareContainerLiveHistory(source: Awaited<ReturnType<typeof historyHttpSource>>) {
+export async function prepareContainerLiveHistory(source: Awaited<ReturnType<typeof historyHttpSource>>, withdrawBeforeSample = false) {
   const actor = source.characters[0].characterId, peer = source.characters[1]?.characterId;
   if (!peer) throw new Error("CONTAINER_LIVE_PEER_REQUIRED");
   await runInDurableObject(source.stub, instance => {
@@ -60,8 +60,15 @@ export async function prepareContainerLiveHistory(source: Awaited<ReturnType<typ
     inventory(peer, { kind: "acquire", entryRef: LIVE_CONTENTS, quantity: 1 });
     lid(peer, "open", "closed", "close");
     inventory(actor, { kind: "acquire", entryRef: LIVE_CONTAINER, quantity: 1 });
-    expect(state.campaignRuntime.itemSystem.entries[LIVE_CONTENTS].quantity).toBe(2);
-    expect(state.vNextItemAuthority.containerMemories[actor][LIVE_CONTAINER].entries[0].quantity).toBe(3);
+    if (withdrawBeforeSample) {
+      // The distinguishing contrast starts at the failed put-back's mechanical
+      // boundary. This withdrawal is disclosed native history, no model sample.
+      lid(actor, "closed", "open", "open");
+      inventory(actor, { kind: "acquire", entryRef: LIVE_CONTENTS, quantity: 1 });
+      lid(actor, "open", "closed", "close");
+    }
+    expect(state.campaignRuntime.itemSystem.entries[LIVE_CONTENTS].quantity).toBe(withdrawBeforeSample ? 1 : 2);
+    expect(state.vNextItemAuthority.containerMemories[actor][LIVE_CONTAINER].entries[0].quantity).toBe(withdrawBeforeSample ? 1 : 3);
     const replayed = target.rulesRuntime.replay(original.genesis, [...target.authorityStore.events(), ...events]);
     expect(replayed.kind).toBe("replayed"); expect(replayed.state).toEqual(state);
     target.authorityStore.appendEvents(events); target.authorityStore.updateState(state); target.authorityStore.syncAuthorityIndex(state);

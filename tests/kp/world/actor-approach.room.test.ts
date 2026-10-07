@@ -1,3 +1,4 @@
+import { canonicalHash } from "../../../app/_runtime/lib/kp/vnext/canonical-json";
 import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { expect, it } from "vitest";
@@ -98,7 +99,7 @@ it("walking into the stair shadow to tap Naes commits the actor's new place, whi
   // The KP sees the stairs on the map and where people stand now; the
   // module's opening places are not repeated to it.
   const sent = JSON.stringify(filling.messages);
-  expect(sent, detail).toContain("feature:wake:stairs");
+  expect(sent, detail).toContain(`r${canonicalHash("feature:wake:stairs").slice(7, 19)}`);
   expect(sent, detail).not.toContain("openingPlacements");
 
   const walked = after.events.find(event => event.eventType === "CharacterRepositioned");

@@ -28,6 +28,7 @@ import { VNEXT_PROPOSAL_CAPABILITY_IDS }
   from "../app/_runtime/lib/kp/vnext/proposal-capabilities.ts";
 import { conservativeInputTokens, allowedInputTokens, VNEXT_PROPOSAL_BUDGET }
   from "../app/_runtime/lib/kp/vnext/invocation/budget.ts";
+import { containerTransferWireSchemas } from "../app/_runtime/lib/kp/vnext/container-transfer-wire.ts";
 
 /** Amendments union capabilities (SPEC 0016 §7.2), so combinations are the
  *  real cost and they do not simply add. These are the shapes one intent
@@ -50,11 +51,20 @@ const AMENDED_SELECTIONS = Object.freeze([
 ]);
 
 export function fixedTokens(capabilities) {
+  // The production form has a frozen actor scene: measure that dialect,
+  // including finite container scripts, while excluding all world body bytes.
+  const body = JSON.stringify({ requiredContext: {} });
+  const context = { intent: { actorRef: 'actor' }, entries: [{ kind: 'known', entryRef: 'actor', value: { entity: { sceneId: 'scene' } } }],
+    references: { citations: { viewerEvidenceRefs: [], authorityBasisRefs: [] } } };
   const request = createSubmitKpProposalBundleModelInput(
-    "x", capabilities, [], [], [], undefined,
-    { existingRefs: [], viewerRefs: [] }, [], false);
+    body, capabilities, [], [], [], undefined,
+    { existingRefs: [], viewerRefs: [] }, [], false, undefined, [], [], undefined, [], undefined, context);
+  // Registered interface cost with both directions. Production offers only
+  // directions with frozen eligible sources; source enum bytes are world data.
+  const operation = request.tools[0].function.parameters.$def?.steps?.properties?.inventoryOperation?.items?.properties?.operation;
+  if (operation?.anyOf) operation.anyOf.push(...containerTransferWireSchemas(operation.anyOf));
   return conservativeInputTokens(JSON.stringify({
-    systemPrompt: request.messages.map(message => message.content ?? "").join(""),
+    systemPrompt: request.messages.map(message => (message.content ?? "").replace(body, "x")).join(""),
     formSchemas: request.tools,
   }));
 }
