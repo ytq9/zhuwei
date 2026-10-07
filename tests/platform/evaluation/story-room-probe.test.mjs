@@ -12,6 +12,8 @@ test("default is configuration-only dry-run; unimplemented cases cannot enable l
   const options = parseStoryProbeOptions([]), report = storyProbeDryRun(options);
   assert.equal(options.live, false); assert.equal(report.realProviderCalls, 0); assert.equal(report.workerRuns, 0);
   assert.deepEqual(report.cases.map(value => [value.caseId, value.implemented]), [
+    ["dynamic-container-atomic", true],
+    ["dynamic-container-continuity", true],
     ["sandbox-story-conclusion", true],
     ["short-local-conflict", true], ["narration-recovery", true],
     ["daily-investigation", true], ["daily-witnessed", true], ["daily-spoken-intent", true], ["daily-hidden-act", true], ["daily-npc-leaves", true], ["daily-items", true], ["daily-spell", true], ["daily-combat", true], ["daily-multiplayer", true],

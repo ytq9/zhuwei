@@ -47,6 +47,7 @@ export type { FrozenPlayerChoicePlan } from "./v2/frozen-player-choice";
 export { isHistoricalOrigin } from "./v2/historical-world";
 export { isItemAssemblyOperation } from "./v2/item-assembly-shapes";
 export { ITEM_DEFINITION_SCHEMA, ITEM_ENTRY_SCHEMA } from "./v2/items";
+export type { ItemEntryV1 } from "./v2/items";
 export { KNOWLEDGE_REVIEW_PLAN_SCHEMA } from "./v2/knowledge-review";
 export { NPC_MATERIALIZATION_SOURCE_SCHEMA, isNpcMaterializationSource, isNpcMaterializedPayload } from "./v2/npc-materialization";
 export { NPC_ACTOR_PLAN_FORMATION_SOURCE_SCHEMA } from "./v2/npc-plan-formation";

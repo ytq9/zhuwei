@@ -18,7 +18,7 @@ import { authorityKnowledgeCatalogWitness, authorityKnowledgeText, isDynamicLoca
 import { createKnowledgeSelector, KNOWLEDGE_DIRECTORY_SCHEMA, knowledgeDirectoryEntryRef, knowledgeGist, type KnowledgeSelection } from "./context/knowledge-relevance";
 import { parseSubmitKpProposalBundleCandidateResponse } from "./proposal-provider";
 import { lowerVNext2ProposalBundle } from "./proposal-bundle-lowering";
-import { proposalModelContext, proposalItemEntryRefs, proposalItemDefinitionRefs, proposalObservationSubjectRefs,
+import { proposalModelContext, proposalItemEntryRefs, proposalInventoryEntryRefs, proposalItemDefinitionRefs, proposalObservationSubjectRefs,
   proposalNpcSourceChoices, proposalCreatureTargetRefs } from "./proposal-context";
 import { requiredContextBasisReferences } from "./required-context-runtime";
 import { VNEXT_PROPOSAL_GUIDANCE_POLICY_HASH, vnextProposalReferenceRules } from "./proposal-guidance";
@@ -230,7 +230,7 @@ export function npcWorkModelInput(request: NpcWorkDecisionRequest, selectionResp
     tool_choice: "required", parallel_tool_calls: false, max_completion_tokens: 2000 };
   const input = createSubmitKpProposalBundleModelInput(message, selected as VNextProposalCapabilityId[], proposalItemEntryRefs(context),
     proposalObservationSubjectRefs(context), [], proposalNpcSourceChoices(context), requiredContextBasisReferences(context),
-    proposalCreatureTargetRefs(context), false, proposalItemDefinitionRefs(context), [], [], npcMoveChoices(context));
+    proposalCreatureTargetRefs(context), false, proposalItemDefinitionRefs(context), [], [], npcMoveChoices(context), [], proposalInventoryEntryRefs(context));
   // ADR 0118: the start form's filling text is the NPC's own.
   const system = selected.includes("startCombat") ? vnextProposalRequestMessages(message, vnextProposalReferenceRules("expandedProposal",
     selected as VNextProposalCapabilityId[], [], [], { startCombat: NPC_START_COMBAT }), instruction)[0] : input.messages[0];

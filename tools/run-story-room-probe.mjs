@@ -21,7 +21,7 @@ const ARTIFACT_NAMES = new Set(["initial", "first-action", "first-table", "first
 /** The evidence names the Worker may save; anything else stops the run. */
 export const storyProbeArtifactNameAllowed = name => ARTIFACT_NAMES.has(name)
   || /^daily-step-[1-9]-(request|result|table|authority|retry|denials|peer|skipped)$/.test(name);
-const HARNESS_SOURCES = ["tools/run-story-room-probe.mjs", "tests/kp/stories/story-live-room.eval.mts", "tests/support/fixtures/daily-gameplay.ts", "tests/support/fixtures/daily-gameplay-authority.mjs", "tests/platform/evaluation/story-room-probe.test.mjs",
+const HARNESS_SOURCES = ["tools/run-story-room-probe.mjs", "tests/kp/stories/story-live-room.eval.mts", "tests/support/fixtures/daily-gameplay.ts", "tests/support/fixtures/daily-gameplay-authority.mjs", "tests/support/fixtures/dynamic-object-live.ts", "tests/platform/evaluation/story-room-probe.test.mjs",
   "tests/support/fixtures/story-history-http.ts", "tests/support/fixtures/story-live-room-cases.mjs",
   "tests/config/story-live.config.mjs", "tests/config/story-live.wrangler.jsonc", "tests/config/worker.wrangler.jsonc", "tests/support/room-worker.ts"];
 const SOURCE_ROOTS = ["app", "db", "drizzle", "worker", "cloudflare", "package.json", "package-lock.json", "tsconfig.json",

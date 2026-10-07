@@ -1,0 +1,270 @@
+{
+  "schema": "zhuwei.dynamic-object-live-evidence/v1",
+  "date": "2026-10-07",
+  "baseline": "972664aa",
+  "authorizedBatch": {
+    "maxCalls": 48,
+    "maxCostCny": 3,
+    "firstFailureStopsBatch": true,
+    "distinguishingContrastsAllowed": 1
+  },
+  "status": "stopped-after-failed-contrast",
+  "fixture": "Native Rules prehistory only: owner inspected 3 cloths, peer took 1; closed owned box holds 2, last inspection says 3. No injected sampled model responses or successes.",
+  "sampledAction": "我打开随身木盒，从里面取出一块干净布条，然后把盒盖合上。",
+  "runs": [
+    {
+      "role": "initial-failure",
+      "caseId": "dynamic-container-continuity",
+      "startedAt": "2026-10-07T05:43:25.462Z",
+      "limits": {
+        "maxCalls": 12,
+        "maxInputTokens": 960000,
+        "maxOutputTokens": 64000,
+        "callTimeoutMs": 45000
+      },
+      "sourceManifestSha": "sha256:876fc969b0b0d397f9e9f975feea1e65077d849489878e9199ac69e092473819",
+      "sourceUnchanged": true,
+      "productResult": {
+        "action": "notCommitted",
+        "code": "PROPOSAL_REPAIR_EXHAUSTED",
+        "narration": "notApplicable"
+      },
+      "selectedCapabilities": [
+        "inventoryOperation",
+        "worldInteraction",
+        "storyContinuity"
+      ],
+      "sampledInventorySurface": {
+        "entryFields": 11,
+        "allEntryFieldsOfferOriginalInstance": false,
+        "worldInteractionProvided": true
+      },
+      "authority": {
+        "eventCounts": [
+          6,
+          6
+        ],
+        "stateUnchanged": true,
+        "inventoryUnchanged": true,
+        "containerMemoryUnchanged": true,
+        "randomnessUnchanged": true,
+        "messagesUnchanged": true,
+        "actualClothQuantity": 2
+      },
+      "calls": [
+        {
+          "ordinal": 1,
+          "responseSha": "sha256:804f05f9ba0817bb1ab0c906f7e0acc61e39ac62f7d1606c1ebd4031ec4dafbe",
+          "requestSha": "sha256:6df553e3bf234d3770d4b79c9df34a9aaa4b088f3e9f0084139c9288a073096a",
+          "requestedModel": "deepseek-v4-flash",
+          "reportedModel": "deepseek-flash",
+          "inputTokens": 31263,
+          "outputTokens": 95,
+          "cacheHitTokens": 0,
+          "cacheMissTokens": 31263
+        },
+        {
+          "ordinal": 2,
+          "responseSha": "sha256:d88f068deeb4ef1fe3644d4ea5a4ac4315f261d437ccf1304d7ea09a9a820f9b",
+          "requestSha": "sha256:f2ec3c63d2cd8f4694947c3fe5af94b4243df3e7e6e36f811cdf67498e6156dd",
+          "requestedModel": "deepseek-v4-flash",
+          "reportedModel": "deepseek-flash",
+          "inputTokens": 43715,
+          "outputTokens": 289,
+          "cacheHitTokens": 23808,
+          "cacheMissTokens": 19907
+        },
+        {
+          "ordinal": 3,
+          "responseSha": "sha256:f8aca0957439b7c64a7bc6f7f7928aba721d990977aed761c82226c41e99e5b2",
+          "requestSha": "sha256:caca1e3d61e112d5abd1019571a7fac76bcaa71fa3335e8ccc6d27fe254a99c4",
+          "requestedModel": "deepseek-v4-flash",
+          "reportedModel": "deepseek-flash",
+          "inputTokens": 44273,
+          "outputTokens": 1478,
+          "cacheHitTokens": 42752,
+          "cacheMissTokens": 1521
+        },
+        {
+          "ordinal": 4,
+          "responseSha": "sha256:24004ce8d18ebe02df3174e4ade93adc3584a4ff4ff474c17960b4da9ece0c61",
+          "requestSha": "sha256:e1e5beb2eaf465da22df227af61cdf2889fb411482efe852435fd8cd4c14be57",
+          "requestedModel": "deepseek-v4-flash",
+          "reportedModel": "deepseek-flash",
+          "inputTokens": 46694,
+          "outputTokens": 170,
+          "cacheHitTokens": 45696,
+          "cacheMissTokens": 998
+        },
+        {
+          "ordinal": 5,
+          "responseSha": "sha256:4116e244f5244f38372280ceba9c97e691378e09315e831245e51cfbc3a96530",
+          "requestSha": "sha256:ceaa38c7ef61a969113244f8b46f37ac4dbdd4086447c8c74f21afe645d837d6",
+          "requestedModel": "deepseek-v4-flash",
+          "reportedModel": "deepseek-flash",
+          "inputTokens": 49200,
+          "outputTokens": 128,
+          "cacheHitTokens": 46592,
+          "cacheMissTokens": 2608
+        }
+      ],
+      "usage": {
+        "inputTokens": 215145,
+        "outputTokens": 2160,
+        "cacheHitTokens": 158848,
+        "cacheMissTokens": 56297
+      },
+      "costCnyByPublishedRates": {
+        "offPeak": 0.06811395999999999,
+        "peak": 0.13622791999999997
+      },
+      "usageComplete": true
+    },
+    {
+      "role": "single-distinguishing-contrast",
+      "caseId": "dynamic-container-atomic",
+      "startedAt": "2026-10-07T06:18:57.405Z",
+      "limits": {
+        "maxCalls": 8,
+        "maxInputTokens": 720000,
+        "maxOutputTokens": 32000,
+        "callTimeoutMs": 45000
+      },
+      "sourceManifestSha": "sha256:fc2438d52ed373283addfa72dc3b54741c9c37f383fe9066a2bde830a165d8cc",
+      "sourceUnchanged": true,
+      "productResult": {
+        "action": "notCommitted",
+        "code": "PROPOSAL_REPAIR_EXHAUSTED",
+        "narration": "notApplicable"
+      },
+      "selectedCapabilities": [
+        "inventoryOperation"
+      ],
+      "sampledInventorySurface": {
+        "entryFields": 11,
+        "allEntryFieldsOfferOriginalInstance": true,
+        "worldInteractionProvided": false
+      },
+      "authority": {
+        "eventCounts": [
+          6,
+          6
+        ],
+        "stateUnchanged": true,
+        "inventoryUnchanged": true,
+        "containerMemoryUnchanged": true,
+        "randomnessUnchanged": true,
+        "messagesUnchanged": true,
+        "actualClothQuantity": 2
+      },
+      "calls": [
+        {
+          "ordinal": 1,
+          "responseSha": "sha256:9eb0fb3b9f0b78a0150c3269b1b2c4ee793988065d12231d5c229b27f837abe1",
+          "requestSha": "sha256:5cf4cc56ab668a6f4a0590e37b93e96be9f09f5ade673190d6458e0165ff4bf4",
+          "requestedModel": "deepseek-v4-flash",
+          "reportedModel": "deepseek-flash",
+          "inputTokens": 30510,
+          "outputTokens": 85,
+          "cacheHitTokens": 512,
+          "cacheMissTokens": 29998
+        },
+        {
+          "ordinal": 2,
+          "responseSha": "sha256:33a6f09664097e9dde1028f2d87d01348891c176dfd37a971251d99137e52508",
+          "requestSha": "sha256:6b4576f7d84309c5bc445c73be8dfad91d8ee52e9d600ebd2f51ea637f909d67",
+          "requestedModel": "deepseek-v4-flash",
+          "reportedModel": "deepseek-flash",
+          "inputTokens": 35171,
+          "outputTokens": 239,
+          "cacheHitTokens": 23040,
+          "cacheMissTokens": 12131
+        },
+        {
+          "ordinal": 3,
+          "responseSha": "sha256:9ecbfd764316beb3d3c69205e8deb73f5001dc0bd5869688bb285ad386575d50",
+          "requestSha": "sha256:29a9ac9d40f9e1b7b0d35aeb7af7bf426fedd79b62dd1f74f1d16403f5a38a04",
+          "requestedModel": "deepseek-v4-flash",
+          "reportedModel": "deepseek-flash",
+          "inputTokens": 35689,
+          "outputTokens": 351,
+          "cacheHitTokens": 34176,
+          "cacheMissTokens": 1513
+        },
+        {
+          "ordinal": 4,
+          "responseSha": "sha256:2a9a05ad677ef1ef75c4e5c6ead47dd896d33a53e9cdc59ca747b44141539dea",
+          "requestSha": "sha256:f554ec9711a7667627f31c6e0b6fbcb897d09f3268cd584d86dd54170442127d",
+          "requestedModel": "deepseek-v4-flash",
+          "reportedModel": "deepseek-flash",
+          "inputTokens": 36878,
+          "outputTokens": 405,
+          "cacheHitTokens": 35968,
+          "cacheMissTokens": 910
+        },
+        {
+          "ordinal": 5,
+          "responseSha": "sha256:530e1ddae89328106a88a9cebb5741e8da1efced53d59a34fe795f50c0768980",
+          "requestSha": "sha256:72859834e8f0753a8d08b1758d4ac8ce365467440e93a2e4333188eb2816c3ed",
+          "requestedModel": "deepseek-v4-flash",
+          "reportedModel": "deepseek-flash",
+          "inputTokens": 38074,
+          "outputTokens": 295,
+          "cacheHitTokens": 37248,
+          "cacheMissTokens": 826
+        }
+      ],
+      "usage": {
+        "inputTokens": 176322,
+        "outputTokens": 1375,
+        "cacheHitTokens": 130944,
+        "cacheMissTokens": 45378
+      },
+      "costCnyByPublishedRates": {
+        "offPeak": 0.05349688,
+        "peak": 0.10699376
+      },
+      "usageComplete": true
+    }
+  ],
+  "totals": {
+    "physicalCalls": 10,
+    "inputTokens": 391467,
+    "outputTokens": 3535,
+    "cacheHitTokens": 289792,
+    "cacheMissTokens": 101675,
+    "offPeakCny": 0.12161083999999998,
+    "peakCny": 0.24322167999999997
+  },
+  "pricing": {
+    "source": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing",
+    "snapshotDate": "2026-10-07",
+    "snapshotSha": "sha256:5a7b1832592387340f2fc456399b34b89b05f3fa167c2e35909e2fa4afe021e3",
+    "currency": "CNY",
+    "unit": "million tokens",
+    "flashRates": {
+      "offPeak": {
+        "cacheHit": 0.02,
+        "cacheMiss": 1,
+        "output": 4
+      },
+      "peak": {
+        "cacheHit": 0.04,
+        "cacheMiss": 2,
+        "output": 8
+      }
+    },
+    "oldModelAliasUsesCurrentFlash": true,
+    "actualBillingReceipt": false
+  },
+  "afterContrast": "Structured diagnostic expectation now names worldInteraction / operateObject / open. Only local validation followed; no third paid sample.",
+  "unverified": [
+    "container put-back and later revisit",
+    "NPC combat completion",
+    "item completion/resource retention",
+    "scene object completion",
+    "terrain completion",
+    "original-content provenance real rejection",
+    "model-generated narration and duplicate-request/recovery of a successful action"
+  ]
+}

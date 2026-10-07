@@ -69,6 +69,7 @@ export { authorityKnowledgeCatalogWitness, HELD_KNOWLEDGE_CATALOG_WITNESS_SCHEMA
 // which a holder's directory groups its older memories.
 export { fictionDayOf } from "./v2/promise-due";
 export { itemEntryResourceId } from "./v2/items";
+export { itemPolicyVisibleToViewer } from "./v2/item-projection";
 export { authorityEquippedItemWeaponAbilityRefs } from "./v2/item-authority-vnext";
 // SPEC 0016 §7: the snapshot-dependency edges of a typed Bundle are a pure
 // function of its steps; lowering must order the same edges Rules compiles.

@@ -11,6 +11,7 @@ import { historyHttpAccount, historyHttpDb, historyHttpPost, historyHttpSource, 
 import { selectStoryProbeCase } from "../../support/fixtures/story-live-room-cases.mjs";
 import { acceptDailyGameplay, dailyClericDraft, dailyRogueDraft } from "../../support/fixtures/daily-gameplay";
 import { CURRENT_AUTHORITATIVE_MODULE_VERSION } from "../../../app/_runtime/lib/module/authoritative";
+import { prepareContainerLiveHistory } from "../../support/fixtures/dynamic-object-live";
 
 declare module "vitest" {
   export interface ProvidedContext {
@@ -264,11 +265,12 @@ it("one real HTTP action: admission, narration, optional fault recovery and exac
       }
     }
     const owner = await historyHttpAccount("真实功能链路验收");
-    const peer = ["multiplayer", "help"].includes(String(selected.dailyGroup)) ? await historyHttpAccount("真实同桌验收") : undefined;
+    const peer = ["multiplayer", "help", "containerContinuity"].includes(String(selected.dailyGroup)) ? await historyHttpAccount("真实同桌验收") : undefined;
     // A probe plays the module version a new room gets (ADR 0087 opening places).
     const source = await historyHttpSource(owner, peer, { moduleVersion: CURRENT_AUTHORITATIVE_MODULE_VERSION,
-      ...(selected.dailyGroup === "items" ? { injured: true, groundHealingPotion: true } : selected.dailyGroup === "spell"
+      ...(selected.dailyGroup === "containerContinuity" ? { containerProbe: true } : selected.dailyGroup === "items" ? { injured: true, groundHealingPotion: true } : selected.dailyGroup === "spell"
         ? { injured: true, draft: dailyClericDraft } : selected.caseId === "pick-cellar-lock" ? { draft: dailyRogueDraft } : {}) });
+    if (selected.dailyGroup === "containerContinuity") await prepareContainerLiveHistory(source);
     const initialTable = await historyHttpPost("fetchTable", source.code, owner);
     const initial = await authoritySnapshot(source);
     await evidence("initial", { roomId: source.roomId, characterId: source.characters[0].characterId,

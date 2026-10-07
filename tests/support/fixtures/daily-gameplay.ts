@@ -7,6 +7,7 @@ import type { historyHttpAuthority, historyHttpSource, HttpRecord } from "./stor
 import { nextTo } from "../../../app/_runtime/lib/rules/v2/scene-approach";
 import { authorityGeometryFeatureComposite } from "../../../app/_runtime/lib/rules/v2/authority-bindings";
 import { rectangularFeatureEntity } from "../../../app/_runtime/lib/rules/profiles/combat-geometry";
+import { assertContainerLiveStep } from "./dynamic-object-live";
 
 export const dailyClericDraft = { ...historyHttpDraft, classId: "cleric", subclassId: "life", backgroundId: "acolyte",
   scores: { str: 12, dex: 10, con: 13, int: 8, wis: 15, cha: 14 },
@@ -229,7 +230,9 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
       expect(target, "the named place is on the map").toBeDefined();
       expect(nextTo(walker, target!), `the actor ends next to ${selected.approachTo}`).toBe(true);
     }
-    if (selected.dailyGroup === "storyContinuity") {
+    if (selected.dailyGroup === "containerContinuity") {
+      assertContainerLiveStep(initial, after, actor, index);
+    } else if (selected.dailyGroup === "storyContinuity") {
       // SPEC 0009 §§1、8: actual model choice, no forced capability or ending.
       const questions = Object.values(after.state.campaignRuntime.sceneQuestions);
       if (index === 0) expect(questions.some(question => question.status === "open"), "a played scene has an open question").toBe(true);

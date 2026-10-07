@@ -21,7 +21,7 @@ import { VNEXT_KP_PROFILE, VNEXT_KP_WORKFLOW_HASH } from '../../../app/_runtime/
 import { createVNextProposalOfferModelInput, createSubmitKpProposalBundleModelInput, encodeVNextStrictToolBundle,
   OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
 import { parseVNextProposalOfferResponse, parseSubmitKpProposalBundleCandidateArguments } from '../../../app/_runtime/lib/kp/vnext/proposal-provider.ts';
-import { proposalItemEntryRefs, proposalObservationSubjectRefs, proposalNpcSourceChoices, proposalCreatureTargetRefs,
+import { proposalItemEntryRefs, proposalInventoryEntryRefs, proposalObservationSubjectRefs, proposalNpcSourceChoices, proposalCreatureTargetRefs,
   proposalItemDefinitionRefs, proposalContextView, proposalNpcRecall, proposalKnowledgeRecall,
   vnextProposalContextBody } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
 import { requiredContextBasisReferences } from '../../../app/_runtime/lib/kp/vnext/required-context-runtime.ts';
@@ -107,7 +107,7 @@ export function recordLibraryAction(s, f, { state = f.state, context, binding, o
   const inputs = [createVNextProposalOfferModelInput(vnextProposalContextBody(original), original),
     createSubmitKpProposalBundleModelInput(vnextProposalContextBody(context, selected.npcRefs, selected.knowledgeRefs), selected.capabilities,
       proposalItemEntryRefs(view), proposalObservationSubjectRefs(view), selected.terminalKinds, proposalNpcSourceChoices(view),
-      requiredContextBasisReferences(view), proposalCreatureTargetRefs(view), true, proposalItemDefinitionRefs(view), requestable, handles)];
+      requiredContextBasisReferences(view), proposalCreatureTargetRefs(view), true, proposalItemDefinitionRefs(view), requestable, handles, undefined, [], proposalInventoryEntryRefs(view))];
   const responses = [offer, proposal ? tool(SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, encodeVNextStrictToolBundle(proposal)) : undefined];
   const calls = inputs.map((input, index) => {
     const ordinal = index + 1, request = deepSeekRequestBody(VNEXT_KP_PROFILE.modelId, input);

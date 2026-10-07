@@ -8,7 +8,7 @@ import type { VNextRequiredContext } from "./required-context";
 import { createSubmitKpProposalBundleModelInput, vnextProposalRequestMessages } from "./proposal-schema";
 import { parseSubmitKpProposalBundleCandidateResponse } from "./proposal-provider";
 import { lowerVNext2ProposalBundle } from "./proposal-bundle-lowering";
-import { proposalModelContext, proposalItemEntryRefs, proposalItemDefinitionRefs, proposalObservationSubjectRefs,
+import { proposalModelContext, proposalItemEntryRefs, proposalInventoryEntryRefs, proposalItemDefinitionRefs, proposalObservationSubjectRefs,
   proposalNpcSourceChoices, proposalCreatureTargetRefs } from "./proposal-context";
 import { requiredContextBasisReferences } from "./required-context-runtime";
 import { VNEXT_PROPOSAL_GUIDANCE_POLICY_HASH, vnextProposalReferenceRules } from "./proposal-guidance";
@@ -112,7 +112,7 @@ export function npcReactionModelInput(request: NpcReactionDecisionRequest): Reco
   const message = JSON.stringify({ npcId: request.npcId, requiredContext: proposalModelContext(context) });
   const input = createSubmitKpProposalBundleModelInput(message, capabilities, proposalItemEntryRefs(context),
     proposalObservationSubjectRefs(context), [], proposalNpcSourceChoices(context), requiredContextBasisReferences(context),
-    proposalCreatureTargetRefs(context), false, proposalItemDefinitionRefs(context), [], [], npcMoveChoices(context));
+    proposalCreatureTargetRefs(context), false, proposalItemDefinitionRefs(context), [], [], npcMoveChoices(context), [], proposalInventoryEntryRefs(context));
   return { ...input, messages: vnextProposalRequestMessages(message,
     vnextProposalReferenceRules("expandedProposal", capabilities, [], [], { startCombat: NPC_START_COMBAT }),
     request.trigger === "heardConversation" ? heardInstruction : instruction),

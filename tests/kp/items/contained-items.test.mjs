@@ -64,8 +64,24 @@ test("closed portable containers retain last inspected contents while blocking a
   assert.equal(step(f.profiles, f.state, stale).kind, "rejected", "container state participates in the child's read hash");
   for (const operation of [{ kind: "acquire", entryRef: CONTENTS, quantity: 1 },
     { kind: "lifecycle", entryRef: CONTENTS, action: "destroy" }]) {
-    assert.equal(step(f.profiles, f.state, f.input(operation)).kind, "rejected");
+    const denied = step(f.profiles, f.state, f.input(operation));
+    assert.equal(denied.kind, "rejected");
+    // SPEC 0001 §16: preserve the real inventory row; diagnose the opener,
+    // not a missing instance, without refreshing the last inspection.
+    assert.equal(denied.rejection.diagnostics[0].constraint, "inventory:open-container-before-accessing-known-entry");
+    assert.deepEqual(denied.rejection.diagnostics[0].expected.precedingContainerOperation,
+      { proposalKind: "worldInteraction", commonAction: { kind: "operateObject", option: "open" } });
   }
+  const unseen = step(f.profiles, f.state, f.input({ kind: "acquire", entryRef: CONTENTS, quantity: 1 }, RECIPIENT));
+  assert.equal(unseen.kind, "rejected");
+  assert.ok(!(unseen.rejection.diagnostics ?? []).some(diagnostic => diagnostic.constraint === "inventory:open-container-before-accessing-known-entry"),
+    "an actor without the inspection receives no container/content identity hint");
+  const undisclosed = structuredClone(f.state);
+  delete undisclosed.vNextItemAuthority.containerMemories[PLAYER][FIRST];
+  const unknown = step(f.profiles, undisclosed, inventoryInput(undisclosed, "root:container:uninspected",
+    { kind: "acquire", entryRef: CONTENTS, quantity: 1 }));
+  assert.equal(unknown.kind, "rejected");
+  assert.equal(unknown.rejection.diagnostics[0].constraint, "inventory:entry-ref-must-resolve-to-item-entry");
   assert.deepEqual(spendItemEntryCosts(f.state.campaignRuntime.itemSystem, { entryId: CONTENTS, holderRef: PLAYER,
     quantityCost: 1, chargeCost: 0, durabilityCost: 0 }), { error: "itemContainerClosed" });
   const read = () => project(f.profiles, f.state, { kind: "player", principalId: PRINCIPAL, sessionVersion: 1, seatId: SEAT, characterId: PLAYER });

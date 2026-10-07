@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { proposalItemDefinitionRefs, proposalItemEntryRefs, proposalModelContext } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
+import { proposalItemDefinitionRefs, proposalItemEntryRefs, proposalInventoryEntryRefs, proposalObservationSubjectRefs, proposalModelContext } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
 import { invokeVNextProposalOffer, invokeSubmitKpProposalBundleFirstPass } from '../../../app/_runtime/lib/kp/vnext/proposal-provider.ts';
 import { createVNextProposalBundleSchema } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
 import { matchesAuthoredSourceSchema } from '../../../app/_runtime/lib/rules/v2/authored-materialization.ts';
@@ -130,6 +130,70 @@ test('an empty known inventory still permits same-bundle item creation without i
     assert.equal(matchesAuthoredSourceSchema('prospective:created', field), true);
     assert.equal(matchesAuthoredSourceSchema('unknown:existing', field), false);
   }
+});
+
+// SPEC 0001 §16, SPEC 0016 §§7.1、7.3: a planned opener precedes taking
+// the frozen real instance; it never makes old memories executable evidence.
+test('the real provider offers closed original contents only as deferred inventory references', async () => {
+  for (const placement of ['held', 'scene']) {
+    const frozen = context(`closed-${placement}`), actor = frozen.intent.actorRef;
+    const box = `${placement}:container`, contents = `${placement}:original-contents`;
+    const known = (entryRef, value) => ({ kind: 'known', entryRef, value, revisionOrHash: 'sha256:fixture' });
+    frozen.entries.push(known(actor, { entity: { id: actor, kind: 'player', sceneId: 'scene:current' } }),
+      known(box, placement === 'held' ? { schema: ITEM_ENTRY_SCHEMA, entryId: box, disposition: 'held', holderRef: actor,
+        stateMachine: { state: 'closed' }, containerMemories: [{ entries: [{ entryId: contents, quantity: 3 }, { entryId: 'memory:gone', quantity: 1 }] }] }
+        : { sceneRef: 'scene:current', feature: { featureId: box, state: 'closed' } }),
+      known(contents, { schema: ITEM_ENTRY_SCHEMA, entryId: contents, containerRef: box,
+        disposition: placement, holderRef: placement === 'held' ? actor : null, sceneRef: placement === 'scene' ? 'scene:current' : null,
+        visibilityPolicyRef: placement === 'held' ? `visibility:character-controller:${actor}` : 'visibility:scene-observers', quantity: 2 }));
+    frozen.references.citations.viewerEvidenceRefs.push(box);
+    frozen.references.citations.authorityBasisRefs.push(contents);
+    const before = structuredClone(frozen);
+    assert.ok(proposalInventoryEntryRefs(frozen).includes(contents));
+    assert.ok(!proposalItemEntryRefs(frozen).includes(contents));
+    assert.ok(!proposalObservationSubjectRefs(frozen).includes(contents));
+    assert.deepEqual(proposalModelContext(frozen).references.deferredInventoryEntryRefs, [contents]);
+    const social = createVNextProposalBundleSchema(['social'], proposalItemEntryRefs(frozen), proposalObservationSubjectRefs(frozen), [], [], undefined, []);
+    assert.ok(!JSON.stringify(social).includes(contents), 'closed contents do not become promise or NPC reply subjects');
+    let calls = 0;
+    await invokeSubmitKpProposalBundleFirstPass({ modelId: 'test-double', message: '打开原容器，取出一件，合上。',
+      requiredContext: frozen, capabilities: ['inventoryOperation', 'worldInteraction'],
+      binding: { async run(_model, request) {
+        calls++;
+        assertDeepSeekStrictToolModelInput(request);
+        for (const field of entryField(request.tools[0].function.parameters)) {
+          assert.equal(matchesAuthoredSourceSchema(contents, field), true);
+          assert.equal(matchesAuthoredSourceSchema('memory:gone', field), false);
+        }
+        return { choices: [{ message: { tool_calls: [{ type: 'function', function: {
+          name: request.tools[0].function.name, arguments: '{}',
+        } }] } }] };
+      } },
+    });
+    assert.equal(calls, 1);
+    assert.deepEqual(frozen, before);
+  }
+});
+
+test('deferred inventory rejects foreign bags, hidden policies, absent records and unopened inner containers', () => {
+  const frozen = context('boundary'), actor = frozen.intent.actorRef;
+  const known = (entryRef, value) => ({ kind: 'known', entryRef, value, revisionOrHash: 'sha256:fixture' });
+  frozen.entries.push(known(actor, { entity: { id: actor, kind: 'player', sceneId: 'scene:current' } }),
+    known('container:visible', { schema: ITEM_ENTRY_SCHEMA, entryId: 'container:visible', containerMemories: [{ entries: [{ entryId: 'memory:gone' }] }] }),
+    known('container:inner', { schema: ITEM_ENTRY_SCHEMA, entryId: 'container:inner' }));
+  frozen.references.citations.viewerEvidenceRefs.push('container:visible');
+  const entries = [
+    ['item:foreign', { holderRef: 'other:holder' }],
+    ['item:secret', { visibilityPolicyRef: 'visibility:room-authority-only' }],
+    ['item:inner', { containerRef: 'container:inner' }],
+    ['item:other-scene', { disposition: 'scene', holderRef: null, sceneRef: 'scene:elsewhere' }],
+    ['item:unbound', {}],
+  ];
+  for (const [entryId, override] of entries) frozen.entries.push(known(entryId, { schema: ITEM_ENTRY_SCHEMA, entryId,
+    disposition: 'held', holderRef: actor, containerRef: 'container:visible', visibilityPolicyRef: 'visibility:public', ...override }));
+  frozen.references.citations.authorityBasisRefs.push(...entries.filter(([ref]) => ref !== 'item:unbound').map(([ref]) => ref));
+  assert.deepEqual(proposalInventoryEntryRefs(frozen), proposalItemEntryRefs(frozen));
+  assert.equal(proposalModelContext(frozen).references.deferredInventoryEntryRefs, undefined);
 });
 
 test('selection advertises types only and the selected provider stage delivers the frozen item field', async () => {

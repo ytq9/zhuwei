@@ -835,8 +835,9 @@ export type VNextProposalBundleLoweringResult =
  */
 export function createVNextProposalBundleSchema(capabilities: readonly string[] = VNEXT_PROPOSAL_CAPABILITY_IDS,
   itemEntryRefs?: readonly string[], observationSubjectRefs?: readonly string[], terminalKinds?: readonly string[], npcSources?: ProposalNpcSourceChoices,
-  basisChoices?: VNextBasisReferenceChoices, creatureRefs?: readonly string[], itemDefinitionRefs?: readonly string[], npcMove?: VNextNpcMoveChoices) {
-  return Object.freeze(compactDeepSeekStrictToolSchema(proposalFillingSchema(makeStrictBundleSchema(closeVNextProposalCapabilities(capabilities), itemEntryRefs, observationSubjectRefs, basisChoices, creatureRefs, itemDefinitionRefs, npcSources, npcMove), terminalKinds)));
+  basisChoices?: VNextBasisReferenceChoices, creatureRefs?: readonly string[], itemDefinitionRefs?: readonly string[], npcMove?: VNextNpcMoveChoices,
+  inventoryEntryRefs?: readonly string[]) {
+  return Object.freeze(compactDeepSeekStrictToolSchema(proposalFillingSchema(makeStrictBundleSchema(closeVNextProposalCapabilities(capabilities), itemEntryRefs, observationSubjectRefs, basisChoices, creatureRefs, itemDefinitionRefs, npcSources, npcMove, inventoryEntryRefs), terminalKinds)));
 }
 
 /** SPEC 0006 §7 (ADR 0073): the form of one NPC's own reply to what it heard,
@@ -1157,10 +1158,13 @@ export function createSubmitKpProposalBundleModelInput(
   /** Types this frozen context does not offer (SPEC 0016 §7.2): the
    * amendment cannot add them and the guidance leaves them out. */
   unofferedCapabilities: readonly string[] = [],
+  /** Frozen contents that become accessible after the same action opens
+   * their container. Kept separate from current evidence and social subjects. */
+  inventoryEntryRefs?: readonly string[],
 ): StrictToolBundleModelInput {
   const submitTool = { ...SUBMIT_KP_PROPOSAL_BUNDLE_TOOL,
     function: Object.freeze({ ...SUBMIT_KP_PROPOSAL_BUNDLE_TOOL.function,
-      parameters: createVNextProposalBundleSchema(capabilities, itemEntryRefs, observationSubjectRefs, terminalKinds, npcSources, basisChoices, creatureRefs, itemDefinitionRefs, npcMove) }),
+      parameters: createVNextProposalBundleSchema(capabilities, itemEntryRefs, observationSubjectRefs, terminalKinds, npcSources, basisChoices, creatureRefs, itemDefinitionRefs, npcMove, inventoryEntryRefs) }),
   };
   return Object.freeze({
     messages: vnextProposalRequestMessages(message,
@@ -1206,7 +1210,7 @@ export function createCorrectKpProposalBundleModelInput(
 function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId[], itemEntryRefs?: readonly string[],
   observationSubjectRefs?: readonly string[], basisChoices?: VNextBasisReferenceChoices,
   creatureRefs?: readonly string[], itemDefinitionRefs?: readonly string[], npcSources?: ProposalNpcSourceChoices,
-  npcMove?: VNextNpcMoveChoices): Record<string, unknown> {
+  npcMove?: VNextNpcMoveChoices, inventoryEntryRefs?: readonly string[]): Record<string, unknown> {
   const object = (properties: Record<string, unknown>) => ({
     type: "object",
     properties,
@@ -1669,7 +1673,7 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
   const authored = authoredProposalVariants({
     basisRefs, consumes: { type: "array", items: { anyOf: references } },
     outcomeBinding: outcome,
-  }, produced, itemEntryRefs, itemDefinitionRefs);
+  }, produced, inventoryEntryRefs ?? itemEntryRefs, itemDefinitionRefs);
   const formation = formationToolSchema(NPC_ACTOR_PLAN_FORMATION_SOURCE_SCHEMA).properties as Record<string, Record<string, unknown>>;
   const storyContinuity = object({ kind: { type: "string", enum: ["storyContinuity"] }, basisRefs,
     consumes: { type: "array", items: { anyOf: references } }, produces: produced("storyContinuity"), outcomeBinding: outcome,

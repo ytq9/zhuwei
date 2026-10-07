@@ -19,7 +19,7 @@ import { compileAbilityDefinition, registeredAbilityRecord } from '../../../app/
 import { parseSubmitKpProposalBundleCandidateArguments, parseVNextProposalOfferResponse } from '../../../app/_runtime/lib/kp/vnext/proposal-provider.ts';
 import { createVNextProposalOfferModelInput, createSubmitKpProposalBundleModelInput,
   OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
-import { proposalModelContext, proposalItemEntryRefs, proposalObservationSubjectRefs, proposalNpcSourceChoices,
+import { proposalModelContext, proposalItemEntryRefs, proposalInventoryEntryRefs, proposalObservationSubjectRefs, proposalNpcSourceChoices,
   proposalCreatureTargetRefs, proposalItemDefinitionRefs } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
 import { requiredContextBasisReferences } from '../../../app/_runtime/lib/kp/vnext/required-context-runtime.ts';
 import { deepSeekRequestBody } from '../../../app/_runtime/lib/kp/deepseek.ts';
@@ -194,7 +194,7 @@ function recordOriginalProposal(f) {
   const message = JSON.stringify({ requiredContext: proposalModelContext(context) });
   const inputs = [createVNextProposalOfferModelInput(message), createSubmitKpProposalBundleModelInput(message, selected.capabilities,
     proposalItemEntryRefs(context), proposalObservationSubjectRefs(context), selected.terminalKinds, proposalNpcSourceChoices(context),
-    requiredContextBasisReferences(context), proposalCreatureTargetRefs(context), true, proposalItemDefinitionRefs(context))];
+    requiredContextBasisReferences(context), proposalCreatureTargetRefs(context), true, proposalItemDefinitionRefs(context), [], [], undefined, [], proposalInventoryEntryRefs(context))];
   const responses = [offer, tool(SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, f.wire)];
   for (const [index, input] of inputs.entries()) {
     const ordinal = index + 1, request = deepSeekRequestBody(VNEXT_KP_PROFILE.modelId, input);

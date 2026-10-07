@@ -1,6 +1,7 @@
 import { isItemAssemblyOperation, type ItemAssemblyOperation } from "./item-assembly-shapes";
 import { planItemAssemblyTransition, assemblySourceHash, itemAssemblyReadRefs, type ItemAssemblyChangedPayload } from "./item-assemblies";
 import { itemIdentifiedBy } from "./item-authority-vnext";
+import { itemPolicyVisibleToViewer } from "./item-projection";
 import { narrativeItemBindingRefs, unmaterializedNarrativeRefs } from "./narrative-commitments";
 import { conditionFollowupDrafts } from "./condition-consequences";
 import { hiddenFollowupDrafts } from "./hiding";
@@ -220,6 +221,25 @@ function unavailableInventoryEntry(): { error: string; diagnostics: RuleDiagnost
   }] };
 }
 
+/** SPEC 0001 §16: a remembered real item behind a closed lid is not a
+ * nonexistent reference. Reveal no new identity through a rejection. */
+function knownClosedInventoryEntry(state: AuthoritativeWorldState, actor: CharacterRecord, entry: ItemSystemStateV1["entries"][string]):
+  { error: string; diagnostics: RuleDiagnostic[] } | undefined {
+  const containerRef = entry.containerRef;
+  if (containerRef === undefined || !authorityItemContainer(state, containerRef, actor.sceneId, actor.id, false)
+    || !itemPolicyVisibleToViewer(entry.visibilityPolicyRef, { kind: actor.kind, characterId: actor.id }, entry)
+    || !state.vNextItemAuthority?.containerMemories?.[actor.id]?.[containerRef]?.entries.some(item => item.entryId === entry.entryId)) return undefined;
+  return { error: "inventoryReferenceUnavailable", diagnostics: [{
+    code: "REFERENCE_UNAVAILABLE", path: "/plan/operation/entryRef",
+    constraint: "inventory:open-container-before-accessing-known-entry",
+    expected: { referenceKind: "itemEntry", precedingContainerOperation: {
+      proposalKind: "worldInteraction", commonAction: { kind: "operateObject", option: "open" },
+    } },
+    message: "This actual item is known from the actor's last inspection, but its container is not open. Keep the inventory operation and include worldInteraction commonAction operateObject open before accessing it (unlock first if needed); generic world effects cannot take items.",
+    source: "SPEC 0016", visibility: "public",
+  }] };
+}
+
 /** Recomputed by both planning and event fold; payloads never carry an arbitrary
  * ItemEntry patch. Replay re-verifies the successful check against its audit. */
 export function planInventoryTransition(
@@ -241,7 +261,7 @@ export function planInventoryTransition(
   // Check availability before actor/scene errors can reveal a hidden instance.
   if (entry === undefined || ((entry.disposition === "scene" || entry.containerRef !== undefined)
     && !authoritySpatialRefVisibleTo(state, entry.entryId, actor.sceneId, actor.id))) {
-    return unavailableInventoryEntry();
+    return entry === undefined ? unavailableInventoryEntry() : knownClosedInventoryEntry(state, actor, entry) ?? unavailableInventoryEntry();
   }
   if(!conditionActionPermission(state,actor.id,{kind:"action"}).allowed) {
     return {error:"inventoryActorCannotAct"};

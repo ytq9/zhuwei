@@ -53,7 +53,7 @@ import {
   type VNextProposalBundle,
 } from "./proposal-schema";
 import type { VNextRequiredContext } from "./required-context";
-import { proposalCreatureTargetRefs, proposalItemDefinitionRefs, proposalItemEntryRefs, proposalObservationSubjectRefs, proposalNpcSourceChoices, proposalModelContext, proposalContextView, proposalNpcRecall, proposalKnowledgeRecall, proposalRequestableKnowledgeHandles, proposalKnowledgeRequest, proposalUnofferedCapabilities, vnextProposalContextBody, type ProposalKnowledgeHandle } from "./proposal-context";
+import { proposalCreatureTargetRefs, proposalItemDefinitionRefs, proposalItemEntryRefs, proposalInventoryEntryRefs, proposalObservationSubjectRefs, proposalNpcSourceChoices, proposalModelContext, proposalContextView, proposalNpcRecall, proposalKnowledgeRecall, proposalRequestableKnowledgeHandles, proposalKnowledgeRequest, proposalUnofferedCapabilities, vnextProposalContextBody, type ProposalKnowledgeHandle } from "./proposal-context";
 import { VNEXT_PROPOSAL_GUIDANCE_POLICY } from "./proposal-guidance";
 import { vnextProposalDanglingHandles, vnextProposalProducerCompletion } from "./proposal-producer-completion";
 
@@ -78,7 +78,7 @@ import { draftCommonActionDiagnostics } from "./common-actions";
 export const VNEXT_PROPOSAL_CORRECTION_ROUNDS = 3;
 
 export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
-  version: "kp-vnext2-proposal-parser-v84",
+  version: "kp-vnext2-proposal-parser-v85",
   // ADR 0096: a selection asking for an NPC view already loaded is read without it.
   loadedNpcSelection: "a-requested-view-already-loaded-reads-as-not-requested-v1",
   // ADR 0095: one revision is told every problem found, not the first stage's.
@@ -909,7 +909,7 @@ export async function invokeSubmitKpProposalBundleFirstPass(
   const response = await input.binding.run(
     input.modelId,
     withRetryAnswer(createSubmitKpProposalBundleModelInput(input.message, capabilities, proposalItemEntryRefs(view), proposalObservationSubjectRefs(view), input.terminalKinds, proposalNpcSourceChoices(view), requiredContextBasisReferences(view), proposalCreatureTargetRefs(view), input.amendable === true, proposalItemDefinitionRefs(view), input.amendable === true ? requestable : [], input.amendable === true ? handles : [],
-      undefined, proposalUnofferedCapabilities(requiredContext)),
+      undefined, proposalUnofferedCapabilities(requiredContext), proposalInventoryEntryRefs(view)),
       input.retryQuestion),
     runOptions,
   );
@@ -1035,7 +1035,7 @@ export function createVNextProposalRevisionModelInput(chain: VNextCorrectionChai
   const contextBody = vnextProposalContextBody(requiredContext, current.npcRefs, current.knowledgeRefs);
   const selection = [current.capabilities, proposalItemEntryRefs(view), proposalObservationSubjectRefs(view), current.terminalKinds,
     proposalNpcSourceChoices(view), requiredContextBasisReferences(view), proposalCreatureTargetRefs(view), false, proposalItemDefinitionRefs(view),
-    [], [], undefined, proposalUnofferedCapabilities(requiredContext)] as const;
+    [], [], undefined, proposalUnofferedCapabilities(requiredContext), proposalInventoryEntryRefs(view)] as const;
   if (vnextProposalTicketIsEmptyDraft(current)) return withRetryAnswer(createSubmitKpProposalBundleModelInput(contextBody, ...selection), retryQuestion);
   return withRetryAnswer(createCorrectKpProposalBundleModelInput(contextBody, vnextProposalCorrectionConversation(tickets).map(ticket => ({
     call: { id: `call_${ticket.round}`, name: SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, arguments: ticket.originalArguments },

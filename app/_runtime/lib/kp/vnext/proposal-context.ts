@@ -1,7 +1,7 @@
 import { VNEXT_OBJECT_COMPLETION_CAPABILITIES, type VNextObjectCompletionKind } from "./proposal-capabilities";
 import { isNpcSpatialShell } from "../../rules/shapes";
 import type { VNextRequiredContext } from "./required-context";
-import { ITEM_DEFINITION_SCHEMA, ITEM_ENTRY_SCHEMA, isVNextRulingPrecedent } from "../../rules/shapes";
+import { ITEM_DEFINITION_SCHEMA, ITEM_ENTRY_SCHEMA, isVNextRulingPrecedent, type ItemEntryV1 } from "../../rules/shapes";
 import { VNEXT_STORED_SEMANTIC_DEFINITION_SCHEMA } from "../../rules/shapes";
 import { isPlainRecord, compareCodeUnits, canonicalHash, canonicalUnits, sameCanonical } from "./canonical-json";
 import { VNEXT_CONTEXT_WORK_BUDGET } from "./context/work-budget";
@@ -9,7 +9,7 @@ import { npcDecisionContext, npcDecisionEntryRef, npcDecisionEvidenceRef, npcDec
   isNpcDecisionContextSchema } from "../../rules/v2/npc-decision-context";
 import { KNOWLEDGE_DIRECTORY_SCHEMAS, knowledgeDirectoryEntryRef, knowledgeGist, knowledgeGroupMembers, knowledgeGroupMembersHash, knowledgeGroups,
   knowledgeHeldAt, VNEXT_KNOWLEDGE_RELEVANCE_PROFILE } from "./context/knowledge-relevance";
-import { authorityKnowledgeText, type AuthoritativeWorldState } from "../../rules/authority-read";
+import { authorityKnowledgeText, itemPolicyVisibleToViewer, type AuthoritativeWorldState } from "../../rules/authority-read";
 import { isRetryHistoryEntryRef } from "./retry-history";
 
 // v6 separates world descriptions from adjudication data without changing the
@@ -27,7 +27,8 @@ import { isRetryHistoryEntryRef } from "./retry-history";
 // refs and how it was ruled, without its server identities (ADR 0083). v14
 // shows a long directory's older memories as group lines; a directory with
 // groups depends on what the selection asked for and is sent last (ADR 0111).
-export const VNEXT_PROPOSAL_CONTEXT_SCHEMA = "zhuwei.proposal-context/vnext-14" as const;
+// v15 separates inventory planning after opening from current visible evidence.
+export const VNEXT_PROPOSAL_CONTEXT_SCHEMA = "zhuwei.proposal-context/vnext-15" as const;
 
 export type ProposalNpcRecall = Readonly<{ defaultRefs: readonly string[]; requestableRefs: readonly string[] }>;
 
@@ -428,6 +429,32 @@ export function proposalItemEntryRefs(context: VNextRequiredContext): readonly s
     ? [entry.entryRef] : []).sort(compareCodeUnits));
 }
 
+/** SPEC 0001 §16, SPEC 0016 §7.3: the host may plan opening a visible
+ * container and taking its actual, frozen contents in one action. This is
+ * not current evidence or an NPC's promise/reply subject. Never reconstruct
+ * an instance from an inspection memory or include another holder's bag.
+ * Rules still requires the real opening prefix and the instance's policy. */
+export function proposalInventoryEntryRefs(context: VNextRequiredContext): readonly string[] {
+  const visible = new Set(context.references.citations.viewerEvidenceRefs);
+  const authorized = new Set([...visible, ...context.references.citations.authorityBasisRefs]);
+  const records = new Map(context.entries.flatMap(entry => entry.kind === "known" && isPlainRecord(entry.value)
+    ? [[entry.entryRef, entry.value] as const] : []));
+  const actor = records.get(context.intent.actorRef)?.entity;
+  const refs = new Set(proposalItemEntryRefs(context));
+  if (!isPlainRecord(actor) || typeof actor.sceneId !== "string" || (actor.kind !== "player" && actor.kind !== "npc"))
+    return Object.freeze([...refs].sort(compareCodeUnits));
+  for (const [ref, value] of records) {
+    if (!authorized.has(ref) || value.schema !== ITEM_ENTRY_SCHEMA || value.entryId !== ref
+      || typeof value.containerRef !== "string" || !visible.has(value.containerRef) || !records.has(value.containerRef)) continue;
+    if (!(value.disposition === "held" && value.holderRef === context.intent.actorRef)
+      && !(value.disposition === "scene" && value.sceneRef === actor.sceneId && value.holderRef === null)) continue;
+    if (typeof value.visibilityPolicyRef !== "string" || !itemPolicyVisibleToViewer(value.visibilityPolicyRef,
+      { kind: actor.kind, characterId: context.intent.actorRef }, value as unknown as ItemEntryV1)) continue;
+    refs.add(ref);
+  }
+  return Object.freeze([...refs].sort(compareCodeUnits));
+}
+
 /** Definitions may include authority-only mechanics already authorized for
  * adjudication. They describe a type, never prove a physical instance exists.
  * Only exact read-bound definitions enter this surface; no live state scan. */
@@ -768,6 +795,9 @@ export function proposalModelContext(context: VNextRequiredContext, requestedNpc
   const requestable = recall.filter(entry => entry.role === "requestable" && !requestedNpcRefs.includes(entry.npcRef)).map(entry => entry.npcRef);
   const handles = proposalKnowledgeRecall(context, requestedNpcRefs, requestedKnowledgeRefs);
   const read = proposalReadKnowledgeRefs(context, requestedKnowledgeRefs);
+  const itemEntryRefs = proposalItemEntryRefs(view);
+  const visibleItems = new Set(itemEntryRefs);
+  const deferredInventoryEntryRefs = proposalInventoryEntryRefs(view).filter(ref => !visibleItems.has(ref));
   const subjects = new Set(proposalObservationSubjectRefs(view));
   const known = new Set(view.entries.flatMap(entry => entry.kind === "known" ? [entry.entryRef] : []));
   const { domains: _domains, ...directory } = view.references;
@@ -802,7 +832,8 @@ export function proposalModelContext(context: VNextRequiredContext, requestedNpc
       knowledgeRecall: Object.freeze({ shown: Object.freeze(handles.filter(record => record.kind === "memory" && read.includes(record.entryRef)).map(record => record.entryRef)),
         requestable: Object.freeze(handles.filter(record => !read.includes(record.entryRef)).map(record => record.handle)) }),
       observationSubjectRefs: proposalObservationSubjectRefs(view),
-      npcSourceChoices: proposalNpcSourceChoices(view), itemEntryRefs: proposalItemEntryRefs(view),
+      npcSourceChoices: proposalNpcSourceChoices(view), itemEntryRefs,
+      ...(deferredInventoryEntryRefs.length ? { deferredInventoryEntryRefs: Object.freeze(deferredInventoryEntryRefs) } : {}),
       itemDefinitionRefs: proposalItemDefinitionRefs(view) }),
   });
 }
