@@ -34,6 +34,7 @@ npm run spec:trace
 | 日期 | 决定 | 规则所在 |
 | --- | --- | --- |
 | 2026-10-10 | [ADR 0132：随身物品先列清单，点名后再读](../adr/0132-carried-items-are-listed-and-read-when-named.md) | [SPEC 0016 §4.3](./0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md)，条款不变，只调整冻结与调取方式 |
+| 2026-10-10 | [ADR 0133：填写或修订点到清单里的随身物时读取它](../adr/0133-a-draft-naming-a-listed-carried-item-reads-it.md) | [SPEC 0016 §4.3](./0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md)、[§7.2](./0016-part-c-compound-actions-and-claims.md)，条款不变，修订轮也能读取清单物品，取放诊断一次列全 |
 | 2026-10-07 | [ADR 0131：冻结短引用与声明式容器取放](../adr/0131-frozen-wire-references-and-declared-container-transfer.md) | [SPEC 0016 §§4.3、7](./0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md)，仅调整传输、组装与修订表单，不改权限或调用额度 |
 | 2026-10-06 | [ADR 0130：容器查看记录与原有内容来源](../adr/0130-container-inspection-and-original-content-provenance.md) | [SPEC 0001 §16](./0001-llm-kp-responsibility-contract.md) |
 | 2026-10-06 | [ADR 0128：已有对象按需补全并保持实物连续性](../adr/0128-existing-objects-complete-without-recreation.md) | [SPEC 0016 §7.2](./0016-part-c-compound-actions-and-claims.md)、[SPEC 0001 §§3.3、7、16](./0001-llm-kp-responsibility-contract.md) |

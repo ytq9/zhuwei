@@ -53,7 +53,7 @@ import {
   type VNextProposalBundle,
 } from "./proposal-schema";
 import type { VNextRequiredContext } from "./required-context";
-import { proposalCreatureTargetRefs, proposalItemDefinitionRefs, proposalItemEntryRefs, proposalInventoryEntryRefs, proposalObservationSubjectRefs, proposalNpcSourceChoices, proposalModelContext, proposalContextView, proposalNpcRecall, proposalKnowledgeRecall, proposalPossessionRecall, proposalRequestableKnowledgeHandles, proposalKnowledgeRequest, proposalUnofferedCapabilities, vnextProposalContextBody, type ProposalKnowledgeHandle } from "./proposal-context";
+import { proposalCreatureTargetRefs, proposalItemDefinitionRefs, proposalItemEntryRefs, proposalInventoryEntryRefs, proposalObservationSubjectRefs, proposalNpcSourceChoices, proposalModelContext, proposalContextView, proposalNpcRecall, proposalKnowledgeRecall, proposalPossessionRecall, proposalRequestableKnowledgeHandles, proposalKnowledgeRequest, proposalUnofferedCapabilities, vnextProposalContextBody, proposalDraftContext, proposalKnowledgeRecallPending, type ProposalKnowledgeHandle } from "./proposal-context";
 import { VNEXT_PROPOSAL_GUIDANCE_POLICY } from "./proposal-guidance";
 import { vnextProposalDanglingHandles, vnextProposalProducerCompletion } from "./proposal-producer-completion";
 
@@ -88,6 +88,45 @@ function wireFillingDiagnostics(draft: unknown, diagnostics: readonly ProposalDi
   }
 }
 
+/** ADR 0133: the rows of the carried-item directory a draft names. A draft
+ * may name an item the freeze only listed, as a revision told the loose
+ * piece it should put back does; Room reads it before the draft is checked,
+ * as it reads one a selection names in requestedItemRefs. */
+function draftNamedPossessions(context: VNextRequiredContext, wire: unknown): readonly string[] {
+  const rows = new Set((context.references.possessionRecall ?? []).map(row => row.entryRef));
+  if (rows.size === 0 || !isPlainRecord(wire)) return [];
+  let bound: unknown;
+  try { bound = bindProposalWire(wire, context); } catch { return []; }
+  const named = new Set<string>();
+  const visit = (value: unknown): void => {
+    if (typeof value === "string") { if (rows.has(value)) named.add(value); }
+    else if (Array.isArray(value)) value.forEach(visit);
+    else if (isPlainRecord(value)) Object.values(value).forEach(visit);
+  };
+  visit(bound);
+  return Object.freeze([...named].sort(compareCodeUnits));
+}
+
+/** The directory rows a form or correction reply names in its arguments. */
+function vnextProposalNamedPossessions(context: VNextRequiredContext, response: unknown): readonly string[] {
+  try {
+    const call = extractProposalToolCall(response);
+    if (call.name === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME) return [];
+    return draftNamedPossessions(context, typeof call.arguments === "string" ? parseJsonObjectIgnoringTrailingClosers(call.arguments) : call.arguments);
+  } catch { return []; }
+}
+
+/** The context a reply is checked against once Room has read what it named:
+ * Room reads the rows still unread, then the reply is checked with them. */
+async function contextForNamedPossessions(context: VNextRequiredContext, response: unknown,
+  readNamedItems: ((refs: readonly string[]) => Promise<VNextRequiredContext>) | undefined): Promise<VNextRequiredContext> {
+  const named = vnextProposalNamedPossessions(context, response);
+  if (named.length === 0 || readNamedItems === undefined || !proposalKnowledgeRecallPending(context, named)) return context;
+  const read = await readNamedItems(named);
+  if (read.binding.contextHash !== context.binding.contextHash) throw new TypeError("KNOWLEDGE_RECALL_CONFLICT");
+  return deepFreeze(canonicalClone(read)) as VNextRequiredContext;
+}
+
 /** Corrections one filling may spend. Each is its own call, sent as the next
  * turn of the conversation that produced the reply it corrects, and each must
  * change what is diagnosed: a round that repeats an earlier round's
@@ -95,9 +134,14 @@ function wireFillingDiagnostics(draft: unknown, diagnostics: readonly ProposalDi
 export const VNEXT_PROPOSAL_CORRECTION_ROUNDS = 3;
 
 export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
-  version: "kp-vnext2-proposal-parser-v89",
-  // ADR 0132: a selection may name carried items the freeze only listed.
+  version: "kp-vnext2-proposal-parser-v90",
+  // ADR 0132, ADR 0133: a selection may name carried items the freeze only
+  // listed; so may a filling or correction, read before that reply is checked.
   possessionRecall: "requested-item-refs-ride-the-recall-request-and-read-at-the-listed-version-an-item-already-held-by-the-forms-reads-as-not-requested-v2",
+  draftNamedPossessions: "a-reply-naming-a-listed-carried-item-has-it-read-first-and-each-round-is-checked-with-its-own-named-items-v1",
+  // SPEC 0016 §7.2: every declaration problem in one revision; a kindless
+  // declaration is named; its own container is no put-in source.
+  containerTransferDiagnostics: "all-declaration-problems-one-revision-kindless-declaration-named-container-and-holders-excluded-listed-sources-offered-v1",
   containerState: "frozen-item-mechanism-and-shared-geometry-before-semantic-state-v1",
   // ADR 0096: a selection asking for an NPC view already loaded is read without it.
   loadedNpcSelection: "a-requested-view-already-loaded-reads-as-not-requested-v1",
@@ -791,7 +835,8 @@ export function evaluateVNextProposalRevisionResponse(response: unknown, ticket:
       bundleHash: candidate.bundleHash, repairUsed: true, invocationCount: 2 }) });
   const next = (candidate: Extract<VNextProposalBundleCandidate, { kind: "locallyRejected" }>, synthesis?: ProposalRevisionSynthesis): VNextProposalRevisionEvaluation => {
     const rejected = providerRejected("PROPOSAL_REPAIR_EXHAUSTED", candidate.issues, true, 2,
-      synthesis === undefined ? candidate.diagnostics : wireFillingDiagnostics(candidate.draft, candidate.diagnostics, synthesis.draft, requiredContext));
+      synthesis === undefined ? candidate.diagnostics : wireFillingDiagnostics(candidate.draft, candidate.diagnostics, synthesis.draft,
+        requiredContext && proposalDraftContext(requiredContext, ticket.knowledgeRefs, draftNamedPossessions(requiredContext, synthesis.draft))));
     if (requiredContext === undefined) return { ...(synthesis === undefined ? {} : { synthesis }), result: rejected };
     const repairTicket = createRepairTicket(candidate, requiredContext, ticket.capabilities, ticket.terminalKinds, ticket.npcRefs, ticket.knowledgeRefs, ticket.round + 1);
     if (!vnextProposalCorrectionAdmitted([...priorTickets, ticket, repairTicket])) return { ...(synthesis === undefined ? {} : { synthesis }), result: rejected };
@@ -799,7 +844,7 @@ export function evaluateVNextProposalRevisionResponse(response: unknown, ticket:
   };
   if (vnextProposalTicketIsEmptyDraft(ticket)) {
     try {
-      const candidate = vnextProposalRevisionCandidate(response, ticket.capabilities, ticket.terminalKinds, requiredContext);
+      const candidate = vnextProposalRevisionCandidate(response, ticket.capabilities, ticket.terminalKinds, requiredContext, ticket.knowledgeRefs);
       return candidate.kind === "accepted" ? accepted(candidate) : next(candidate);
     } catch (error) {
       if (!(error instanceof VNextProposalBundleOutputError)) throw error;
@@ -810,7 +855,7 @@ export function evaluateVNextProposalRevisionResponse(response: unknown, ticket:
   try {
     synthesis = revisionSynthesis(response, ticket, proposalUsesTypedReplacement(ticket.capabilities, requiredContext));
     const candidate = vnextProposalRevisionCandidate({ choices: [{ message: { tool_calls: [{ type: "function",
-      function: { name: SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, arguments: JSON.stringify(synthesis.draft) } }] } }] }, ticket.capabilities, ticket.terminalKinds, requiredContext);
+      function: { name: SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, arguments: JSON.stringify(synthesis.draft) } }] } }] }, ticket.capabilities, ticket.terminalKinds, requiredContext, ticket.knowledgeRefs);
     return candidate.kind === "accepted" ? accepted(candidate, synthesis) : next(candidate, synthesis);
   } catch (error) {
     if (!(error instanceof VNextProposalBundleOutputError)) throw error;
@@ -859,7 +904,12 @@ export function createVNextRevisionInvalidTicket(previous: VNextProposalBundleRe
 /** A parseable but structurally incomplete filling still has exact source bytes
  * and diagnostics. Preserve it for the model; never invent a valid domain draft. */
 export function vnextProposalRevisionCandidate(response: unknown, capabilities: readonly VNextProposalCapabilityId[],
-  terminalKinds?: readonly string[], context?: VNextRequiredContext): VNextProposalBundleCandidate {
+  terminalKinds?: readonly string[], context?: VNextRequiredContext,
+  /** What the stage asked for (ADR 0133): given, the reply is checked against
+   * those carried items and the ones it names, not against every record any
+   * later round read. */
+  asked?: readonly string[]): VNextProposalBundleCandidate {
+  if (context !== undefined && asked !== undefined) context = proposalDraftContext(context, asked, vnextProposalNamedPossessions(context, response));
   let parsed: VNextProposalBundleCandidate | undefined;
   try {
     const candidate = parsed = parseSubmitKpProposalBundleCandidateResponse(response, context);
@@ -935,6 +985,8 @@ export async function invokeSubmitKpProposalBundleFirstPass(
     knowledgeRefs?: readonly string[];
     /** The question this action asked and its answer (ADR 0081). */
     retryQuestion?: VNextRetryQuestion;
+    /** Room's read of carried items a reply names (ADR 0133). */
+    readNamedItems?: (refs: readonly string[]) => Promise<VNextRequiredContext>;
     signal?: AbortSignal;
   }>,
 ): Promise<VNextProposalBundleFirstPassResult> {
@@ -979,9 +1031,11 @@ export async function invokeSubmitKpProposalBundleFirstPass(
     if (amendment !== undefined) return deepFreeze({ kind: "amendmentRequested", amendment, invocationCount: 1 });
     if (vnextProposalCalledSelectionTool(response)) return deepFreeze({ kind: "selectionRepeated", invocationCount: 1 });
   }
+  // ADR 0133: a carried item the reply names is read before it is checked.
+  const checked = await contextForNamedPossessions(requiredContext, response, input.readNamedItems);
   let candidate: VNextProposalBundleCandidate;
   try {
-    candidate = vnextProposalRevisionCandidate(response, capabilities, input.terminalKinds, requiredContext);
+    candidate = vnextProposalRevisionCandidate(response, capabilities, input.terminalKinds, checked, knowledgeRefs);
   } catch (error) {
     // A reply without a readable tool call (none, or no function name) is
     // the model's own failure, permanent for these saved bytes; it must not
@@ -994,7 +1048,7 @@ export async function invokeSubmitKpProposalBundleFirstPass(
     if (!(error instanceof VNextProposalBundleOutputError)) throw error;
     const unparsed = vnextProposalUnparsedArguments(response);
     if (unparsed !== undefined) return deepFreeze({ kind: "repairRequired", invocationCount: 1,
-      repairTicket: createVNextUnparsedRevisionTicket(unparsed, requiredContext, capabilities, input.terminalKinds ?? VNEXT_INITIAL_PROPOSAL_DECISION_KINDS, npcRefs, knowledgeRefs) });
+      repairTicket: createVNextUnparsedRevisionTicket(unparsed, checked, capabilities, input.terminalKinds ?? VNEXT_INITIAL_PROPOSAL_DECISION_KINDS, npcRefs, knowledgeRefs) });
     return providerRejected(
       "PROPOSAL_FORM_INVALID",
       error.diagnostics.map(d => d.constraint),
@@ -1003,7 +1057,7 @@ export async function invokeSubmitKpProposalBundleFirstPass(
       error.diagnostics,
     );
   }
-  return firstPassForCandidate(candidate, requiredContext, capabilities, input.terminalKinds, npcRefs, knowledgeRefs);
+  return firstPassForCandidate(candidate, checked, capabilities, input.terminalKinds, npcRefs, knowledgeRefs);
 }
 
 function firstPassForCandidate(candidate: VNextProposalBundleCandidate, requiredContext: VNextRequiredContext,
@@ -1052,6 +1106,8 @@ export async function invokeCorrectKpProposalBundle(input: Readonly<{
   repairTicket?: VNextProposalBundleRepairTicket;
   /** The question this action asked and its answer (ADR 0081). */
   retryQuestion?: VNextRetryQuestion;
+  /** Room's read of carried items a reply names (ADR 0133). */
+  readNamedItems?: (refs: readonly string[]) => Promise<VNextRequiredContext>;
   signal?: AbortSignal;
 }>): Promise<VNextProposalRevisionEvaluation> {
   if (typeof input.modelId !== "string" || input.modelId.trim().length === 0) {
@@ -1072,7 +1128,8 @@ export async function invokeCorrectKpProposalBundle(input: Readonly<{
   const ticket = chain[chain.length - 1]!;
   const response = await input.binding.run(input.modelId,
     createVNextProposalRevisionModelInput(chain, requiredContext, input.retryQuestion), input.signal === undefined ? undefined : { signal: input.signal });
-  return evaluateVNextProposalRevisionResponse(response, ticket, requiredContext, chain.slice(0, -1));
+  return evaluateVNextProposalRevisionResponse(response, ticket,
+    await contextForNamedPossessions(requiredContext, response, input.readNamedItems), chain.slice(0, -1));
 }
 
 /** The request the chain's last ticket sends: the filling request its
@@ -1102,7 +1159,8 @@ export function createVNextProposalRevisionModelInput(chain: VNextCorrectionChai
  * null means that turn did not parse and only replacement is allowed. */
 export function vnextProposalCorrectionPrompt(candidate: VNextProposalBundleRepairTicket, requiredContext: VNextRequiredContext): string {
   const view = requiredContext;
-  const diagnostics = wireFillingDiagnostics(candidate.draft, candidate.diagnostics, candidate.sourceDraft, view).map(detail => ({ ...detail,
+  const checked = proposalDraftContext(requiredContext, candidate.knowledgeRefs, draftNamedPossessions(requiredContext, candidate.sourceDraft));
+  const diagnostics = wireFillingDiagnostics(candidate.draft, candidate.diagnostics, candidate.sourceDraft, checked).map(detail => ({ ...detail,
     ...(detail.actual === undefined ? {} : { actual: proposalWireDiagnosticReferences(detail.actual, view) }),
     ...(detail.expected === undefined ? {} : { expected: proposalWireDiagnosticReferences(detail.expected, view) }) }));
   return JSON.stringify(proposalWireReferences({ contextHash: proposalModelContext(requiredContext, candidate.npcRefs, candidate.knowledgeRefs).contextHash,
@@ -1165,7 +1223,7 @@ export async function invokeSubmitKpProposalBundleWithOneCorrection(
 export function createVNextAuthorityRevisionTicket(response: unknown, requiredContext: VNextRequiredContext,
   capabilities: readonly VNextProposalCapabilityId[], terminalKinds: readonly string[], diagnostics: readonly ProposalDiagnostic[],
   npcRefs: readonly string[] = [], knowledgeRefs: readonly string[] = [], round = 1) {
-  const candidate = vnextProposalRevisionCandidate(response, capabilities, terminalKinds, requiredContext);
+  const candidate = vnextProposalRevisionCandidate(response, capabilities, terminalKinds, requiredContext, knowledgeRefs);
   if (candidate.kind !== "accepted" || diagnostics.length === 0) throw new TypeError("VNEXT_PROPOSAL_REPAIR_TICKET_INVALID");
   const call = extractProposalToolCall(response);
   return createRepairTicket({ kind: "locallyRejected", draft: candidate.bundle as unknown as JsonRecord,
@@ -1238,7 +1296,8 @@ export function assertRepairTicket(ticket: unknown, contextHash: string, require
     const proven = vnextProposalRevisionCandidate({ choices: [{ message: { tool_calls: [{ type: "function", function: {
       name: SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, arguments: ticket.argumentSource === "rawString"
         ? ticket.originalArguments : parseJsonObjectIgnoringTrailingClosers(ticket.originalArguments),
-    } }] } }] }, ticket.capabilities as VNextProposalCapabilityId[], ticket.terminalKinds as string[], requiredContext);
+    } }] } }] }, ticket.capabilities as VNextProposalCapabilityId[], ticket.terminalKinds as string[], requiredContext,
+      ticket.knowledgeRefs as string[]);
     if (ticket.validationCode === "PROPOSAL_RULES_DIAGNOSTIC") {
       // Hashes bind the supplied evidence; the Room journal must still prove
       // these diagnostics against Rules before granting a provider call.

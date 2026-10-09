@@ -86,13 +86,14 @@ it('containerTransfer takes from and returns to an open semantic scene container
   });
 }, 30_000);
 
-// SPEC 0016 §4.3 (ADR 0132): "the piece I just took out" names no item, so
-// nothing freezes the cloth the actor carries. The freeze lists unread
-// carried items by name, count and place; a selection that names none
-// leaves the form without the cloth and the declaration says what is
-// missing; one that names it has Room read it at the listed version before
-// the filling, and the put-back commits and survives archive restore.
-it('a vague put-back names the carried item from the possession directory before the filling', async () => {
+// SPEC 0016 §4.3 (ADR 0132, ADR 0133): "the piece I just took out" names no
+// item, so nothing freezes the cloth the actor carries; the freeze lists it.
+// Live fillings put back the stack still in the barrel instead. The revision
+// is told the listed loose piece, names it, and Room reads it at the listed
+// version before checking that round, without changing what the model is
+// sent. A selection that names it has Room read it before the filling. Both
+// commit and survive archive restore.
+it('a vague put-back reads the listed carried item when a revision or the selection names it', async () => {
   const { stub, capabilities } = await initializeObjectRoom('possession-recall-room');
   const saved = await withObjectRoomScenario(stub, async (act, target, calls) => {
     const template = VNEXT_SEMANTIC_TEMPLATES.sceneFeature;
@@ -111,22 +112,34 @@ it('a vague put-back names the carried item from the possession directory before
         entryRef, quantity: 1, access: 'alreadyOpen', after: 'leaveAsIs' };
       return wire;
     };
-    await act('recall-take', '我从这只敞口木桶里取出一块布条。', [inventory('wake', { kind: 'acquire', entryRef: cloth, quantity: 1 })],
-      '300000000', transfer('takeOut', cloth));
-    state = target.authoritativeReplay().state;
-    const loose = Object.values(state.campaignRuntime.itemSystem.entries).find((entry: any) =>
-      entry.definitionRef === state.campaignRuntime.itemSystem.entries[cloth].definitionRef && entry.holderRef === ACTOR && entry.containerRef === undefined) as Data;
-    const store = [inventory('wake', { kind: 'store', entryRef: loose.entryId, quantity: 1, containerRef: barrel.definitionId })];
+    const takeOut = async (id: string) => {
+      await act(id, '我从这只敞口木桶里取出一块布条。', [inventory('wake', { kind: 'acquire', entryRef: cloth, quantity: 1 })],
+        '300000000', transfer('takeOut', cloth));
+      state = target.authoritativeReplay().state;
+      return Object.values(state.campaignRuntime.itemSystem.entries).find((entry: any) => entry.definitionRef === state.campaignRuntime.itemSystem.entries[cloth].definitionRef
+        && entry.holderRef === ACTOR && entry.containerRef === undefined) as Data;
+    };
+    const inside = () => Object.values(target.authoritativeReplay().state.campaignRuntime.itemSystem.entries)
+      .filter((entry: any) => entry.containerRef === barrel.definitionId).reduce((sum: number, entry: any) => sum + entry.quantity, 0);
     const vague = '我把刚取出的这一块放回同一只敞口木桶。';
-    let before = calls.length;
-    await act('recall-unnamed', vague, store, '300000000', transfer('putIn', loose.entryId), 'needsKp');
-    const unnamed = calls.slice(before);
-    expect(JSON.stringify(unnamed[0].tools)).toContain('requestedItemRefs');
-    expect(unnamed[0].messages[0].content).toContain('possessionRecall');
-    expect(JSON.stringify(unnamed.slice(2))).toContain('container-transfer:source-not-read');
-    expect(target.authoritativeReplay().state.campaignRuntime.itemSystem).toEqual(state.campaignRuntime.itemSystem);
+    let loose = await takeOut('recall-take');
+    const store = (entryRef: string) => [inventory('wake', { kind: 'store', entryRef, quantity: 1, containerRef: barrel.definitionId })];
+    // The first filling puts back the stack still in the barrel; the revision
+    // names the listed loose piece.
+    let round = 0, before = calls.length;
+    await act('recall-revised', vague, store(loose.entryId), '300000000',
+      wire => transfer('putIn', round++ === 0 ? cloth : loose.entryId)(wire));
+    const revised = calls.slice(before);
+    expect(revised).toHaveLength(3);
+    expect(JSON.stringify(revised[2].messages)).toContain('container-transfer:put-in-needs-loose-held-source');
+    // What the model was sent is unchanged by the read: the same context body.
+    expect(revised[2].messages[0].content).toBe(revised[1].messages[0].content);
+    expect(target.authoritativeReplay().state.campaignRuntime.itemSystem.entries[loose.entryId])
+      .toMatchObject({ entryId: loose.entryId, quantity: 1, containerRef: barrel.definitionId });
+    expect(inside()).toBe(3);
+    loose = await takeOut('recall-take-again');
     before = calls.length;
-    await act('recall-named', vague, store, '300000000', transfer('putIn', loose.entryId), 'committed',
+    await act('recall-named', vague, store(loose.entryId), '300000000', transfer('putIn', loose.entryId), 'committed',
       wire => ({ ...wire, requestedItemRefs: [loose.entryId] }));
     expect(calls.length - before).toBe(2);
     // The cloth and the longsword were listed; once the cloth is read, only
@@ -135,10 +148,11 @@ it('a vague put-back names the carried item from the possession directory before
     expect(listed(calls[before])).toHaveLength(2);
     expect(listed(calls[before + 1])).toHaveLength(1);
     expect(listed(calls[before])).toContain(listed(calls[before + 1])[0]);
+    // Storage may join the piece to the one returned before; none stays loose.
     state = target.authoritativeReplay().state;
-    expect(state.campaignRuntime.itemSystem.entries[loose.entryId]).toMatchObject({ entryId: loose.entryId, quantity: 1, containerRef: barrel.definitionId });
-    expect(Object.values(state.campaignRuntime.itemSystem.entries).filter((entry: any) => entry.containerRef === barrel.definitionId)
-      .reduce((sum: number, entry: any) => sum + entry.quantity, 0)).toBe(3);
+    expect(Object.values(state.campaignRuntime.itemSystem.entries).some((entry: any) => entry.definitionRef === loose.definitionRef
+      && entry.holderRef === ACTOR && entry.containerRef === undefined)).toBe(false);
+    expect(inside()).toBe(3);
     return state.campaignRuntime.itemSystem;
   });
   await evictDurableObject(stub);

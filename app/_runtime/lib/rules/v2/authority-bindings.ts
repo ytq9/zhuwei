@@ -454,6 +454,22 @@ export function authorityItemContainer(state: AuthoritativeWorldState, ref: stri
   return { holderRef: null, sceneRef };
 }
 
+/** A visible container whose mechanism is shut -- closed or locked -- as
+ * opposed to a reference that is no open container at all. The viewer
+ * already sees it, so a rejection may name it. */
+export function authorityItemContainerShut(state: AuthoritativeWorldState, ref: string, sceneRef: string, viewerCharacterId: string): boolean {
+  if (!authorityItemContainer(state, ref, sceneRef, viewerCharacterId, false)) return false;
+  const item = state.campaignRuntime.itemSystem.entries[ref];
+  if (item) {
+    const mechanism = (item as unknown as Record<string, unknown>).stateMachine;
+    return isPlainRecord(mechanism) && ["closed", "locked"].includes(String(mechanism.state));
+  }
+  const definition = state.campaignRuntime.definitions[ref];
+  const current = authoritySceneContainerState(authorityGeometryFeatureComposite(state, ref)?.feature,
+    isStoredSemanticDefinition(definition) ? definition.content : undefined);
+  return current === "closed" || current === "locked";
+}
+
 /** Complete membership witness, including an empty collection. Individual
  * records remain separate frozen entries; hashes bind all known content and
  * acquisition metadata without copying it into a second model-facing body.

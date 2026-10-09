@@ -105,6 +105,19 @@ test("closed portable containers retain last inspected contents while blocking a
   assertReplay(f, f.events, f.state);
 });
 
+// SPEC 0016 §7.2: storing into a shut container the actor sees is refused at
+// the container. A live revision was told the right piece did not resolve
+// and put the wrong one back.
+test("storing into a closed container names the container to open, not the item", () => {
+  const f = fixture("closed");
+  const denied = step(f.profiles, f.state, f.input({ kind: "store", entryRef: CONTENTS, quantity: 1, containerRef: FIRST }));
+  assert.equal(denied.kind, "rejected");
+  assert.deepEqual(denied.rejection.diagnostics.map(diagnostic => [diagnostic.constraint, diagnostic.path]),
+    [["inventory:open-container-before-storing", "/plan/operation/containerRef"]]);
+  const open = fixture("open");
+  open.act({ kind: "store", entryRef: CONTENTS, quantity: 1, containerRef: FIRST });
+});
+
 test("an explicitly absent mechanism cannot later be replaced with a lock", () => {
   const f = fixture();
   const result = objectCompletionPlan(f.state, PLAYER, FIRST, "locked", null, null, false);

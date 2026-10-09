@@ -224,7 +224,7 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
           if (!vnextProposalHasThirdCallBudget(capabilities)) return invalid();
           expected = createVNextUnparsedRevisionTicket(unparsed, requiredContext, capabilities, terminalKinds, npcRefs, knowledgeRefs, round);
         } else {
-          const candidate = vnextProposalRevisionCandidate(reply, capabilities, terminalKinds, requiredContext);
+          const candidate = vnextProposalRevisionCandidate(reply, capabilities, terminalKinds, requiredContext, knowledgeRefs);
           const draft = candidate.kind === "accepted" ? candidate.bundle as unknown as JsonRecord : candidate.draft;
           if (!(vnextProposalDraftIsEmpty(draft) ? vnextProposalHasThirdCallBudget(capabilities)
             : vnextProposalHasExecutionRepairBudget(draft, capabilities))) return invalid();
@@ -312,7 +312,7 @@ export function vnextSavedAcceptedProposal(prior: (ordinal: number) => SavedInvo
     while (last < 6 && response(last + 1) !== undefined) last += 1;
     if (last < 6 && prior(last + 1) !== undefined) return undefined;
     if (last === fillOrdinal) {
-      const candidate = vnextProposalRevisionCandidate(response(last), filling.capabilities, filling.terminalKinds, requiredContext);
+      const candidate = vnextProposalRevisionCandidate(response(last), filling.capabilities, filling.terminalKinds, requiredContext, filling.knowledgeRefs);
       return candidate.kind === "accepted" ? { bundle: candidate.bundle, bundleHash: candidate.bundleHash, ordinal: last, ...view } : undefined;
     }
     const chain: VNextProposalBundleRepairTicket[] = [];

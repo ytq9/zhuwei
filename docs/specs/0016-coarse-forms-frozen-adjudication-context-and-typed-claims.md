@@ -89,6 +89,7 @@ gates:
   - "tests/kp/world/native-object-completion.test.mjs"
   - "tests/kp/items/contained-items.test.mjs"
   - "tests/kp/items/contained-items.room.test.ts"
+  - "tests/kp/protocol/call-budget.test.mjs"
   - "tests/kp/knowledge/knowledge-summary.test.mjs"
   - "tests/kp/knowledge/knowledge-summary.room.test.ts"
   - "tests/kp/narration/text-protocol.test.mjs"

@@ -157,6 +157,37 @@ test('put-in schema and repair bind the loose actor-held instance after a split'
   assert.equal(fixed.result.kind, 'locallyAccepted');
 });
 
+// SPEC 0016 §7.2 (ADR 0095): live put-backs were told one problem a round.
+// One revision now names the wrong source beside the undeclared opening; the
+// candidates leave out the box itself, which one round then put into itself,
+// and point at the same-named loose piece; a declaration whose kind was
+// dropped is told so instead of being read as a malformed store.
+test('a put-back is told every problem at once, never offered its own container, and a dropped kind is named', () => {
+  const context = fixture(), LOOSE = 'item-entry:call-budget:loose', CLOTH = 'item-definition:call-budget:cloth';
+  context.entries.find(row => row.entryRef === ITEM).value.definitionRef = CLOTH;
+  context.entries.push(known(CLOTH, { definitionId: CLOTH, content: { label: '布条' } }),
+    known(LOOSE, { schema: ITEM_ENTRY_SCHEMA, entryId: LOOSE, definitionRef: CLOTH, disposition: 'held', holderRef: ACTOR, quantity: 1 }));
+  context.references.citations.viewerEvidenceRefs.push(LOOSE);
+  const prompt = operation => {
+    const candidate = vnextProposalRevisionCandidate(reply(wire(context, operation)), ['inventoryOperation'], [], context);
+    assert.equal(candidate.kind, 'locallyRejected');
+    return JSON.parse(vnextProposalCorrectionPrompt(createRepairTicket(candidate, context, ['inventoryOperation'], []), context)).diagnostics;
+  };
+  const both = prompt({ direction: 'putIn', entryRef: ITEM, access: 'alreadyOpen' });
+  assert.deepEqual(both.map(row => row.constraint).sort(), ['container-transfer:opening-not-declared', 'container-transfer:put-in-needs-loose-held-source']);
+  const source = both.find(row => row.constraint === 'container-transfer:put-in-needs-loose-held-source');
+  assert.deepEqual(source.expected.enum, [short(LOOSE)]);
+  assert.deepEqual(source.expected.sameName, [short(LOOSE)]);
+  const itself = prompt({ direction: 'putIn', entryRef: BOX });
+  assert.deepEqual(itself.map(row => row.constraint), ['container-transfer:put-in-needs-loose-held-source']);
+  assert.ok(!itself[0].expected.enum.includes(short(BOX)));
+  const document = wire(context, { direction: 'putIn', entryRef: LOOSE });
+  delete document.steps.inventoryOperation[0].operation.kind;
+  const kindless = vnextProposalRevisionCandidate(reply(document), ['inventoryOperation'], [], context);
+  assert.deepEqual(kindless.diagnostics.map(row => [row.constraint, row.path.at(-1), row.expected.enum]),
+    [['container-transfer:kind-required', 'kind', ['containerTransfer']]]);
+});
+
 // SPEC 0001 §16, SPEC 0016 §7.3: finite scripts declare, never guess, access.
 test('normal transfer expands without world selection; arbitrary world rows cannot claim the exemption', () => {
   const context = fixture(), candidate = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(wire(context)), context);

@@ -1,4 +1,4 @@
-import { isPlainRecord, sameCanonical } from "./canonical-json";
+import { compareCodeUnits, isPlainRecord, sameCanonical } from "./canonical-json";
 import { proposalDiagnostic, diagnosticActual, type ProposalDiagnostic } from "./proposal-diagnostics";
 import type { VNextRequiredContext } from "./required-context";
 import { proposalFillingSteps } from "./proposal-filling-interface";
@@ -12,6 +12,40 @@ function transferSources(context: VNextRequiredContext) {
   return { takeOut: entries.filter(entry => typeof entry.value.containerRef === "string").map(entry => entry.ref),
     putIn: entries.filter(entry => entry.value.disposition === "held" && entry.value.holderRef === context.intent.actorRef
       && entry.value.containerRef === undefined && (entry.value.equippedSlot === null || entry.value.equippedSlot === undefined)).map(entry => entry.ref) };
+}
+
+/** What a revision may name as the source for this container: the read
+ * sources, and the carried items the freeze only listed, which a draft that
+ * names one reads (ADR 0133). Nothing goes into itself or into a container
+ * inside it, so the container and whatever holds it are not put-in sources. */
+function transferCandidates(context: VNextRequiredContext, records: ReadonlyMap<string, Record<string, unknown>>, containerRef: string) {
+  const holding = new Set([containerRef]);
+  for (let ref = records.get(containerRef)?.containerRef; typeof ref === "string" && !holding.has(ref); ref = records.get(ref)?.containerRef) holding.add(ref);
+  const listed = (context.references.possessionRecall ?? []).filter(row => !records.has(row.entryRef));
+  const sources = transferSources(context);
+  const sorted = (refs: readonly string[]) => [...new Set(refs)].sort(compareCodeUnits);
+  return {
+    takeOut: sorted([...sources.takeOut, ...listed.filter(row => row.containerRef !== null).map(row => row.entryRef)]),
+    putIn: sorted([...sources.putIn, ...listed.filter(row => row.containerRef === null && row.equippedSlot === null).map(row => row.entryRef)])
+      .filter(ref => !holding.has(ref)),
+  };
+}
+
+/** The name a read item goes by: its frozen definition's, or else the name
+ * the actor's last look into its container recorded. */
+function itemLabel(records: ReadonlyMap<string, Record<string, unknown>>, ref: string): string | undefined {
+  const item = records.get(ref);
+  const content = typeof item?.definitionRef === "string" ? records.get(item.definitionRef)?.content : undefined;
+  if (isPlainRecord(content) && typeof content.label === "string") return content.label;
+  const memories = typeof item?.containerRef === "string" ? records.get(item.containerRef)?.containerMemories : undefined;
+  const remembered = (Array.isArray(memories) ? memories : []).flatMap(memory => isPlainRecord(memory) && Array.isArray(memory.entries) ? memory.entries : [])
+    .find(entry => isPlainRecord(entry) && entry.entryId === ref);
+  return isPlainRecord(remembered) && typeof remembered.name === "string" ? remembered.name : undefined;
+}
+
+/** The name a listed carried item goes by in the directory. */
+function listedLabel(context: VNextRequiredContext, ref: string): string | undefined {
+  return (context.references.possessionRecall ?? []).find(row => row.entryRef === ref)?.label;
 }
 
 /** The entry refs a form's own operations list, read through shared `$def`
@@ -66,10 +100,14 @@ export function expandContainerTransferWire(value: unknown, context: VNextRequir
   const origins = new Map<string, readonly (string | number)[]>();
   const records = new Map(context.entries.flatMap(entry => entry.kind === "known" && isPlainRecord(entry.value)
     ? [[entry.entryRef, entry.value] as const] : []));
-  function fail(path: readonly (string | number)[], operation: unknown, reason: string): never {
-    throw new ContainerTransferWireError([proposalDiagnostic("CONSTRAINT_CONFLICT", `container-transfer:${reason}`,
+  // SPEC 0016 §7.2 (ADR 0095): one revision is told every problem of every
+  // declaration, so a wrong source and an undeclared opening arrive together.
+  const problems: ProposalDiagnostic[] = [];
+  const repair = { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } as const;
+  function conflict(path: readonly (string | number)[], operation: unknown, reason: string) {
+    problems.push(proposalDiagnostic("CONSTRAINT_CONFLICT", `container-transfer:${reason}`,
       { path, pathBase: "arguments", expected: { requirement: "Declare ordinary access to the exact existing source/container. Locked, foreign-held or undecided mechanisms require their own adjudication/completion; no damage or unlock is implicit." },
-        actual: diagnosticActual(operation), repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } })]);
+        actual: diagnosticActual(operation), repair }));
   }
   const walk = (document: unknown, path: readonly (string | number)[] = []) => {
     if (!isPlainRecord(document)) return;
@@ -80,57 +118,83 @@ export function expandContainerTransferWire(value: unknown, context: VNextRequir
         const row = rows[index];
         if (!isPlainRecord(row)) continue;
         const op = row.operation;
-        if (!isPlainRecord(op) || op.kind !== "containerTransfer") continue;
+        if (!isPlainRecord(op)) continue;
+        // A declaration's own fields with no kind is that declaration with
+        // its kind left out, not a malformed store (a live revision dropped
+        // it and was then told to write kind store).
+        // access and after are this declaration's alone; an area use also
+        // has a direction, but never takeOut or putIn.
+        const kindless = op.kind === undefined && (Object.hasOwn(op, "access") || Object.hasOwn(op, "after")
+          || ["takeOut", "putIn"].includes(String(op.direction)));
+        if (op.kind !== "containerTransfer" && !kindless) continue;
         const at = [...path, "steps", "inventoryOperation", index, "operation"];
-        if (!sameCanonical(Object.keys(op).sort(), ["access", "after", "containerRef", "direction", "entryRef", "kind", "quantity"])
+        const before = problems.length;
+        if (kindless) problems.push(proposalDiagnostic("FIELD_MISSING", "container-transfer:kind-required", { path: [...at, "kind"],
+          pathBase: "arguments", expected: { required: true, enum: ["containerTransfer"] }, actual: diagnosticActual(undefined), repair }));
+        if (!sameCanonical(Object.keys({ ...op, kind: "containerTransfer" }).sort(), ["access", "after", "containerRef", "direction", "entryRef", "kind", "quantity"])
           || !["takeOut", "putIn"].includes(String(op.direction)) || !["alreadyOpen", "openNormally"].includes(String(op.access))
           || !["leaveAsIs", "close"].includes(String(op.after)) || typeof op.containerRef !== "string" || typeof op.entryRef !== "string"
-          || !Number.isSafeInteger(op.quantity) || Number(op.quantity) < 1 || Number(op.quantity) > 1_000_000 || typeof scene !== "string") fail(at, op, "invalid-declaration");
-        const container = records.get(op.containerRef), item = records.get(op.entryRef);
-        if (!container || !context.references.citations.viewerEvidenceRefs.includes(op.containerRef)) fail(at, op, "frozen-visible-container-required");
-        // ADR 0132: an item the stage has not read is named, not guessed: a
-        // carried one the selection did not ask for, or no frozen item at all.
-        if (!item) throw new ContainerTransferWireError([proposalDiagnostic("REFERENCE_UNAVAILABLE", "container-transfer:source-not-read", {
-          path: [...at, "entryRef"], pathBase: "arguments", actual: diagnosticActual(op.entryRef),
-          expected: { enum: transferSources(context)[op.direction === "putIn" ? "putIn" : "takeOut"],
-            requirement: "Name an item this stage has read. A carried item listed only in references.possessionRecall is read once requestedItemRefs names it." },
-          repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } })]);
-        if (container.holderRef && container.holderRef !== context.intent.actorRef) fail(at, op, "foreign-held-container");
-        if (op.direction === "takeOut" && (item.containerRef !== op.containerRef || !transferSources(context).takeOut.includes(op.entryRef))) fail(at, op, "source-container-mismatch");
-        if (op.direction === "putIn" && !transferSources(context).putIn.includes(op.entryRef)) {
-          throw new ContainerTransferWireError([proposalDiagnostic("REFERENCE_UNAVAILABLE", "container-transfer:put-in-needs-loose-held-source", {
-            path: [...at, "entryRef"], pathBase: "arguments", actual: diagnosticActual(op.entryRef),
-            expected: { enum: transferSources(context).putIn, requirement: "Select the actual loose item held by the actor; the remaining stack already inside this container is not that item." },
-            repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } })]);
+          || !Number.isSafeInteger(op.quantity) || Number(op.quantity) < 1 || Number(op.quantity) > 1_000_000 || typeof scene !== "string") {
+          conflict(at, op, "invalid-declaration");
+          continue;
         }
-        const state = isPlainRecord(container.stateMachine) ? container.stateMachine.state
-          : authoritySceneContainerState(container.feature, container.content);
-        const unrestricted = container.stateMachine === null;
-        if (state === "locked") fail(at, op, "locked-container");
-        if (!unrestricted && !["open", "closed", "destroyed"].includes(String(state))) fail(at, op, "mechanism-not-defined");
-        if (op.access === "alreadyOpen" && state === "closed") fail(at, op, "opening-not-declared");
-        if (op.after === "close" && (unrestricted || state === "destroyed")) fail(at, op, "cannot-close-without-working-mechanism");
-        const interval = intervals.get(op.containerRef);
-        if (interval && (interval.access !== op.access || interval.after !== op.after)) fail(at, op, "conflicting-access-declarations");
-        intervals.set(op.containerRef, { access: op.access, after: op.after });
-        const world = (action: "open" | "close") => {
-          const result = { basisRefs: row.basisRefs, outcomeBinding: row.outcomeBinding, sceneRef: scene,
-            directTargetRefs: [op.containerRef], otherTargetRefs: [], instrumentRefs: [], abilityRef: { kind: "none" }, approach: { kind: "none" },
-            commonAction: { kind: "operateObject", targetRef: op.containerRef, destinationRef: "none", option: action },
-            intent: action === "open" ? "为本次取放正常打开容器。" : "按已声明的取放后要求合上容器。",
-            method: "沿容器已定义的开关机制操作。", result: { outcomeCode: "containerAccess", summary: action === "open" ? "容器正常打开。" : "容器合上。",
-              entries: [] } };
-          generated.add(result); return result;
-        };
-        const worlds = Array.isArray(document.steps.worldInteraction) ? document.steps.worldInteraction : (document.steps.worldInteraction = []);
-        const append = (action: "open" | "close") => {
-          const worldPath = [...path, "steps", "worldInteraction", worlds.length];
-          origins.set(JSON.stringify(worldPath), at); worlds.push(world(action));
-        };
-        if (!interval && op.access === "openNormally" && state === "closed") append("open");
-        row.operation = op.direction === "takeOut" ? { kind: "acquire", entryRef: op.entryRef, quantity: op.quantity }
-          : { kind: "store", entryRef: op.entryRef, quantity: op.quantity, containerRef: op.containerRef };
-        if (!interval && op.after === "close") append("close");
+        const containerRef = op.containerRef, entryRef = op.entryRef;
+        const container = records.get(containerRef), item = records.get(entryRef);
+        const candidates = transferCandidates(context, records, containerRef);
+        // The source: read, in this container to take out, or a loose held
+        // item that is neither this container nor anything holding it.
+        if (!item) problems.push(proposalDiagnostic("REFERENCE_UNAVAILABLE", "container-transfer:source-not-read", {
+          path: [...at, "entryRef"], pathBase: "arguments", actual: diagnosticActual(entryRef),
+          expected: { enum: candidates[op.direction === "putIn" ? "putIn" : "takeOut"],
+            requirement: "Name an item this stage has read, or a carried item listed in references.possessionRecall, which is read when a draft names it." },
+          repair }));
+        else if (op.direction === "takeOut" && (item.containerRef !== containerRef || !transferSources(context).takeOut.includes(entryRef))) conflict(at, op, "source-container-mismatch");
+        else if (op.direction === "putIn" && !candidates.putIn.includes(entryRef)) {
+          const named = itemLabel(records, entryRef);
+          const sameName = named === undefined ? [] : candidates.putIn.filter(ref => (itemLabel(records, ref) ?? listedLabel(context, ref)) === named);
+          problems.push(proposalDiagnostic("REFERENCE_UNAVAILABLE", "container-transfer:put-in-needs-loose-held-source", {
+            path: [...at, "entryRef"], pathBase: "arguments", actual: diagnosticActual(entryRef),
+            expected: { enum: candidates.putIn, ...(sameName.length === 0 ? {} : { sameName }),
+              requirement: "Select the loose item the actor holds that goes into this container. The container itself, anything holding it, and the stack already inside it are not that item. A carried item listed in references.possessionRecall is read when named here." },
+            repair }));
+        }
+        // The container and the access the declaration chose for it.
+        if (!container || !context.references.citations.viewerEvidenceRefs.includes(containerRef)) conflict(at, op, "frozen-visible-container-required");
+        else if (container.holderRef && container.holderRef !== context.intent.actorRef) conflict(at, op, "foreign-held-container");
+        else {
+          const state = isPlainRecord(container.stateMachine) ? container.stateMachine.state
+            : authoritySceneContainerState(container.feature, container.content);
+          const unrestricted = container.stateMachine === null;
+          if (state === "locked") conflict(at, op, "locked-container");
+          else if (!unrestricted && !["open", "closed", "destroyed"].includes(String(state))) conflict(at, op, "mechanism-not-defined");
+          else {
+            if (op.access === "alreadyOpen" && state === "closed") conflict(at, op, "opening-not-declared");
+            if (op.after === "close" && (unrestricted || state === "destroyed")) conflict(at, op, "cannot-close-without-working-mechanism");
+            const interval = intervals.get(containerRef);
+            if (interval && (interval.access !== op.access || interval.after !== op.after)) conflict(at, op, "conflicting-access-declarations");
+          }
+          if (problems.length > before) continue;
+          const interval = intervals.get(containerRef);
+          intervals.set(containerRef, { access: op.access, after: op.after });
+          const world = (action: "open" | "close") => {
+            const result = { basisRefs: row.basisRefs, outcomeBinding: row.outcomeBinding, sceneRef: scene,
+              directTargetRefs: [containerRef], otherTargetRefs: [], instrumentRefs: [], abilityRef: { kind: "none" }, approach: { kind: "none" },
+              commonAction: { kind: "operateObject", targetRef: containerRef, destinationRef: "none", option: action },
+              intent: action === "open" ? "为本次取放正常打开容器。" : "按已声明的取放后要求合上容器。",
+              method: "沿容器已定义的开关机制操作。", result: { outcomeCode: "containerAccess", summary: action === "open" ? "容器正常打开。" : "容器合上。",
+                entries: [] } };
+            generated.add(result); return result;
+          };
+          const worlds = Array.isArray(document.steps.worldInteraction) ? document.steps.worldInteraction : (document.steps.worldInteraction = []);
+          const append = (action: "open" | "close") => {
+            const worldPath = [...path, "steps", "worldInteraction", worlds.length];
+            origins.set(JSON.stringify(worldPath), at); worlds.push(world(action));
+          };
+          if (!interval && op.access === "openNormally" && state === "closed") append("open");
+          row.operation = op.direction === "takeOut" ? { kind: "acquire", entryRef, quantity: op.quantity }
+            : { kind: "store", entryRef, quantity: op.quantity, containerRef };
+          if (!interval && op.after === "close") append("close");
+        }
       }
     }
     const decision = isPlainRecord(document.decision) ? document.decision : document;
@@ -139,6 +203,7 @@ export function expandContainerTransferWire(value: unknown, context: VNextRequir
     });
   };
   walk(value);
+  if (problems.length > 0) throw new ContainerTransferWireError(problems);
   const generatedDomainPaths = new Set<string>();
   const locate = (document: unknown, domainPath: readonly (string | number)[] = []) => {
     if (!isPlainRecord(document)) return;

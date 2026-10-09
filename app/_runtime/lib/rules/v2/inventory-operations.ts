@@ -11,7 +11,7 @@ import { canonicalCombatPoint, canonicalCombatDirection, type CanonicalCombatPoi
 import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import { compileAbilityDefinition, isRegisteredAbilityRecord, registeredAbilityRecord, registeredAbilityDefinition } from "../profiles/ability-compiler";
 import type { RuntimeProfileManifest, Sha256Ref } from "../profiles/types";
-import { authorityReadSetMatches, authoritySpatialRefVisibleTo, authorityItemContainer } from "./authority-bindings";
+import { authorityReadSetMatches, authoritySpatialRefVisibleTo, authorityItemContainer, authorityItemContainerShut } from "./authority-bindings";
 import { planPlayerAbilityCatalog } from "./character-abilities";
 import { stepCombatWorld } from "./combat-actions";
 import { auditHasPayload } from "./correction";
@@ -221,6 +221,21 @@ function unavailableInventoryEntry(): { error: string; diagnostics: RuleDiagnost
   }] };
 }
 
+/** SPEC 0016 §7.2: storing into a container the actor sees with its lid
+ * shut is refused at the container. A live revision stored the right piece
+ * into a closed box, was told the piece did not resolve, and reverted it. */
+function shutStoreContainer(): { error: string; diagnostics: RuleDiagnostic[] } {
+  return { error: "inventoryReferenceUnavailable", diagnostics: [{
+    code: "REFERENCE_UNAVAILABLE", path: "/plan/operation/containerRef",
+    constraint: "inventory:open-container-before-storing",
+    expected: { referenceKind: "itemEntry", precedingContainerOperation: {
+      proposalKind: "worldInteraction", commonAction: { kind: "operateObject", option: "open" },
+    } },
+    message: "This container exists and is in view, but it is not open. Keep the inventory operation and open the container before storing into it (unlock first if needed).",
+    source: "SPEC 0016", visibility: "public",
+  }] };
+}
+
 /** SPEC 0001 §16: a remembered real item behind a closed lid is not a
  * nonexistent reference. Reveal no new identity through a rejection. */
 function knownClosedInventoryEntry(state: AuthoritativeWorldState, actor: CharacterRecord, entry: ItemSystemStateV1["entries"][string]):
@@ -303,7 +318,8 @@ export function planInventoryTransition(
       break;
     case "store": {
       const container = authorityItemContainer(state, operation.containerRef, actor.sceneId, actor.id);
-      if (!container) return unavailableInventoryEntry();
+      if (!container) return authorityItemContainerShut(state, operation.containerRef, actor.sceneId, actor.id)
+        ? shutStoreContainer() : unavailableInventoryEntry();
       if (container.holderRef !== null && container.holderRef !== actor.id) return { error: "inventoryAdjudicationRequired" };
       result = move(id => storeItemQuantity(itemSystem, { entryId: entry.entryId, quantity: operation.quantity,
         containerRef: operation.containerRef, ...container, ...(id === undefined ? {} : { targetEntryId: id }) }));

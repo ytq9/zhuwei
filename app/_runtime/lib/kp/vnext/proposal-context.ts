@@ -132,6 +132,22 @@ function hiddenPossessionRecords(context: VNextRequiredContext, requested: reado
     .filter(ref => present.has(ref) && !asked.has(ref)));
 }
 
+/** ADR 0133: what one draft is checked against -- the frozen context with the
+ * carried items its stage asked for and those the draft itself names. Room
+ * keeps every record any round read, so a round is checked the same way
+ * whether or not a later round read more. */
+export function proposalDraftContext(context: VNextRequiredContext, asked: readonly string[], named: readonly string[]): VNextRequiredContext {
+  const hidden = hiddenPossessionRecords(context, [...proposalReadKnowledgeRefs(context, asked), ...named]);
+  if (hidden.size === 0) return context;
+  const keep = (ref: string) => !hidden.has(ref);
+  const citations = context.references.citations;
+  return Object.freeze({ ...context, entries: Object.freeze(context.entries.filter(entry => keep(entry.entryRef))),
+    references: Object.freeze({ ...context.references, citations: Object.freeze({ ...citations,
+      viewerEvidenceRefs: Object.freeze(citations.viewerEvidenceRefs.filter(keep)),
+      authorityBasisRefs: Object.freeze(citations.authorityBasisRefs.filter(keep)),
+      ...(Array.isArray(citations.nonCitableRefs) ? { nonCitableRefs: Object.freeze(citations.nonCitableRefs.filter(keep)) } : {}) }) }) });
+}
+
 /** The same frozen context with what the selection has not asked for left
  * out: the decision snapshots and bodies of bystanders it did not name, and
  * the frozen memory bodies of complete-memory holders the topic did not

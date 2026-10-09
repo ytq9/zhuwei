@@ -245,12 +245,16 @@ export function createVNextKpAdapter(options: Readonly<{
       // the selection did not name; Room and lowering keep the whole context.
       const npcRefs = offer.npcRefs, knowledgeRefs = offer.knowledgeRefs;
       requiredContext = await recalled(knowledgeRefs);
+      // ADR 0133: a carried item a filling or correction names is read the
+      // same way before that reply is checked; later rounds and the lowering
+      // read the context with it.
+      const readNamedItems = async (refs: readonly string[]) => (requiredContext = await recalled(refs));
       message = vnextProposalContextBody(requiredContext, npcRefs, knowledgeRefs);
       const submit = async (ordinal: 2 | 3, capabilities: readonly VNextProposalCapabilityId[],
         terminalKinds: readonly string[], amendable: boolean, selectedNpcRefs: readonly string[], selectedKnowledgeRefs: readonly string[]) =>
         invokeSubmitKpProposalBundleFirstPass({ binding: await boundInvocation(ordinal),
           modelId: profile.modelId, message, requiredContext, capabilities, terminalKinds, amendable,
-          npcRefs: selectedNpcRefs, knowledgeRefs: selectedKnowledgeRefs, ...(retryQuestion === undefined ? {} : { retryQuestion }) });
+          npcRefs: selectedNpcRefs, knowledgeRefs: selectedKnowledgeRefs, readNamedItems, ...(retryQuestion === undefined ? {} : { retryQuestion }) });
       const budgetExhausted = (constraint: string, code: string,
         issues: readonly string[], diagnostics: readonly ProposalDiagnostic[], calls: number): never => {
         throw vnextProposalFailure(code, false, undefined, {
@@ -318,7 +322,7 @@ export function createVNextKpAdapter(options: Readonly<{
             chain.push(pending);
             const at = invocationOrdinal(ordinal);
             const corrected = await invokeCorrectKpProposalBundle({ binding: await boundInvocation(at, pending),
-              modelId: profile.modelId, requiredContext, chain, ...(retryQuestion === undefined ? {} : { retryQuestion }) });
+              modelId: profile.modelId, requiredContext, chain, readNamedItems, ...(retryQuestion === undefined ? {} : { retryQuestion }) });
             ordinal += 1;
             if (corrected.result.kind === "rejected") throw vnextProposalFailure(corrected.result.code, false, undefined,
               { issues: corrected.result.issues, diagnostics: corrected.result.diagnostics });
