@@ -23,6 +23,7 @@
 
 ## 当前待办任务书
 
+- 随身物先列清单、点名再读已在本地实现：[ADR 0132](../adr/0132-carried-items-are-listed-and-read-when-named.md)。2026-10-10 [真实调用检查](receipts/possession-recall-live-20261010.md) 四次均未提交：模型没有点名散放物品，首稿都选错来源；修了一个解析缺陷，另有 4 个诊断缺陷和修订轮不能补读的缺口未修。尚未推送或部署。
 - 四项调用与表单优化已在隔离 worktree 完成本地实现：[ADR 0131](../adr/0131-frozen-wire-references-and-declared-container-transfer.md)、[首轮回执](receipts/kp-call-budget-20261007.md)、[预算修复与回访回执](receipts/kp-call-budget-repair-20261007.md)。2026-10-08 [review 修复](receipts/kp-budget-review-fixes-20261008.md)接通语义场景容器、收紧普通查看验收、精简重复说明、补齐体积披露并统一费用；已建立 `codex/kp-budget-review-20261008` 分支。原真实取物、放回和恢复后重开结果保留；旧公开回复恢复、模型准确率与最小选择仍未承诺。尚未合并或部署。
 
 - 容器查看记录与 review 修复已完成本地实现（2026-10-07）：[ADR 0130](../adr/0130-container-inspection-and-original-content-provenance.md)、[本地回执](receipts/container-inspection-local-20261007.md)。四项 review 缺陷与本轮容器产品决定在同一通用路径验收；最新真实调用及未覆盖范围见[实测回执](receipts/dynamic-object-live-20261007.md)，部署未执行。
