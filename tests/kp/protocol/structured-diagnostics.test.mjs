@@ -60,6 +60,25 @@ test("bundle modes locate invalid active containers and inactive branches withou
   }
 });
 
+// SPEC 0016 §7.2 (ADR 0128): only a combat or ability terminal takes
+// preparations, each completing an existing object; a refused one is located
+// at the field that breaks the rule.
+test("a terminal's refused preparation is located at its own field", () => {
+  const actor = "character:located", npcRef = "npc:located-guard";
+  const preparation = { kind: "completeObject", definitionRef: npcRef, description: "none", observableState: "none", summary: "补齐守卫尚未确定的战斗属性。",
+    mechanics: { kind: "npcCombat", statistics: [{ npcRef, armorClass: 10, speedFeet: 30, hitPointsMaximum: 11, deathPolicy: "deadAtZero",
+      attacks: [{ kind: "meleeAttack", label: "拳击", ability: "str", reachFeet: 5, damage: "1d4+1", damageType: "bludgeoning" }] }] },
+    basisRefs: ["scene:located"], consumes: [], produces: [], outcomeBinding: "always" };
+  const combat = proposals => ({ schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA, kind: "proposalBundle", mode: "terminal", basisRefs: [], adjudication: null,
+    terminal: { kind: "startCombat", participants: [actor, npcRef].map(creatureRef => ({ creatureRef, surprise: { kind: "aware" } })),
+      hostilities: [{ fromRefs: [actor], toRefs: [npcRef] }], combatStatistics: [], description: "调查员向守卫发动攻击。" }, proposals });
+  assert.equal(validateVNextProposalBundle(combat([preparation])).kind, "accepted");
+  const consuming = { ...preparation, consumes: [{ kind: "existing", ref: "definition:located" }, { kind: "prospective", handle: "prospective:door" }] };
+  diagnosed(combat([preparation, consuming]), "VALUE_INVALID", ["proposals", 1, "consumes", 1, "kind"], "bundle:terminal-preparation-only");
+  const observe = domain(sharedCheckBundle()).proposals[0];
+  diagnosed(combat([observe]), "VALUE_INVALID", ["proposals", 0, "kind"], "bundle:terminal-preparation-only");
+});
+
 test("enum and reference arrays identify submitted slots across observation and world interaction", () => {
   for (const kind of ["observe", "worldInteraction"]) {
     const enumBundle = domain(sharedCheckBundle(kind));

@@ -154,9 +154,22 @@ export function validateVNextProposalBundle(
         || !arrayField(value.proposals, value, "proposals", 0, 16)) {
         invalid("bundle:terminal-shape-invalid");
       }
+      // SPEC 0016 §7.2: a refused preparation is located at the field that
+      // breaks the rule. Only a startCombat or abilityOperation terminal takes
+      // preparations, each completing an existing object (ADR 0128).
+      const preparationOnly = "bundle:terminal-preparation-only";
+      if (!["startCombat", "abilityOperation"].includes(String(value.terminal.kind))) {
+        checkedField(value, "proposals", entry => Array.isArray(entry) && entry.length === 0, { type: "array", maxItems: 0 }, preparationOnly);
+      }
       const preparations = (value.proposals as unknown[]).map(validateEntry);
-      if (preparations.length && (!["startCombat", "abilityOperation"].includes(value.terminal.kind)
-        || preparations.some(entry => entry.kind !== "completeObject" || entry.consumes.some(ref => ref.kind !== "existing") || entry.produces.length > 0))) invalid("bundle:terminal-preparation-only");
+      for (const entry of value.proposals as Record<string, unknown>[]) {
+        allFields([
+          () => checkedField(entry, "kind", kind => kind === "completeObject", { type: "string", enum: ["completeObject"] }, preparationOnly),
+          ...(entry.consumes as Record<string, unknown>[]).map(ref => () =>
+            checkedField(ref, "kind", kind => kind === "existing", { type: "string", enum: ["existing"] }, preparationOnly)),
+          () => checkedField(entry, "produces", produced => Array.isArray(produced) && produced.length === 0, { type: "array", maxItems: 0 }, preparationOnly),
+        ]);
+      }
       if (["knowledgeReview", "passTime", "abilityOperation", "startCombat", "endCombat"].includes(value.terminal.kind) && value.basisRefs.length !== 0) invalid(value.terminal.kind === "knowledgeReview" ? "knowledge:terminal-basis-must-be-empty" : value.terminal.kind === "passTime" ? "time-passage:terminal-basis-must-be-empty" : value.terminal.kind === "startCombat" ? "combat-start:terminal-basis-must-be-empty" : value.terminal.kind === "endCombat" ? "combat-end:terminal-basis-must-be-empty" : "ability:terminal-basis-must-be-empty");
       bundle = canonicalClone({
         schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
