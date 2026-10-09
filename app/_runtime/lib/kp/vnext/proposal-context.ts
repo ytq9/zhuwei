@@ -30,7 +30,7 @@ import { isRetryHistoryEntryRef } from "./retry-history";
 // groups depends on what the selection asked for and is sent last (ADR 0111).
 // v15 separates inventory planning after opening from current visible evidence.
 // v17 lists the actor's carried items not read as a directory a stage names from (ADR 0132).
-export const VNEXT_PROPOSAL_CONTEXT_SCHEMA = "zhuwei.proposal-context/vnext-17" as const;
+export const VNEXT_PROPOSAL_CONTEXT_SCHEMA = "zhuwei.proposal-context/vnext-18" as const;
 
 export type ProposalNpcRecall = Readonly<{ defaultRefs: readonly string[]; requestableRefs: readonly string[] }>;
 
@@ -884,7 +884,9 @@ export function proposalModelContext(context: VNextRequiredContext, requestedNpc
   // on the server.
   const carried = proposalPossessionRecall(context, requestedKnowledgeRefs).map(row => Object.freeze({ ref: row.entryRef, label: row.label,
     quantity: row.quantity, ...(row.count === undefined ? {} : { alikeCount: row.count }), ...(row.equippedSlot === null ? {} : { equippedSlot: row.equippedSlot }),
-    ...(row.containerRef === null ? {} : { containerRef: row.containerRef }) }));
+    ...(row.containerRef === null ? {} : { containerRef: row.containerRef }),
+    // ADR 0134: what the actor took out of which container, and when.
+    ...(row.takenFrom === undefined ? {} : { takenFrom: row.takenFrom }) }));
   const values = view.entries.flatMap(entry => entry.kind === "known" && isPlainRecord(entry.value) ? [[entry.entryRef, entry.value] as const] : []);
   const presentation: ModelPresentation = Object.freeze({ known,
     memories: new Map(values.filter(([entryRef, value]) => isMemoryEntry(entryRef, value))),

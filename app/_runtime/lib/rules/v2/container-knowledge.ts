@@ -22,6 +22,9 @@ export type ContainerMemory = {
   entries: RememberedContainerItem[];
 };
 export type ContainerOrigin = { sourceRef: string; eventSeq: string };
+/** ADR 0134: what an actor remembers of an item it took out of a container
+ * and still holds loose -- which container, how many, and when. */
+export type TakenFromContainer = { observerRef: string; containerRef: string; quantity: number; eventSeq: string };
 
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
 function rememberedItem(value: unknown): value is RememberedContainerItem {
@@ -36,6 +39,14 @@ function rememberedItem(value: unknown): value is RememberedContainerItem {
     && (value.name === undefined || typeof value.name === "string" && value.name.length > 0 && value.name.length <= 4000)
     && (value.charges === undefined || counter(value.charges)) && (value.durability === undefined || counter(value.durability))
     && (value.objectState === undefined || ["open", "closed", "locked"].includes(String(value.objectState)));
+}
+
+export function isTakenFromContainer(value: unknown): value is TakenFromContainer {
+  return record(value) && Object.keys(value).sort().join() === "containerRef,eventSeq,observerRef,quantity"
+    && typeof value.observerRef === "string" && /^\S+$/.test(value.observerRef)
+    && typeof value.containerRef === "string" && /^\S+$/.test(value.containerRef)
+    && Number.isSafeInteger(value.quantity) && Number(value.quantity) > 0
+    && typeof value.eventSeq === "string" && /^\d+$/.test(value.eventSeq);
 }
 
 export function isContainerMemory(value: unknown): value is ContainerMemory {
@@ -118,7 +129,7 @@ export function recordContainerKnowledge(source: AuthoritativeWorldState, state:
     const p = event.payload as { actorCharacterId: string; featureId: string; toState: string };
     if (p.toState === "open") remember(state, p.actorCharacterId, p.featureId, event.eventSeq);
   } else if (event.eventType === "InventoryOperationApplied") {
-    const p = event.payload as { actorCharacterId: string; operation: { kind: string; entryRef: string; containerRef?: string }; targetEntryId: string };
+    const p = event.payload as { actorCharacterId: string; operation: { kind: string; entryRef: string; containerRef?: string; quantity?: number }; targetEntryId: string };
     const prior = source.campaignRuntime.itemSystem.entries[p.operation.entryRef];
     const current = state.campaignRuntime.itemSystem.entries[p.targetEntryId];
     // Taking an unopened world/NPC container preserves its inspectable origin.
@@ -130,6 +141,18 @@ export function recordContainerKnowledge(source: AuthoritativeWorldState, state:
     }
     for (const containerRef of new Set([prior?.containerRef, p.operation.containerRef].filter((ref): ref is string => ref !== undefined)))
       remember(state, p.actorCharacterId, containerRef, event.eventSeq);
+    // ADR 0134: taking an item out of a container is remembered by the one
+    // who took it, while it stays loose in that character's hands. A later
+    // "the piece I just took out" has nothing else to tell it apart from the
+    // stack left inside.
+    if (p.operation.kind === "acquire" && prior?.containerRef !== undefined && current?.disposition === "held"
+      && current.holderRef === p.actorCharacterId && current.containerRef === undefined) {
+      const metadata = state.vNextItemAuthority ??= emptyVNextItemAuthority();
+      ((metadata.takenFrom ??= {})[p.actorCharacterId] ??= {})[current.entryId] = { observerRef: p.actorCharacterId,
+        containerRef: prior.containerRef, quantity: p.operation.quantity ?? current.quantity, eventSeq: event.eventSeq };
+    }
+    for (const holderRef of new Set([p.actorCharacterId, prior?.holderRef, current?.holderRef]))
+      if (typeof holderRef === "string") forgetPutAwayItems(state, holderRef);
   } else if (event.eventType === "ItemMaterialized") {
     const p = event.payload as { entry: { containerRef?: string } };
     if (p.entry.containerRef) {
@@ -137,6 +160,19 @@ export function recordContainerKnowledge(source: AuthoritativeWorldState, state:
       (metadata.containerAuthorship ??= {})[p.entry.containerRef] ??= event.rootActionId;
     }
   }
+}
+
+/** A taken item stays remembered only while its taker holds it loose: put
+ * away, handed over, dropped or used up, the record goes. */
+function forgetPutAwayItems(state: AuthoritativeWorldState, holderRef: string): void {
+  const taken = state.vNextItemAuthority?.takenFrom?.[holderRef];
+  if (taken === undefined) return;
+  for (const entryId of Object.keys(taken)) {
+    const entry = state.campaignRuntime.itemSystem.entries[entryId];
+    if (entry?.disposition !== "held" || entry.holderRef !== holderRef || entry.containerRef !== undefined) delete taken[entryId];
+  }
+  if (Object.keys(taken).length === 0) delete state.vNextItemAuthority!.takenFrom![holderRef];
+  if (Object.keys(state.vNextItemAuthority!.takenFrom!).length === 0) delete state.vNextItemAuthority!.takenFrom;
 }
 
 export function projectedClosedContainerMemories(state: AuthoritativeWorldState, characterId: string): ContainerMemory[] {

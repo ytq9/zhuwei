@@ -176,6 +176,9 @@ export type RequiredContextPossessionRecall = Readonly<{
   count?: number;
   equippedSlot: string | null;
   containerRef: string | null;
+  /** ADR 0134: the container the actor took this item out of, while it
+   * still holds it loose, and the event that took it. */
+  takenFrom?: Readonly<{ containerRef: string; quantity: number; eventSeq: string }>;
   records: readonly Readonly<{ entryRef: string; revisionOrHash: string; valueHash?: string }>[];
 }>;
 
@@ -604,6 +607,14 @@ function normalizeReferenceDirectory(
       throw new TypeError(`references.possessionRecall:${row.entryRef}:row-invalid`);
     }
     if (row.containerRef !== null) assertRef(row.containerRef, `references.possessionRecall.${row.entryRef}.containerRef`);
+    if (row.takenFrom !== undefined) {
+      assertRef(row.takenFrom.containerRef, `references.possessionRecall.${row.entryRef}.takenFrom.containerRef`);
+      if (Object.keys(row.takenFrom).sort().join() !== "containerRef,eventSeq,quantity" || row.containerRef !== null
+        || !Number.isSafeInteger(row.takenFrom.quantity) || row.takenFrom.quantity < 1
+        || typeof row.takenFrom.eventSeq !== "string" || !/^\d+$/u.test(row.takenFrom.eventSeq)) {
+        throw new TypeError(`references.possessionRecall:${row.entryRef}:taken-from-invalid`);
+      }
+    }
     const records = row.records.map((record) => {
       assertRef(record.entryRef, `references.possessionRecall.${row.entryRef}.record`);
       if (typeof record.revisionOrHash !== "string" || !/^sha256:[0-9a-f]{64}$/u.test(record.revisionOrHash)
@@ -618,7 +629,9 @@ function normalizeReferenceDirectory(
       throw new TypeError(`references.possessionRecall:${row.entryRef}:duplicate-record`);
     }
     return Object.freeze({ entryRef: row.entryRef, label: row.label, quantity: row.quantity, ...(row.count === undefined ? {} : { count: row.count }),
-      equippedSlot: row.equippedSlot, containerRef: row.containerRef, records: Object.freeze(records) });
+      equippedSlot: row.equippedSlot, containerRef: row.containerRef,
+      ...(row.takenFrom === undefined ? {} : { takenFrom: Object.freeze({ containerRef: row.takenFrom.containerRef,
+        quantity: row.takenFrom.quantity, eventSeq: row.takenFrom.eventSeq }) }), records: Object.freeze(records) });
   }).sort((left, right) => compareCodeUnits(left.entryRef, right.entryRef));
   if (possessionRecall.some((row, index) => index > 0 && row.entryRef === possessionRecall[index - 1]!.entryRef)) {
     throw new TypeError("references.possessionRecall:duplicate-entry-ref");

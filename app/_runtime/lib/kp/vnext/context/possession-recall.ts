@@ -41,7 +41,9 @@ export function possessionRecallRows(state: AuthoritativeWorldState, actorRef: s
     if (entry.disposition !== "held" || entry.holderRef !== actorRef || entry.assemblyRef !== undefined
       || frozen.has(entry.entryId) || system.definitions[entry.definitionRef] === undefined
       || !containedItemAccessible(system, entry) || !authoritySpatialRefVisibleTo(state, entry.entryId, sceneRef, actorRef)) continue;
-    const composite = authorityItemComposite(state, entry.entryId);
+    // Alike as the actor reads them: what it remembers taking out of a
+    // container sets an item apart (ADR 0134).
+    const composite = possessionRecordValue(state, entry.entryId, actorRef);
     if (!isPlainRecord(composite)) continue;
     const { entryId: _entryId, ...alike } = composite;
     const key = canonicalHash(alike);
@@ -71,9 +73,13 @@ export function possessionRecallRows(state: AuthoritativeWorldState, actorRef: s
       records.push({ entryRef: ref, revisionOrHash, ...(valueHash === revisionOrHash ? {} : { valueHash }) });
     }
     if (!complete) continue;
+    const taken = state.vNextItemAuthority?.takenFrom?.[actorRef]?.[entry.entryId];
     rows.push(Object.freeze({ entryRef: entry.entryId, label: system.definitions[entry.definitionRef]!.content.label,
       quantity: entry.quantity, ...(group.count === 1 ? {} : { count: group.count }), equippedSlot: entry.equippedSlot,
-      containerRef: entry.containerRef ?? null, records: Object.freeze(records) }));
+      containerRef: entry.containerRef ?? null,
+      ...(taken === undefined || entry.containerRef !== undefined ? {} : { takenFrom: Object.freeze({ containerRef: taken.containerRef,
+        quantity: taken.quantity, eventSeq: taken.eventSeq }) }),
+      records: Object.freeze(records) }));
   }
   return Object.freeze({ rows: Object.freeze(rows.sort((left, right) => compareCodeUnits(left.entryRef, right.entryRef))), omitted });
 }
@@ -100,16 +106,20 @@ export function possessionRecordCitation(row: RequiredContextPossessionRecall, e
 }
 
 /** The value a frozen context holds for one of these records: the item's
- * composite as the actor reads it (its container memories are the actor's
- * own), or the definition or ability as stored. */
+ * composite as the actor reads it, or the definition or ability as stored. */
 export function possessionRecordValue(state: AuthoritativeWorldState, ref: string, actorRef: string): unknown {
-  if (state.campaignRuntime.itemSystem.entries[ref] !== undefined) {
-    const record: unknown = authorityItemComposite(state, ref);
-    return isPlainRecord(record) && Array.isArray(record.containerMemories)
-      ? { ...record, containerMemories: record.containerMemories.filter((memory: unknown) => isPlainRecord(memory) && memory.observerRef === actorRef) }
-      : record;
-  }
+  if (state.campaignRuntime.itemSystem.entries[ref] !== undefined) return actorItemRecord(authorityItemComposite(state, ref), actorRef);
   return state.campaignRuntime.itemSystem.definitions[ref] ?? state.combatRuntime.definitions[ref];
+}
+
+/** An item or container composite as one actor reads it: the inspection
+ * memories and taking-out records are that actor's own (ADR 0130, ADR 0134).
+ * Another character's are left out, and an empty list goes with them. */
+export function actorItemRecord(record: unknown, actorRef: string): unknown {
+  if (!isPlainRecord(record) || (!Array.isArray(record.containerMemories) && !Array.isArray(record.takenFrom))) return record;
+  const own = (list: unknown) => (Array.isArray(list) ? list : []).filter(item => isPlainRecord(item) && item.observerRef === actorRef);
+  return Object.fromEntries(Object.entries(record).flatMap(([key, value]) => key === "containerMemories" ? [[key, own(value)]]
+    : key !== "takenFrom" ? [[key, value]] : own(value).length === 0 ? [] : [[key, own(value)]]));
 }
 
 /** Room's read when a stage names carried items (ADR 0132): each record the

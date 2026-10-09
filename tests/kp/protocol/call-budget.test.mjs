@@ -229,7 +229,7 @@ test('stable context precedes changing intent without omitting changed current q
   const end = selection.messages[0].content.indexOf(',"intent":');
   assert.ok(end > 200);
   assert.equal(selection.messages[0].content.slice(0, end), next.messages[0].content.slice(0, end));
-  assert.equal(sentContext(selection).requiredContext.schema, 'zhuwei.proposal-context/vnext-17');
+  assert.equal(sentContext(selection).requiredContext.schema, 'zhuwei.proposal-context/vnext-18');
   assert.deepEqual(sentContext(selection), sentContext(filling), 'selection and filling keep the same frozen reading body');
   b.entries.find(row => row.entryRef === ITEM).value.quantity = 1;
   const stock = proposalModelContext(b).entries.find(row => row.entryRef === ITEM);

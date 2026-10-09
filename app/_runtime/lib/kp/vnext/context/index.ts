@@ -62,7 +62,7 @@ import { createKnowledgeSelector, type KnowledgeSelector, KNOWLEDGE_DIRECTORY_SC
 import { retryHistoryEntryRef, retryHistoryValue, type VNextRetryHistory } from "../retry-history";
 import { narrativeContextRequirements } from "./narrative-continuity";
 import { situationalPlanRefs } from "./situational-continuity";
-import { possessionRecallRows } from "./possession-recall";
+import { actorItemRecord, possessionRecallRows } from "./possession-recall";
 import { freezeNpcDecisionEntry, isNpcDecisionContextSchema, npcDecisionEntryRef } from "./npc-decision";
 import {
   createContextWorkBudget,
@@ -358,9 +358,9 @@ export function freezeAdjudicationContext(
     const decisive = obligationsAreDecisive(closedRef.obligations) || node?.kind === "knowledge";
     const containerRecord = node?.kind === "itemEntry" || node?.kind === "geometryFeature"
       ? authorityCompositeRecord(input.state, node) : undefined;
-    const containerView = isPlainRecord(containerRecord) && Array.isArray(containerRecord.containerMemories)
-      ? { ...containerRecord, containerMemories: containerRecord.containerMemories.filter(memory => isPlainRecord(memory)
-          && memory.observerRef === input.actorCharacterId) } as JsonValue : undefined;
+    // Inspection memories and taking-out records are read as the actor's own.
+    const containerView = isPlainRecord(containerRecord) && (Array.isArray(containerRecord.containerMemories) || Array.isArray(containerRecord.takenFrom))
+      ? actorItemRecord(containerRecord, input.actorCharacterId) as JsonValue : undefined;
     const read = node === undefined
       ? undefined
       : rereadEntry(input.state, node, closedRef, decisive, caps.maxEntryRereadBytes, budget,
