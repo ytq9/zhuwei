@@ -97,7 +97,7 @@ export const VNEXT_PROPOSAL_CORRECTION_ROUNDS = 3;
 export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
   version: "kp-vnext2-proposal-parser-v89",
   // ADR 0132: a selection may name carried items the freeze only listed.
-  possessionRecall: "requested-item-refs-ride-the-recall-request-and-read-at-the-listed-version-v1",
+  possessionRecall: "requested-item-refs-ride-the-recall-request-and-read-at-the-listed-version-an-item-already-held-by-the-forms-reads-as-not-requested-v2",
   containerState: "frozen-item-mechanism-and-shared-geometry-before-semantic-state-v1",
   // ADR 0096: a selection asking for an NPC view already loaded is read without it.
   loadedNpcSelection: "a-requested-view-already-loaded-reads-as-not-requested-v1",
@@ -261,13 +261,15 @@ export function parseVNextProposalOfferResponse(response: unknown, context?: VNe
   const items: string[] = [];
   if (itemsRaw !== undefined) {
     if (!Array.isArray(itemsRaw)) return fieldOutput("TYPE_MISMATCH", "offer:requested-item-refs-array-required", ["requestedItemRefs"], "array", itemsRaw);
+    // As with an NPC view (ADR 0096), an item the forms already hold -- frozen
+    // with the action or read by an earlier stage -- is read without it. A
+    // live put-back named the box it targets, which the freeze had read.
+    const loadedItemRefs = context === undefined ? [] : proposalInventoryEntryRefs(context);
     for (const [index, ref] of itemsRaw.entries()) {
       if (typeof ref !== "string") return fieldOutput("TYPE_MISMATCH", "offer:item-ref-string-required", ["requestedItemRefs", index], { type: "string" }, ref);
       if (itemsRaw.indexOf(ref) !== index) return fieldOutput("VALUE_INVALID", "offer:requested-item-refs-unique", ["requestedItemRefs", index], { uniqueItems: true }, ref);
-      // As with an NPC view (ADR 0096), an item an earlier stage read is
-      // read without it.
-      if (!carried.includes(ref) && !priorKnowledgeRefs.includes(ref)) return fieldOutput("VALUE_INVALID", "offer:requested-item-ref-not-requestable", ["requestedItemRefs", index], { enum: [...carried] }, ref);
       if (carried.includes(ref)) items.push(ref);
+      else if (!priorKnowledgeRefs.includes(ref) && !loadedItemRefs.includes(ref)) return fieldOutput("VALUE_INVALID", "offer:requested-item-ref-not-requestable", ["requestedItemRefs", index], { enum: [...carried] }, ref);
     }
   }
   // SPEC 0016 §4.3 (ADR 0111): a group's handle asks for the group and its

@@ -13,6 +13,8 @@ import { canonicalHash } from "../../../app/_runtime/lib/kp/vnext/canonical-json
 import { createInitialItemEntry } from "../../../app/_runtime/lib/rules/v2/items.ts";
 import { proposalContextView, proposalInventoryEntryRefs, proposalKnowledgeRecallPending, proposalModelContext,
   recallKnowledge, withRecalledKnowledge } from "../../../app/_runtime/lib/kp/vnext/proposal-context.ts";
+import { parseVNextProposalOfferResponse } from "../../../app/_runtime/lib/kp/vnext/proposal-provider.ts";
+import { OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME } from "../../../app/_runtime/lib/kp/vnext/proposal-schema.ts";
 
 const FIRST = "item-entry:container:first", SECOND = "item-entry:container:second", CONTENTS = "item-entry:container:cloth";
 function fixture(initialState = "absent") {
@@ -225,6 +227,18 @@ test("carried items nothing names are listed, read at their version when named, 
   assert.throws(() => recallKnowledge(context, [ROPE], changed), /possession-recall:record-changed/);
   assert.throws(() => withRecalledKnowledge(context, recalled.map(record => record.entryRef === ROPE
     ? { ...record, value: { ...record.value, quantity: 9 } } : record)), /possession-recall:record-invalid/);
+  // As with an NPC view (ADR 0096), naming an item the freeze already read is
+  // read without it; a live put-back named the box it targeted and the act
+  // ended. A ref neither listed nor loaded is still refused.
+  const named = freezeAuthoredProbeContext(f, state, { focusRefs: [PROBE_ACTOR, BAG], intentText: "把刚才那个收进皮袋。" }).context;
+  assert.ok(proposalInventoryEntryRefs(named).includes(BAG));
+  assert.deepEqual(named.references.possessionRecall.map(row => row.entryRef), [ROPE]);
+  const offer = requestedItemRefs => ({ choices: [{ finish_reason: "tool_calls", message: { tool_calls: [{ type: "function",
+    function: { name: OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME, arguments: JSON.stringify({ requestedCapabilities: ["inventoryOperation"], requestedItemRefs }) } }] } }] });
+  assert.deepEqual(parseVNextProposalOfferResponse(offer([BAG]), named).knowledgeRefs, []);
+  assert.deepEqual(parseVNextProposalOfferResponse(offer([BAG, ROPE]), named).knowledgeRefs, [ROPE]);
+  assert.throws(() => parseVNextProposalOfferResponse(offer(["item-entry:recall:nothing"]), named),
+    error => error.diagnostics?.some(diagnostic => diagnostic.constraint === "offer:requested-item-ref-not-requestable"));
 });
 
 // ADR 0132: the directory stays bounded by what differs, not by how much is
