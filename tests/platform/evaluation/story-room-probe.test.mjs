@@ -17,6 +17,7 @@ test("default is configuration-only dry-run; unimplemented cases cannot enable l
     ["dynamic-container-reopen-recovery", true],
     ["dynamic-container-return-continuity", true],
     ["dynamic-container-put-back", true],
+    ["dynamic-container-vague-put-back", true],
     ["dynamic-container-atomic", true],
     ["dynamic-container-continuity", true],
     ["sandbox-story-conclusion", true],
