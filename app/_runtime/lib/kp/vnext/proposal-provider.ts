@@ -53,7 +53,7 @@ import {
   type VNextProposalBundle,
 } from "./proposal-schema";
 import type { VNextRequiredContext } from "./required-context";
-import { proposalCreatureTargetRefs, proposalItemDefinitionRefs, proposalItemEntryRefs, proposalInventoryEntryRefs, proposalObservationSubjectRefs, proposalNpcSourceChoices, proposalModelContext, proposalContextView, proposalNpcRecall, proposalKnowledgeRecall, proposalRequestableKnowledgeHandles, proposalKnowledgeRequest, proposalUnofferedCapabilities, vnextProposalContextBody, type ProposalKnowledgeHandle } from "./proposal-context";
+import { proposalCreatureTargetRefs, proposalItemDefinitionRefs, proposalItemEntryRefs, proposalInventoryEntryRefs, proposalObservationSubjectRefs, proposalNpcSourceChoices, proposalModelContext, proposalContextView, proposalNpcRecall, proposalKnowledgeRecall, proposalPossessionRecall, proposalRequestableKnowledgeHandles, proposalKnowledgeRequest, proposalUnofferedCapabilities, vnextProposalContextBody, type ProposalKnowledgeHandle } from "./proposal-context";
 import { VNEXT_PROPOSAL_GUIDANCE_POLICY } from "./proposal-guidance";
 import { vnextProposalDanglingHandles, vnextProposalProducerCompletion } from "./proposal-producer-completion";
 
@@ -95,7 +95,9 @@ function wireFillingDiagnostics(draft: unknown, diagnostics: readonly ProposalDi
 export const VNEXT_PROPOSAL_CORRECTION_ROUNDS = 3;
 
 export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
-  version: "kp-vnext2-proposal-parser-v88",
+  version: "kp-vnext2-proposal-parser-v89",
+  // ADR 0132: a selection may name carried items the freeze only listed.
+  possessionRecall: "requested-item-refs-ride-the-recall-request-and-read-at-the-listed-version-v1",
   containerState: "frozen-item-mechanism-and-shared-geometry-before-semantic-state-v1",
   // ADR 0096: a selection asking for an NPC view already loaded is read without it.
   loadedNpcSelection: "a-requested-view-already-loaded-reads-as-not-requested-v1",
@@ -196,7 +198,10 @@ export function parseVNextProposalOfferResponse(response: unknown, context?: VNe
   // The handles the directory shows at this stage: a group's members once an
   // earlier stage asked for the group (ADR 0111).
   const handles = context === undefined ? [] : proposalKnowledgeRecall(context, shownNpcRefs, priorKnowledgeRefs);
-  const keys = ["requestedCapabilities", ...(requestable.length === 0 ? [] : ["requestedNpcRefs"]), ...(handles.length === 0 ? [] : ["requestedKnowledgeRefs"])];
+  // ADR 0132: the carried items this stage may still name.
+  const carried = context === undefined ? [] : proposalPossessionRecall(context, priorKnowledgeRefs).map(row => row.entryRef);
+  const keys = ["requestedCapabilities", ...(requestable.length === 0 ? [] : ["requestedNpcRefs"]), ...(handles.length === 0 ? [] : ["requestedKnowledgeRefs"]),
+    ...(carried.length === 0 ? [] : ["requestedItemRefs"])];
   if (!Object.hasOwn(raw, "requestedCapabilities") || Object.keys(raw).some(key => !keys.includes(key))) return invalidOutput(new VNextProposalBundleOutputError([
     ...(Object.hasOwn(raw, "requestedCapabilities") ? [] : [proposalDiagnostic("FIELD_MISSING", "offer:schema-request-field-required",
       { path: ["requestedCapabilities"], pathBase: "arguments", expected: { required: true }, actual: diagnosticActual(undefined) })]),
@@ -252,9 +257,23 @@ export function parseVNextProposalOfferResponse(response: unknown, context?: VNe
       namedHandles.push(record);
     }
   }
+  const itemsRaw = raw.requestedItemRefs;
+  const items: string[] = [];
+  if (itemsRaw !== undefined) {
+    if (!Array.isArray(itemsRaw)) return fieldOutput("TYPE_MISMATCH", "offer:requested-item-refs-array-required", ["requestedItemRefs"], "array", itemsRaw);
+    for (const [index, ref] of itemsRaw.entries()) {
+      if (typeof ref !== "string") return fieldOutput("TYPE_MISMATCH", "offer:item-ref-string-required", ["requestedItemRefs", index], { type: "string" }, ref);
+      if (itemsRaw.indexOf(ref) !== index) return fieldOutput("VALUE_INVALID", "offer:requested-item-refs-unique", ["requestedItemRefs", index], { uniqueItems: true }, ref);
+      // As with an NPC view (ADR 0096), an item an earlier stage read is
+      // read without it.
+      if (!carried.includes(ref) && !priorKnowledgeRefs.includes(ref)) return fieldOutput("VALUE_INVALID", "offer:requested-item-ref-not-requestable", ["requestedItemRefs", index], { enum: [...carried] }, ref);
+      if (carried.includes(ref)) items.push(ref);
+    }
+  }
   // SPEC 0016 §4.3 (ADR 0111): a group's handle asks for the group and its
-  // newest members within the holder's loading limits.
-  const knowledgeRefs = context === undefined ? [] : proposalKnowledgeRequest(context, namedHandles, priorKnowledgeRefs);
+  // newest members within the holder's loading limits. A carried item rides
+  // the same request as its entry ref (ADR 0132).
+  const knowledgeRefs = context === undefined ? [] : [...proposalKnowledgeRequest(context, namedHandles, priorKnowledgeRefs), ...items];
   try { return deepFreeze({ kind: "schemaRequested", ...closeVNextProposalSchemaRequest(selectable, context, npcRefs, knowledgeRefs, stage) }); }
   catch (error) {
     if (error instanceof UnknownVNextProposalCapabilityError) {
@@ -503,7 +522,7 @@ function readProposalArguments(value: unknown, _toolName: string): { raw: unknow
   try { return { raw: parseJsonObjectIgnoringTrailingClosers(value) }; } catch (error) { return invalidOutput(error); }
 }
 
-const SELECTION_ARGUMENT_KEYS = ["requestedCapabilities", "requestedNpcRefs", "requestedKnowledgeRefs"] as const;
+const SELECTION_ARGUMENT_KEYS = ["requestedCapabilities", "requestedNpcRefs", "requestedKnowledgeRefs", "requestedItemRefs"] as const;
 
 function candidateForArguments(raw: unknown, originalArguments?: unknown): VNextProposalBundleCandidate {
   if (!isPlainRecord(raw)) return fieldOutput("TYPE_MISMATCH", "proposal:object-required", [], "object", raw);
@@ -937,10 +956,11 @@ export async function invokeSubmitKpProposalBundleFirstPass(
   const view = proposalContextView(requiredContext, npcRefs, knowledgeRefs);
   const requestable = proposalNpcRecall(requiredContext).requestableRefs.filter(ref => !npcRefs.includes(ref));
   const handles = proposalRequestableKnowledgeHandles(requiredContext, npcRefs, knowledgeRefs);
+  const carried = proposalPossessionRecall(requiredContext, knowledgeRefs).map(row => row.entryRef);
   const response = await input.binding.run(
     input.modelId,
     withRetryAnswer(createSubmitKpProposalBundleModelInput(input.message, capabilities, proposalItemEntryRefs(view), proposalObservationSubjectRefs(view), input.terminalKinds, proposalNpcSourceChoices(view), requiredContextBasisReferences(view), proposalCreatureTargetRefs(view), input.amendable === true, proposalItemDefinitionRefs(view), input.amendable === true ? requestable : [], input.amendable === true ? handles : [],
-      undefined, proposalUnofferedCapabilities(requiredContext), proposalInventoryEntryRefs(view), requiredContext),
+      undefined, proposalUnofferedCapabilities(requiredContext), proposalInventoryEntryRefs(view), requiredContext, input.amendable === true ? carried : []),
       input.retryQuestion),
     runOptions,
   );

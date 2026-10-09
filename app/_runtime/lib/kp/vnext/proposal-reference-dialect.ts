@@ -11,7 +11,11 @@ export function proposalReferenceDialect(context: VNextRequiredContext) {
   for (const ref of [...citations.viewerEvidenceRefs, ...citations.authorityBasisRefs,
     ...(citations.npcKnowledge ?? []).flatMap(row => row.refs),
     ...(context.references.npcRecall ?? []).map(row => row.npcRef),
-    ...(context.references.knowledgeRecall ?? []).flatMap(row => row.records.map(record => record.entryRef))]) refs.add(ref);
+    ...(context.references.knowledgeRecall ?? []).flatMap(row => row.records.map(record => record.entryRef)),
+    // ADR 0132: a carried item is named by the same short handle in its
+    // directory row, the selection field and the forms once read.
+    ...(context.references.possessionRecall ?? []).flatMap(row => [...row.records.map(record => record.entryRef),
+      ...(row.containerRef === null ? [] : [row.containerRef])])]) refs.add(ref);
   const forward = new Map<string, string>(), reverse = new Map<string, string>();
   for (const ref of [...refs].sort()) {
     if (ref.length < 16) continue;
@@ -154,7 +158,7 @@ export function proposalDialectModelInput<T extends { messages: readonly { role:
     parameters: schemaReferences(tool.function.parameters, proposalReferenceDialect(context).forward) } }));
   for (const tool of tools) {
     const operation = tool.function.parameters.$def?.steps?.properties?.inventoryOperation?.items?.properties?.operation;
-    if (Array.isArray(operation?.anyOf)) operation.anyOf.push(...containerTransferWireSchemas(operation.anyOf, context, proposalReferenceDialect(context).forward));
+    if (Array.isArray(operation?.anyOf)) operation.anyOf.push(...containerTransferWireSchemas(operation.anyOf, context, proposalReferenceDialect(context).forward, tool.function.parameters.$def ?? {}));
   }
   const actor = context.entries.find(entry => entry.kind === "known" && entry.entryRef === context.intent.actorRef);
   const scoped = actor?.kind === "known" && isPlainRecord(actor.value) && isPlainRecord(actor.value.entity)

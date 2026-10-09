@@ -62,6 +62,7 @@ import { createKnowledgeSelector, type KnowledgeSelector, KNOWLEDGE_DIRECTORY_SC
 import { retryHistoryEntryRef, retryHistoryValue, type VNextRetryHistory } from "../retry-history";
 import { narrativeContextRequirements } from "./narrative-continuity";
 import { situationalPlanRefs } from "./situational-continuity";
+import { possessionRecallRows } from "./possession-recall";
 import { freezeNpcDecisionEntry, isNpcDecisionContextSchema, npcDecisionEntryRef } from "./npc-decision";
 import {
   createContextWorkBudget,
@@ -577,6 +578,11 @@ export function freezeAdjudicationContext(
       entryRefs: entries.flatMap((entry) => entry.entryRef === npcDecisionEntryRef(npcRef)
         || entry.entryRef === knowledgeDirectoryEntryRef(npcRef)
         || entry.entryRef.startsWith(`knowledge:${npcRef}:`) ? [entry.entryRef] : []).sort(compareCodeUnits) }));
+  // SPEC 0016 §4.3 (ADR 0132): the carried items nothing here read are
+  // listed with their versions; a stage that names one reads it then.
+  const possessions = possessionRecallRows(input.state, input.actorCharacterId, sceneRef,
+    new Set(entries.map((entry) => entry.entryRef)), budget);
+  if (possessions === undefined) return blocked("preparationLimit", ["possessionRecall:work-budget-exhausted"], budget);
   // Frozen with the action so the Adapter and Room read one history; the
   // model view leaves it out.
   const retryHistory = retryHistoryValue(input.actorCharacterId, input.retryHistory);
@@ -595,7 +601,9 @@ export function freezeAdjudicationContext(
       }),
     },
     entries,
-    references: { ...referenceDirectory(input.state, input.actorCharacterId, citations, domains), npcRecall, knowledgeRecall },
+    references: { ...referenceDirectory(input.state, input.actorCharacterId, citations, domains), npcRecall, knowledgeRecall,
+      ...(possessions.rows.length === 0 ? {} : { possessionRecall: possessions.rows }),
+      ...(possessions.omitted === 0 ? {} : { possessionRecallOmitted: possessions.omitted }) },
     binding: {
       roomEpochRef: input.state.runtimeEpochId,
       rootActionId: input.rootActionId,

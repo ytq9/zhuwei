@@ -15,7 +15,7 @@ import { NPC_ACTOR_PLAN_FORMATION_SOURCE_SCHEMA, type NpcActorPlanFormationSourc
 import { vnextProposalProducerContract, VNEXT_PRODUCER_KINDS, type VNextProposalProducerContract, type VNextProducerKind } from "./proposal-producer-contract";
 import { proposalFillingSchema, npcReplyResultSchema, decodeNpcReplyResult, encodeProposalFilling, decodeProposalFilling, decodeProposalFillingForDiagnostics, type ProposalFillingDecodeResult, decodeProposalMaterialSteps } from "./proposal-filling-interface";
 import type { ProposalDiagnostic } from "./proposal-diagnostics";
-import { type ProposalNpcSourceChoices, proposalNpcRecall, proposalKnowledgeRecall, proposalUnofferedCapabilities } from "./proposal-context";
+import { type ProposalNpcSourceChoices, proposalNpcRecall, proposalKnowledgeRecall, proposalPossessionRecall, proposalUnofferedCapabilities } from "./proposal-context";
 import type { VNextBasisReferenceChoices } from "./required-context-runtime";
 import type { AuthoredWorldFact } from "../../rules/v2/world-facts";
 import type { DynamicPassage } from "../../rules/v2/dynamic-locations";
@@ -988,7 +988,8 @@ export const OFFER_KP_PROPOSAL_BUNDLE_TOOL = Object.freeze({
 });
 const OFFER_NPC_RECALL_DESCRIPTION = "在场但决策视图尚未加载的 NPC（见 references.npcRecall.requestable）。选出本次处理牵涉到的：要对话、要看其反应、其立场或知识影响裁决的；已点名的 NPC 已默认加载，不在此列。选中的在下一阶段带完整 npc-decision 与知识；未选的不能写进 social、formActorPlan 或作为来源。只与已加载 NPC 对话时填 []；这是补充加载名单，不是对话对象名单。每项必须属于本字段 enum，不能填 references.npcRecall.shown 中已加载的人。";
 const OFFER_KNOWLEDGE_RECALL_DESCRIPTION = "已加载视图的角色（含玩家）本次未读取的记忆，按 knowledge-directory 条目里的 handle 选择；只选当前话题确实需要正文的，选中的在下一阶段带完整正文并可引用。不需要时填 []。";
-const OFFER_TOOL_DESCRIPTION_WITH_RECALL = "只选择本次完整行动需要的类型目录 ID（requestedCapabilities）；requestedNpcRefs 选出需要加载决策视图的在场 NPC，requestedKnowledgeRefs 按目录 handle 选出需要读取正文的记忆（字段存在时才可选）；不填写任何提案内容。";
+const OFFER_ITEM_RECALL_DESCRIPTION = "行动者随身但尚未加载完整记录的物品（见 references.possessionRecall.requestable 的名称、数量和位置）。本次要取放、使用、转交、装备或查看其中某件时选出，含“刚取出的这一块”这类未点名的指代；选中的在下一阶段带完整记录和定义并可写进表单。不需要时填 []。";
+const OFFER_TOOL_DESCRIPTION_WITH_RECALL = "只选择本次完整行动需要的类型目录 ID（requestedCapabilities）；requestedNpcRefs 选出需要加载决策视图的在场 NPC，requestedKnowledgeRefs 按目录 handle 选出需要读取正文的记忆，requestedItemRefs 选出要操作的随身物品（字段存在时才可选）；不填写任何提案内容。";
 
 /** The selection tool, offering the bystander views and the unread memory
  * bodies not yet loaded as further enumerations. With none left to request
@@ -996,12 +997,14 @@ const OFFER_TOOL_DESCRIPTION_WITH_RECALL = "只选择本次完整行动需要的
  * shows an empty enum. Both the Adapter and Room's stage proof build the
  * tool this way. */
 export function offerKpProposalBundleTool(requestableNpcRefs: readonly string[] = [], capabilityIds: readonly string[] = VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS,
-  requestableKnowledgeHandles: readonly string[] = []) {
+  requestableKnowledgeHandles: readonly string[] = [], requestableItemRefs: readonly string[] = []) {
   const requestedCapabilities = { ...OFFER_KP_PROPOSAL_BUNDLE_SCHEMA.properties.requestedCapabilities, items: { type: "string", enum: [...capabilityIds] } };
   const properties = { requestedCapabilities,
     ...(requestableNpcRefs.length === 0 ? {} : { requestedNpcRefs: { type: "array", items: { type: "string", enum: [...requestableNpcRefs] }, description: OFFER_NPC_RECALL_DESCRIPTION } }),
-    ...(requestableKnowledgeHandles.length === 0 ? {} : { requestedKnowledgeRefs: { type: "array", items: { type: "string", enum: [...requestableKnowledgeHandles] }, description: OFFER_KNOWLEDGE_RECALL_DESCRIPTION } }) };
-  const recall = requestableNpcRefs.length > 0 || requestableKnowledgeHandles.length > 0;
+    ...(requestableKnowledgeHandles.length === 0 ? {} : { requestedKnowledgeRefs: { type: "array", items: { type: "string", enum: [...requestableKnowledgeHandles] }, description: OFFER_KNOWLEDGE_RECALL_DESCRIPTION } }),
+    // SPEC 0016 §4.3 (ADR 0132): carried items the freeze listed, not read.
+    ...(requestableItemRefs.length === 0 ? {} : { requestedItemRefs: { type: "array", items: { type: "string", enum: [...requestableItemRefs] }, description: OFFER_ITEM_RECALL_DESCRIPTION } }) };
+  const recall = requestableNpcRefs.length > 0 || requestableKnowledgeHandles.length > 0 || requestableItemRefs.length > 0;
   return Object.freeze({ ...OFFER_KP_PROPOSAL_BUNDLE_TOOL, function: Object.freeze({ ...OFFER_KP_PROPOSAL_BUNDLE_TOOL.function,
     ...(recall ? { description: OFFER_TOOL_DESCRIPTION_WITH_RECALL } : {}),
     parameters: Object.freeze({ ...OFFER_KP_PROPOSAL_BUNDLE_SCHEMA, properties, required: Object.keys(properties) }) }) }) as unknown as typeof OFFER_KP_PROPOSAL_BUNDLE_TOOL;
@@ -1015,14 +1018,14 @@ const AMEND_CAPABILITIES_DESCRIPTION = "要新增的类型 ID；不含草稿、�
  * tool still read as the selection stage. Both the Adapter and Room's stage
  * proof build the amendable round through this function. */
 export function amendKpProposalSelectionTool(loaded: readonly string[], requestableNpcRefs: readonly string[] = [],
-  requestableKnowledgeHandles: readonly string[] = [], unoffered: readonly string[] = []) {
+  requestableKnowledgeHandles: readonly string[] = [], unoffered: readonly string[] = [], requestableItemRefs: readonly string[] = []) {
   const offered = VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS.filter(id => !unoffered.includes(id));
   const held = offered.filter(id => loaded.includes(id));
-  if (held.length === 0) return offerKpProposalBundleTool(requestableNpcRefs, offered, requestableKnowledgeHandles);
-  const tool = offerKpProposalBundleTool(requestableNpcRefs, offered.filter(id => !held.includes(id)), requestableKnowledgeHandles);
-  const recall = requestableNpcRefs.length > 0 || requestableKnowledgeHandles.length > 0;
+  if (held.length === 0) return offerKpProposalBundleTool(requestableNpcRefs, offered, requestableKnowledgeHandles, requestableItemRefs);
+  const tool = offerKpProposalBundleTool(requestableNpcRefs, offered.filter(id => !held.includes(id)), requestableKnowledgeHandles, requestableItemRefs);
+  const recall = requestableNpcRefs.length > 0 || requestableKnowledgeHandles.length > 0 || requestableItemRefs.length > 0;
   const description = `已加载 ${held.join("、")}；只填要新增的类型 ID，已加载的不必重复`
-    + (recall ? "；requestedNpcRefs 选出需要加载决策视图的在场 NPC，requestedKnowledgeRefs 按目录 handle 选出需要读取正文的记忆（字段存在时才可选）" : "")
+    + (recall ? "；requestedNpcRefs 选出需要加载决策视图的在场 NPC，requestedKnowledgeRefs 按目录 handle 选出需要读取正文的记忆，requestedItemRefs 选出要操作的随身物品（字段存在时才可选）" : "")
     + "；不填写任何提案内容。";
   const properties = { ...tool.function.parameters.properties,
     requestedCapabilities: { ...tool.function.parameters.properties.requestedCapabilities, description: AMEND_CAPABILITIES_DESCRIPTION } };
@@ -1092,7 +1095,8 @@ export function vnextProposalSystemParts(content: string):
 export function createVNextProposalOfferModelInput(message: string, context?: VNextRequiredContext, retryQuestion?: VNextRetryQuestion) {
   const requestable = context === undefined ? [] : proposalNpcRecall(context).requestableRefs;
   const handles = context === undefined ? [] : proposalKnowledgeRecall(context, []).map(record => record.handle);
-  const offer = offerKpProposalBundleTool(requestable, vnextProposalSchemaRequestIds(context), handles);
+  const items = context === undefined ? [] : proposalPossessionRecall(context, []).map(row => row.entryRef);
+  const offer = offerKpProposalBundleTool(requestable, vnextProposalSchemaRequestIds(context), handles, items);
   const targets = context === undefined || retryQuestion !== undefined ? [] : vnextRetryQuestionTargets(context);
   const unoffered = context === undefined ? [] : proposalUnofferedCapabilities(context);
   return Object.freeze(proposalDialectModelInput({
@@ -1163,6 +1167,8 @@ export function createSubmitKpProposalBundleModelInput(
    * their container. Kept separate from current evidence and social subjects. */
   inventoryEntryRefs?: readonly string[],
   context?: VNextRequiredContext,
+  /** Carried items the selection may still name through its one amendment (ADR 0132). */
+  requestableItemRefs: readonly string[] = [],
 ): StrictToolBundleModelInput {
   const submitTool = { ...SUBMIT_KP_PROPOSAL_BUNDLE_TOOL,
     function: Object.freeze({ ...SUBMIT_KP_PROPOSAL_BUNDLE_TOOL.function,
@@ -1172,7 +1178,7 @@ export function createSubmitKpProposalBundleModelInput(
     messages: vnextProposalRequestMessages(message,
       vnextProposalReferenceRules("expandedProposal", capabilities, terminalKinds, unofferedCapabilities),
       vnextProposalTaskInstruction("expandedProposal", amendable), !noObjectCompletionOffered(unofferedCapabilities)),
-    tools: Object.freeze(amendable ? [submitTool, amendKpProposalSelectionTool([...capabilities, ...terminalKinds], requestableNpcRefs, requestableKnowledgeHandles, unofferedCapabilities)] as const : [submitTool] as const),
+    tools: Object.freeze(amendable ? [submitTool, amendKpProposalSelectionTool([...capabilities, ...terminalKinds], requestableNpcRefs, requestableKnowledgeHandles, unofferedCapabilities, requestableItemRefs)] as const : [submitTool] as const),
     tool_choice: "required" as const,
     parallel_tool_calls: false as const,
     max_completion_tokens: 4_000,

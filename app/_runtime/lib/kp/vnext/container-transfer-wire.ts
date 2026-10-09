@@ -14,13 +14,33 @@ function transferSources(context: VNextRequiredContext) {
       && entry.value.containerRef === undefined && (entry.value.equippedSlot === null || entry.value.equippedSlot === undefined)).map(entry => entry.ref) };
 }
 
-export function containerTransferWireSchemas(variants: readonly Record<string, any>[], context?: VNextRequiredContext, names: ReadonlyMap<string, string> = new Map()) {
+/** The entry refs a form's own operations list, read through shared `$def`
+ * references; undefined when the form lists none, i.e. takes any ref. */
+function listedEntryRefs(schema: unknown, defs: Readonly<Record<string, unknown>>, seen = new Set<string>()): ReadonlySet<string> | undefined {
+  if (!isPlainRecord(schema)) return undefined;
+  if (typeof schema.$ref === "string") {
+    const name = schema.$ref.slice("#/$def/".length);
+    if (seen.has(name)) return undefined;
+    return listedEntryRefs(defs[name], defs, new Set([...seen, name]));
+  }
+  if (Array.isArray(schema.enum)) return new Set(schema.enum.filter((item): item is string => typeof item === "string"));
+  if (!Array.isArray(schema.anyOf)) return undefined;
+  const parts = schema.anyOf.map(part => listedEntryRefs(part, defs, seen));
+  return parts.some(part => part !== undefined) ? new Set(parts.flatMap(part => [...(part ?? [])])) : new Set();
+}
+
+export function containerTransferWireSchemas(variants: readonly Record<string, any>[], context?: VNextRequiredContext,
+  names: ReadonlyMap<string, string> = new Map(), defs: Readonly<Record<string, unknown>> = {}) {
   const acquire = variants.find(row => row.properties?.kind?.enum?.includes("acquire"));
   const store = variants.find(row => row.properties?.kind?.enum?.includes("store"));
   if (!acquire || !store) throw new TypeError("CONTAINER_TRANSFER_WIRE_SCHEMA_UNAVAILABLE");
   const sources = context && transferSources(context);
+  // ADR 0132: a declaration names only an entry this form's operations list.
+  // That list follows the stage's view, so a carried item another stage read
+  // is not offered here, and Room rebuilds the same form from the full context.
+  const listed = listedEntryRefs(acquire.properties.entryRef, defs);
   return (["takeOut", "putIn"] as const).flatMap(direction => {
-    const refs = sources?.[direction];
+    const refs = sources?.[direction].filter(ref => listed === undefined || listed.has(names.get(ref) ?? ref));
     if (refs?.length === 0) return [];
     const properties = { kind: { type: "string", enum: ["containerTransfer"] }, direction: { type: "string", enum: [direction] },
       containerRef: store.properties.containerRef, entryRef: refs ? { type: "string", enum: refs.map(ref => names.get(ref) ?? ref) } : acquire.properties.entryRef,
@@ -67,7 +87,14 @@ export function expandContainerTransferWire(value: unknown, context: VNextRequir
           || !["leaveAsIs", "close"].includes(String(op.after)) || typeof op.containerRef !== "string" || typeof op.entryRef !== "string"
           || !Number.isSafeInteger(op.quantity) || Number(op.quantity) < 1 || Number(op.quantity) > 1_000_000 || typeof scene !== "string") fail(at, op, "invalid-declaration");
         const container = records.get(op.containerRef), item = records.get(op.entryRef);
-        if (!container || !item || !context.references.citations.viewerEvidenceRefs.includes(op.containerRef)) fail(at, op, "frozen-visible-container-required");
+        if (!container || !context.references.citations.viewerEvidenceRefs.includes(op.containerRef)) fail(at, op, "frozen-visible-container-required");
+        // ADR 0132: an item the stage has not read is named, not guessed: a
+        // carried one the selection did not ask for, or no frozen item at all.
+        if (!item) throw new ContainerTransferWireError([proposalDiagnostic("REFERENCE_UNAVAILABLE", "container-transfer:source-not-read", {
+          path: [...at, "entryRef"], pathBase: "arguments", actual: diagnosticActual(op.entryRef),
+          expected: { enum: transferSources(context)[op.direction === "putIn" ? "putIn" : "takeOut"],
+            requirement: "Name an item this stage has read. A carried item listed only in references.possessionRecall is read once requestedItemRefs names it." },
+          repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } })]);
         if (container.holderRef && container.holderRef !== context.intent.actorRef) fail(at, op, "foreign-held-container");
         if (op.direction === "takeOut" && (item.containerRef !== op.containerRef || !transferSources(context).takeOut.includes(op.entryRef))) fail(at, op, "source-container-mismatch");
         if (op.direction === "putIn" && !transferSources(context).putIn.includes(op.entryRef)) {

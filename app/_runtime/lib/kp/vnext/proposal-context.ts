@@ -1,6 +1,7 @@
 import { VNEXT_OBJECT_COMPLETION_CAPABILITIES, type VNextObjectCompletionKind } from "./proposal-capabilities";
 import { isNpcSpatialShell } from "../../rules/shapes";
-import type { VNextRequiredContext } from "./required-context";
+import type { RequiredContextPossessionRecall, VNextRequiredContext } from "./required-context";
+import { possessionRecordCitation, readPossessionRecords } from "./context/possession-recall";
 import { ITEM_DEFINITION_SCHEMA, ITEM_ENTRY_SCHEMA, isVNextRulingPrecedent, type ItemEntryV1 } from "../../rules/shapes";
 import { VNEXT_STORED_SEMANTIC_DEFINITION_SCHEMA } from "../../rules/shapes";
 import { isPlainRecord, compareCodeUnits, canonicalHash, canonicalUnits, sameCanonical } from "./canonical-json";
@@ -28,7 +29,8 @@ import { isRetryHistoryEntryRef } from "./retry-history";
 // shows a long directory's older memories as group lines; a directory with
 // groups depends on what the selection asked for and is sent last (ADR 0111).
 // v15 separates inventory planning after opening from current visible evidence.
-export const VNEXT_PROPOSAL_CONTEXT_SCHEMA = "zhuwei.proposal-context/vnext-16" as const;
+// v17 lists the actor's carried items not read as a directory a stage names from (ADR 0132).
+export const VNEXT_PROPOSAL_CONTEXT_SCHEMA = "zhuwei.proposal-context/vnext-17" as const;
 
 export type ProposalNpcRecall = Readonly<{ defaultRefs: readonly string[]; requestableRefs: readonly string[] }>;
 
@@ -100,12 +102,34 @@ export function proposalRequestableKnowledgeHandles(context: VNextRequiredContex
 }
 
 /** Whether Room has still to read something `requested` asks for: a body the
- * freeze left in a directory, or a group whose members it has not listed. */
+ * freeze left in a directory, a group whose members it has not listed, or a
+ * carried item whose records it has not read (ADR 0132). */
 export function proposalKnowledgeRecallPending(context: VNextRequiredContext, requested: readonly string[]): boolean {
   const present = new Set(context.entries.map(entry => entry.entryRef));
   return (context.references.knowledgeRecall ?? []).some(entry => entry.records.some(record =>
     record.revisionOrHash !== undefined && requested.includes(record.entryRef) && !present.has(record.entryRef))
-    || (entry.groups ?? []).some(group => group.members === undefined && requested.includes(group.groupRef)));
+    || (entry.groups ?? []).some(group => group.members === undefined && requested.includes(group.groupRef)))
+    || (context.references.possessionRecall ?? []).some(row => requested.includes(row.entryRef)
+      && row.records.some(record => !present.has(record.entryRef)));
+}
+
+/** SPEC 0016 §4.3 (ADR 0132): the carried items a stage may still name --
+ * the rows of the freeze's directory that `requested` has not asked for.
+ * Requests travel with the memory requests, as entry refs. */
+export function proposalPossessionRecall(context: VNextRequiredContext, requested: readonly string[] = []): readonly RequiredContextPossessionRecall[] {
+  return Object.freeze((context.references.possessionRecall ?? []).filter(row => !requested.includes(row.entryRef)));
+}
+
+/** The recalled records of carried items a stage did not ask for. Room keeps
+ * every record any stage read; each stage's view shows only its own, and a
+ * definition two items share stays while either is asked for. */
+function hiddenPossessionRecords(context: VNextRequiredContext, requested: readonly string[]): ReadonlySet<string> {
+  const rows = context.references.possessionRecall ?? [];
+  if (rows.length === 0) return new Set();
+  const present = new Set(context.entries.map(entry => entry.entryRef));
+  const asked = new Set(rows.filter(row => requested.includes(row.entryRef)).flatMap(row => row.records.map(record => record.entryRef)));
+  return new Set(rows.filter(row => !requested.includes(row.entryRef)).flatMap(row => row.records.map(record => record.entryRef))
+    .filter(ref => present.has(ref) && !asked.has(ref)));
 }
 
 /** The same frozen context with what the selection has not asked for left
@@ -132,8 +156,9 @@ export function proposalContextView(context: VNextRequiredContext, requestedNpcR
     const groups = (entry.groups ?? []).filter(group => group.members !== undefined && requestedKnowledgeRefs.includes(group.groupRef));
     return groups.length === 0 ? [] : [[knowledgeDirectoryEntryRef(entry.holderRef), { entry, groups }] as const];
   }));
-  if (hiddenNpcs.length === 0 && hiddenBodies.size === 0 && opened.size === 0) return context;
-  const hidden = new Set([...hiddenNpcs.flatMap(entry => entry.entryRefs), ...hiddenBodies]);
+  const hiddenPossessions = hiddenPossessionRecords(context, requestedKnowledgeRefs);
+  if (hiddenNpcs.length === 0 && hiddenBodies.size === 0 && opened.size === 0 && hiddenPossessions.size === 0) return context;
+  const hidden = new Set([...hiddenNpcs.flatMap(entry => entry.entryRefs), ...hiddenBodies, ...hiddenPossessions]);
   const hiddenNpcRefs = new Set(hiddenNpcs.map(entry => entry.npcRef));
   // A perception fact has one observer, whose memory of it carries the same
   // evidence; a world truth only some holder knows is not a perception and
@@ -229,9 +254,14 @@ type GroupMemberLine = Readonly<{ knowledgeRef: string; revisionOrHash: string; 
  * read beyond it was fixed at the freeze. */
 export function withRecalledKnowledge(frozenContext: VNextRequiredContext, recalled: readonly RecalledKnowledge[]): VNextRequiredContext {
   if (recalled.length === 0) return frozenContext;
-  const groupLists = recalled.filter(record => isPlainRecord(record.value) && record.value.schema === KNOWLEDGE_GROUP_MEMBERS_SCHEMA);
-  const context = groupLists.length === 0 ? frozenContext : withGroupMembers(frozenContext, groupLists);
-  const bodies = recalled.filter(record => !groupLists.includes(record));
+  const carried = new Map((frozenContext.references.possessionRecall ?? []).flatMap(row => row.records.map(record =>
+    [record.entryRef, { revisionOrHash: record.revisionOrHash, valueHash: record.valueHash ?? record.revisionOrHash,
+      citation: possessionRecordCitation(row, record.entryRef) }] as const)));
+  const possessions = recalled.filter(record => carried.has(record.entryRef));
+  const groupLists = recalled.filter(record => !carried.has(record.entryRef) && isPlainRecord(record.value) && record.value.schema === KNOWLEDGE_GROUP_MEMBERS_SCHEMA);
+  const listed = groupLists.length === 0 ? frozenContext : withGroupMembers(frozenContext, groupLists);
+  const context = possessions.length === 0 ? listed : withCarriedItems(listed, possessions, carried);
+  const bodies = recalled.filter(record => !groupLists.includes(record) && !possessions.includes(record));
   if (bodies.length === 0) return context;
   const versions = new Map((context.references.knowledgeRecall ?? []).flatMap(entry => entry.records.flatMap(record =>
     record.revisionOrHash === undefined ? [] : [[record.entryRef, { holderRef: entry.holderRef, revisionOrHash: record.revisionOrHash }] as const])));
@@ -285,6 +315,33 @@ export function withRecalledKnowledge(frozenContext: VNextRequiredContext, recal
           ...added.filter(record => record.holderRef === actor).flatMap(record => [record.entry.entryRef, record.knowledgeRef])])]) }) }) });
 }
 
+/** ADR 0132: records Room read for carried items a stage named. Each must be
+ * a record of a row of the freeze's directory, at the version the row
+ * recorded and with the value hash it recorded. They read like frozen
+ * records from then on, cited as the row classed them; a stage that did not
+ * name the item does not see them. */
+function withCarriedItems(context: VNextRequiredContext, records: readonly RecalledKnowledge[],
+  carried: ReadonlyMap<string, Readonly<{ revisionOrHash: string; valueHash: string; citation: "viewer" | "authority" }>>): VNextRequiredContext {
+  const frozen = new Set(context.entries.map(entry => entry.entryRef));
+  const added = [...new Map(records.map(record => [record.entryRef, record])).values()]
+    .sort((left, right) => compareCodeUnits(left.entryRef, right.entryRef)).map(record => {
+      const row = carried.get(record.entryRef)!;
+      const value = record.value;
+      if (frozen.has(record.entryRef) || record.revisionOrHash !== row.revisionOrHash || !isPlainRecord(value)
+        || canonicalHash(value) !== row.valueHash) {
+        throw new TypeError(`possession-recall:record-invalid:${record.entryRef}`);
+      }
+      return { citation: row.citation, entry: Object.freeze({ kind: "known" as const, entryRef: record.entryRef,
+        revisionOrHash: record.revisionOrHash, value: value as never }) };
+    });
+  const citations = context.references.citations;
+  const cite = (kind: "viewer" | "authority", refs: readonly string[]) => Object.freeze([...new Set([...refs,
+    ...added.filter(record => record.citation === kind).map(record => record.entry.entryRef)])].sort(compareCodeUnits));
+  return Object.freeze({ ...context, entries: Object.freeze([...context.entries, ...added.map(record => record.entry)]),
+    references: Object.freeze({ ...context.references, citations: Object.freeze({ ...citations,
+      viewerEvidenceRefs: cite("viewer", citations.viewerEvidenceRefs), authorityBasisRefs: cite("authority", citations.authorityBasisRefs) }) }) });
+}
+
 /** Reads the bodies `requested` names that the frozen context left in a
  * directory, from `knowledge` (the holders' current records), at the
  * recorded versions. Bodies the context froze are not read again, and a body
@@ -314,7 +371,9 @@ export function recallKnowledge(context: VNextRequiredContext, requested: readon
   state: AuthoritativeWorldState): readonly RecalledKnowledge[] {
   const lists = knowledgeGroupLists(context, requested, state);
   const listed = withRecalledKnowledge(context, lists);
-  return Object.freeze([...lists, ...recallKnowledgeBodies(listed, proposalReadKnowledgeRefs(listed, requested), state.knowledge)]);
+  // ADR 0132: the carried items the stage named, at the row's versions.
+  return Object.freeze([...lists, ...recallKnowledgeBodies(listed, proposalReadKnowledgeRefs(listed, requested), state.knowledge),
+    ...readPossessionRecords(context, requested, state)]);
 }
 
 function knowledgeGroupLists(context: VNextRequiredContext, requested: readonly string[],
@@ -804,7 +863,12 @@ export function proposalModelContext(context: VNextRequiredContext, requestedNpc
   const deferredInventoryEntryRefs = proposalInventoryEntryRefs(view).filter(ref => !visibleItems.has(ref));
   const subjects = new Set(proposalObservationSubjectRefs(view));
   const known = new Set(view.entries.flatMap(entry => entry.kind === "known" ? [entry.entryRef] : []));
-  const { domains: _domains, ...directory } = view.references;
+  const { domains: _domains, possessionRecall: _possessions, possessionRecallOmitted: omittedPossessions, ...directory } = view.references;
+  // ADR 0132: what a vague reference can be matched against; versions stay
+  // on the server.
+  const carried = proposalPossessionRecall(context, requestedKnowledgeRefs).map(row => Object.freeze({ ref: row.entryRef, label: row.label,
+    quantity: row.quantity, ...(row.count === undefined ? {} : { alikeCount: row.count }), ...(row.equippedSlot === null ? {} : { equippedSlot: row.equippedSlot }),
+    ...(row.containerRef === null ? {} : { containerRef: row.containerRef }) }));
   const values = view.entries.flatMap(entry => entry.kind === "known" && isPlainRecord(entry.value) ? [[entry.entryRef, entry.value] as const] : []);
   const presentation: ModelPresentation = Object.freeze({ known,
     memories: new Map(values.filter(([entryRef, value]) => isMemoryEntry(entryRef, value))),
@@ -836,7 +900,9 @@ export function proposalModelContext(context: VNextRequiredContext, requestedNpc
       observationSubjectRefs: proposalObservationSubjectRefs(view),
       npcSourceChoices: proposalNpcSourceChoices(view), itemEntryRefs,
       ...(deferredInventoryEntryRefs.length ? { deferredInventoryEntryRefs: Object.freeze(deferredInventoryEntryRefs) } : {}),
-      itemDefinitionRefs: proposalItemDefinitionRefs(view) }),
+      itemDefinitionRefs: proposalItemDefinitionRefs(view),
+      ...(carried.length === 0 ? {} : { possessionRecall: Object.freeze({ requestable: Object.freeze(carried),
+        ...(omittedPossessions === undefined ? {} : { notListed: omittedPossessions }) }) }) }),
     // SPEC 0016 §7.2: changing action metadata must not cut off the
     // definition prefix. These are still the exact same frozen values.
     intent: view.intent,

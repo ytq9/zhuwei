@@ -69,9 +69,12 @@ export { authorityKnowledgeCatalogWitness, HELD_KNOWLEDGE_CATALOG_WITNESS_SCHEMA
 // SPEC 0016 §4.3 (ADR 0111): the fiction day a memory was acquired on, by
 // which a holder's directory groups its older memories.
 export { fictionDayOf } from "./v2/promise-due";
-export { itemEntryResourceId } from "./v2/items";
+export { itemEntryResourceId, itemEntryUseAbilityId } from "./v2/items";
 export { itemPolicyVisibleToViewer } from "./v2/item-projection";
-export { authorityEquippedItemWeaponAbilityRefs } from "./v2/item-authority-vnext";
+export { authorityEquippedItemWeaponAbilityRefs, authorityItemComposite } from "./v2/item-authority-vnext";
+// SPEC 0016 §4.3 (ADR 0132): which carried items a closed container keeps
+// out of reach, read when a freeze lists the actor's carried items.
+export { containedItemAccessible } from "./v2/item-containment";
 // SPEC 0016 §7: the snapshot-dependency edges of a typed Bundle are a pure
 // function of its steps; lowering must order the same edges Rules compiles.
 export { atomicSnapshotDependencies } from "./v2/atomic-snapshot-dependencies";

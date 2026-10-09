@@ -86,6 +86,69 @@ it('containerTransfer takes from and returns to an open semantic scene container
   });
 }, 30_000);
 
+// SPEC 0016 §4.3 (ADR 0132): "the piece I just took out" names no item, so
+// nothing freezes the cloth the actor carries. The freeze lists unread
+// carried items by name, count and place; a selection that names none
+// leaves the form without the cloth and the declaration says what is
+// missing; one that names it has Room read it at the listed version before
+// the filling, and the put-back commits and survives archive restore.
+it('a vague put-back names the carried item from the possession directory before the filling', async () => {
+  const { stub, capabilities } = await initializeObjectRoom('possession-recall-room');
+  const saved = await withObjectRoomScenario(stub, async (act, target, calls) => {
+    const template = VNEXT_SEMANTIC_TEMPLATES.sceneFeature;
+    const contents = defineContents('wake', '布条', 'recall-cloth', 3, true);
+    contents[1].containerRef = 'prospective:recall-barrel';
+    await act('recall-barrel', '我查看这只原有的敞口木桶和里面的布条。', [{ ...common('wake'),
+      kind: 'materializeObject', semanticKind: 'sceneFeature', templateRef: template.templateRef, templateHash: template.templateHash,
+      visibilityPolicyRef: 'visibility:scene-observers', produces: [{ handle: 'prospective:recall-barrel', kind: 'semanticDefinition', outcomeBinding: 'always' }],
+      definition: { sceneRef: 'wake', label: '敞口语义木桶', description: '没有桶盖的敞口木桶。', observableState: 'open',
+        affordances: ['存放物品'], mechanicDefinitionRefs: [], visibilityFactId: null }, summary: '确定原木桶及其敞口状态。' }, ...contents], '0');
+    let state = target.authoritativeReplay().state;
+    const barrel = Object.values(state.campaignRuntime.definitions).find((definition: any) => definition.content?.label === '敞口语义木桶') as Data;
+    const cloth = find(state, '布条', barrel.definitionId).entryId;
+    const transfer = (direction: string, entryRef: string) => (wire: Data) => {
+      wire.steps.inventoryOperation[0].operation = { kind: 'containerTransfer', direction, containerRef: barrel.definitionId,
+        entryRef, quantity: 1, access: 'alreadyOpen', after: 'leaveAsIs' };
+      return wire;
+    };
+    await act('recall-take', '我从这只敞口木桶里取出一块布条。', [inventory('wake', { kind: 'acquire', entryRef: cloth, quantity: 1 })],
+      '300000000', transfer('takeOut', cloth));
+    state = target.authoritativeReplay().state;
+    const loose = Object.values(state.campaignRuntime.itemSystem.entries).find((entry: any) =>
+      entry.definitionRef === state.campaignRuntime.itemSystem.entries[cloth].definitionRef && entry.holderRef === ACTOR && entry.containerRef === undefined) as Data;
+    const store = [inventory('wake', { kind: 'store', entryRef: loose.entryId, quantity: 1, containerRef: barrel.definitionId })];
+    const vague = '我把刚取出的这一块放回同一只敞口木桶。';
+    let before = calls.length;
+    await act('recall-unnamed', vague, store, '300000000', transfer('putIn', loose.entryId), 'needsKp');
+    const unnamed = calls.slice(before);
+    expect(JSON.stringify(unnamed[0].tools)).toContain('requestedItemRefs');
+    expect(unnamed[0].messages[0].content).toContain('possessionRecall');
+    expect(JSON.stringify(unnamed.slice(2))).toContain('container-transfer:source-not-read');
+    expect(target.authoritativeReplay().state.campaignRuntime.itemSystem).toEqual(state.campaignRuntime.itemSystem);
+    before = calls.length;
+    await act('recall-named', vague, store, '300000000', transfer('putIn', loose.entryId), 'committed',
+      wire => ({ ...wire, requestedItemRefs: [loose.entryId] }));
+    expect(calls.length - before).toBe(2);
+    // The cloth and the longsword were listed; once the cloth is read, only
+    // the longsword is left for the filling round's one amendment.
+    const listed = (request: Data) => request.tools.flatMap((tool: Data) => tool.function.parameters.properties?.requestedItemRefs?.items?.enum ?? []);
+    expect(listed(calls[before])).toHaveLength(2);
+    expect(listed(calls[before + 1])).toHaveLength(1);
+    expect(listed(calls[before])).toContain(listed(calls[before + 1])[0]);
+    state = target.authoritativeReplay().state;
+    expect(state.campaignRuntime.itemSystem.entries[loose.entryId]).toMatchObject({ entryId: loose.entryId, quantity: 1, containerRef: barrel.definitionId });
+    expect(Object.values(state.campaignRuntime.itemSystem.entries).filter((entry: any) => entry.containerRef === barrel.definitionId)
+      .reduce((sum: number, entry: any) => sum + entry.quantity, 0)).toBe(3);
+    return state.campaignRuntime.itemSystem;
+  });
+  await evictDurableObject(stub);
+  const exported = await stub.exportAuthoritativeArchive(capabilities.archiveExport) as Data;
+  expect(exported.kind).toBe('exported');
+  const restored = env.VNEXT_ROOMS.getByName('possession-recall-restored');
+  expect(await restored.restoreAuthoritativeArchive(capabilities.disasterRecovery, exported.storyArchive)).toMatchObject({ kind: 'restored' });
+  await withObjectRoomScenario(restored, async (_act, target) => expect(target.authoritativeReplay().state.campaignRuntime.itemSystem).toEqual(saved));
+}, 60_000);
+
 it('live inspection acceptance rejects identify on a hidden definition and permits the public cloth control', () => {
   const actor = 'actor:live-inspection-boundary', loose = 'item-entry:live-inspection:returned', peer = 'item-entry:live-inspection:peer';
   const entries = { [LIVE_CONTAINER]: { entryId: LIVE_CONTAINER, definitionRef: LIVE_BOX_DEFINITION, holderRef: actor, stateMachine: { state: 'closed' } },

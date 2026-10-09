@@ -154,6 +154,29 @@ export type RequiredContextReferenceDirectory = Readonly<{
    * not reach. They stay on the server until the selection names their
    * handle, the short label the holder's knowledge directory shows. */
   knowledgeRecall?: readonly RequiredContextKnowledgeRecall[];
+  /** SPEC 0016 §4.3 (ADR 0132): the actor's carried items this freeze did
+   * not read. Each row is what the model may match a vague reference against
+   * (name, count, where it is carried) and the versions of the records a
+   * stage that names it reads from authority. */
+  possessionRecall?: readonly RequiredContextPossessionRecall[];
+  /** Carried items past the directory's row limit, counted, not listed. */
+  possessionRecallOmitted?: number;
+}>;
+
+/** One carried item the freeze listed instead of reading, standing for
+ * `count` instances alike in everything but identity. `records` are the
+ * item record (first), its definition and the abilities it grants that the
+ * closure had not frozen, each at its version; `valueHash` is the hash of
+ * the value a stage then reads where it differs from the version, so the
+ * record kept with the prepared action can be checked on restore. */
+export type RequiredContextPossessionRecall = Readonly<{
+  entryRef: string;
+  label: string;
+  quantity: number;
+  count?: number;
+  equippedSlot: string | null;
+  containerRef: string | null;
+  records: readonly Readonly<{ entryRef: string; revisionOrHash: string; valueHash?: string }>[];
 }>;
 
 export type RequiredContextNpcRecall = Readonly<{
@@ -571,6 +594,47 @@ function normalizeReferenceDirectory(
   if (knowledgeRecall.some((entry, index) => index > 0 && entry.holderRef === knowledgeRecall[index - 1]!.holderRef)) {
     throw new TypeError("references.knowledgeRecall:duplicate-holder-ref");
   }
+  const possessionRecall = (references.possessionRecall ?? []).map((row) => {
+    assertRef(row.entryRef, "references.possessionRecall.entryRef");
+    if (typeof row.label !== "string" || row.label.length === 0 || row.label.length > 500
+      || !Number.isSafeInteger(row.quantity) || row.quantity < 1
+      || (row.count !== undefined && (!Number.isSafeInteger(row.count) || row.count < 2))
+      || (row.equippedSlot !== null && (typeof row.equippedSlot !== "string" || row.equippedSlot.length === 0))
+      || !Array.isArray(row.records) || row.records.length === 0 || row.records[0]?.entryRef !== row.entryRef) {
+      throw new TypeError(`references.possessionRecall:${row.entryRef}:row-invalid`);
+    }
+    if (row.containerRef !== null) assertRef(row.containerRef, `references.possessionRecall.${row.entryRef}.containerRef`);
+    const records = row.records.map((record) => {
+      assertRef(record.entryRef, `references.possessionRecall.${row.entryRef}.record`);
+      if (typeof record.revisionOrHash !== "string" || !/^sha256:[0-9a-f]{64}$/u.test(record.revisionOrHash)
+        || (record.valueHash !== undefined && (typeof record.valueHash !== "string" || !/^sha256:[0-9a-f]{64}$/u.test(record.valueHash)
+          || record.valueHash === record.revisionOrHash))) {
+        throw new TypeError(`references.possessionRecall:${row.entryRef}:record-invalid`);
+      }
+      return Object.freeze({ entryRef: record.entryRef, revisionOrHash: record.revisionOrHash,
+        ...(record.valueHash === undefined ? {} : { valueHash: record.valueHash }) });
+    });
+    if (new Set(records.map(record => record.entryRef)).size !== records.length) {
+      throw new TypeError(`references.possessionRecall:${row.entryRef}:duplicate-record`);
+    }
+    return Object.freeze({ entryRef: row.entryRef, label: row.label, quantity: row.quantity, ...(row.count === undefined ? {} : { count: row.count }),
+      equippedSlot: row.equippedSlot, containerRef: row.containerRef, records: Object.freeze(records) });
+  }).sort((left, right) => compareCodeUnits(left.entryRef, right.entryRef));
+  if (possessionRecall.some((row, index) => index > 0 && row.entryRef === possessionRecall[index - 1]!.entryRef)) {
+    throw new TypeError("references.possessionRecall:duplicate-entry-ref");
+  }
+  if (references.possessionRecallOmitted !== undefined
+    && (!Number.isSafeInteger(references.possessionRecallOmitted) || references.possessionRecallOmitted < 1)) {
+    throw new TypeError("references.possessionRecallOmitted:invalid");
+  }
+  // A record shared by two rows (a definition) carries one version.
+  const possessionVersions = new Map<string, string>();
+  for (const record of possessionRecall.flatMap(row => row.records)) {
+    if ((possessionVersions.get(record.entryRef) ?? record.revisionOrHash) !== record.revisionOrHash) {
+      throw new TypeError(`references.possessionRecall:${record.entryRef}:version-conflict`);
+    }
+    possessionVersions.set(record.entryRef, record.revisionOrHash);
+  }
   const normalized = deepFreeze({
     citations: {
       viewerEvidenceRefs: sortedUniqueStrings(
@@ -594,6 +658,8 @@ function normalizeReferenceDirectory(
     },
     npcRecall: Object.freeze(npcRecall),
     knowledgeRecall: Object.freeze(knowledgeRecall),
+    ...(possessionRecall.length === 0 ? {} : { possessionRecall: Object.freeze(possessionRecall) }),
+    ...(references.possessionRecallOmitted === undefined ? {} : { possessionRecallOmitted: references.possessionRecallOmitted }),
   }) as RequiredContextReferenceDirectory;
   return normalized;
 }
@@ -624,6 +690,13 @@ function assertRecallEntriesExist(
   for (const recall of references.npcRecall ?? []) {
     for (const ref of recall.entryRefs) {
       if (!refs.has(ref)) throw new TypeError(`references.npcRecall:${recall.npcRef}:entry-missing:${ref}`);
+    }
+  }
+  // ADR 0132: a carried item's directory row lists only records the freeze
+  // did not read; a stage that names it reads them.
+  for (const row of references.possessionRecall ?? []) {
+    for (const record of row.records) {
+      if (refs.has(record.entryRef)) throw new TypeError(`references.possessionRecall:${row.entryRef}:record-frozen:${record.entryRef}`);
     }
   }
   // A versioned record names a body the context did not freeze; any other

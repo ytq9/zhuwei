@@ -15,7 +15,7 @@ import { assertRepairTicket,
 import { authorityProposalDiagnostics, type ProposalDiagnostic } from "../kp/vnext/proposal-diagnostics";
 import type { VNextProposalBundle } from "../kp/vnext/proposal-schema";
 import { createVNextProposalOfferModelInput, createSubmitKpProposalBundleModelInput, VNEXT_INITIAL_PROPOSAL_DECISION_KINDS, vnextProposalSystemParts } from "../kp/vnext/proposal-schema";
-import { proposalContextView, proposalCreatureTargetRefs, proposalItemDefinitionRefs, proposalItemEntryRefs, proposalInventoryEntryRefs, proposalRequestableKnowledgeHandles, proposalNpcRecall, proposalObservationSubjectRefs, proposalNpcSourceChoices, proposalUnofferedCapabilities, vnextProposalContextBody } from "../kp/vnext/proposal-context";
+import { proposalContextView, proposalCreatureTargetRefs, proposalItemDefinitionRefs, proposalItemEntryRefs, proposalInventoryEntryRefs, proposalRequestableKnowledgeHandles, proposalNpcRecall, proposalObservationSubjectRefs, proposalNpcSourceChoices, proposalPossessionRecall, proposalUnofferedCapabilities, vnextProposalContextBody } from "../kp/vnext/proposal-context";
 import { requiredContextBasisReferences } from "../kp/vnext/required-context-runtime";
 import type { VNextRequiredContext } from "../kp/vnext/required-context";
 import { isPlainRecord, sameCanonical } from "../kp/vnext/canonical-json";
@@ -169,11 +169,12 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
     const view = proposalContextView(requiredContext, npcRefs, knowledgeRefs);
     const requestable = proposalNpcRecall(requiredContext).requestableRefs.filter(ref => !npcRefs.includes(ref));
     const handles = proposalRequestableKnowledgeHandles(requiredContext, npcRefs, knowledgeRefs);
+    const carried = proposalPossessionRecall(requiredContext, knowledgeRefs).map(row => row.entryRef);
     return createSubmitKpProposalBundleModelInput(vnextProposalContextBody(requiredContext, npcRefs, knowledgeRefs), capabilities,
       proposalItemEntryRefs(view), proposalObservationSubjectRefs(view), terminalKinds,
       proposalNpcSourceChoices(view), requiredContextBasisReferences(view),
       proposalCreatureTargetRefs(view), amendable, proposalItemDefinitionRefs(view), amendable ? requestable : [], amendable ? handles : [],
-      undefined, proposalUnofferedCapabilities(requiredContext), proposalInventoryEntryRefs(view), requiredContext).tools;
+      undefined, proposalUnofferedCapabilities(requiredContext), proposalInventoryEntryRefs(view), requiredContext, amendable ? carried : []).tools;
   };
   if (input.ordinal === 2) {
     if (input.repairTicket !== undefined) invalid();

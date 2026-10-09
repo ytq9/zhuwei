@@ -6,6 +6,13 @@ import { step, project, initialize, inventoryInput, PLAYER, PRINCIPAL, SEAT, REC
 import { createEventTransition } from "../../../app/_runtime/lib/rules/v2/events.ts";
 import { objectCompletionPlan } from "../../../app/_runtime/lib/rules/v2/object-mechanics.ts";
 import { spendItemEntryCosts } from "../../../app/_runtime/lib/rules/v2/item-transitions.ts";
+import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR } from "../../../tools/lib/vnext-authored-probe-fixture.mjs";
+import { freezeAdjudicationContext } from "../../../app/_runtime/lib/kp/vnext/context/index.ts";
+import { POSSESSION_RECALL_MAX_ROWS } from "../../../app/_runtime/lib/kp/vnext/context/possession-recall.ts";
+import { canonicalHash } from "../../../app/_runtime/lib/kp/vnext/canonical-json.ts";
+import { createInitialItemEntry } from "../../../app/_runtime/lib/rules/v2/items.ts";
+import { proposalContextView, proposalInventoryEntryRefs, proposalKnowledgeRecallPending, proposalModelContext,
+  recallKnowledge, withRecalledKnowledge } from "../../../app/_runtime/lib/kp/vnext/proposal-context.ts";
 
 const FIRST = "item-entry:container:first", SECOND = "item-entry:container:second", CONTENTS = "item-entry:container:cloth";
 function fixture(initialState = "absent") {
@@ -178,4 +185,77 @@ test('closed memory survives another actor changing contents and refreshes only 
   assert.equal(f.state.vNextItemAuthority.containerMemories[PLAYER][FIRST].entries[0].quantity, 2);
   assert.equal(f.state.vNextItemAuthority.containerMemories[PLAYER][FIRST].entries[0].entryId, CONTENTS);
   assertReplay(f, f.events, f.state);
+});
+
+// SPEC 0016 §4.3 (ADR 0132): a carried item nothing names is listed by
+// name, count and place, not read; naming it reads it at the listed
+// version. A changed or altered record is refused, a stage that did not
+// name it does not see it, and what a closed bag holds is not listed.
+test("carried items nothing names are listed, read at their version when named, and not listed from a closed bag", () => {
+  const ROPE = "item-entry:recall:rope", BAG = "item-entry:recall:bag", LETTER = "item-entry:recall:letter";
+  const definition = (id, label, extra = {}) => { const value = healingPotionItemDefinition(); value.definitionId = id;
+    Object.assign(value.content, { label, description: `一件${label}。`, category: "object", use: null, ...extra }); return value; };
+  const rope = definition("item-definition:recall:rope", "麻绳"), bag = definition("item-definition:recall:bag", "皮袋", { stackable: false });
+  const letter = definition("item-definition:recall:letter", "信件");
+  const held = (entryId, definitionRef, extra = {}) => ({ definitionRef, entry: { entryId, quantity: 1, ...extra,
+    placement: { kind: "held", holderRef: PROBE_ACTOR, equippedSlot: null }, ownership: { kind: "character", ownerRef: PROBE_ACTOR } } });
+  const f = createAuthoredProbeFixture("possession-recall", { itemDefinitions: [rope, bag, letter],
+    itemEntries: [held(ROPE, rope.definitionId), held(BAG, bag.definitionId, { initialState: "closed" }), held(LETTER, letter.definitionId)] });
+  const state = structuredClone(f.state);
+  state.campaignRuntime.itemSystem.entries[LETTER].containerRef = BAG;
+  const context = freezeAuthoredProbeContext(f, state, { focusRefs: [PROBE_ACTOR], intentText: "把刚才那个收好。" }).context;
+  const rows = context.references.possessionRecall;
+  assert.deepEqual(rows.map(row => row.entryRef), [BAG, ROPE]);
+  const ropeRow = rows.find(row => row.entryRef === ROPE);
+  assert.deepEqual([ropeRow.label, ropeRow.quantity, ropeRow.equippedSlot, ropeRow.containerRef], ["麻绳", 1, null, null]);
+  assert.deepEqual(ropeRow.records.map(record => record.entryRef), [ROPE, rope.definitionId]);
+  assert.ok(!proposalInventoryEntryRefs(context).includes(ROPE));
+  const sent = JSON.stringify(proposalModelContext(context));
+  assert.deepEqual(proposalModelContext(context).references.possessionRecall.requestable.map(row => [row.ref, row.label]), [[BAG, "皮袋"], [ROPE, "麻绳"]]);
+  assert.ok(!sent.includes("valueHash"), "versions stay on the server");
+  assert.equal(proposalKnowledgeRecallPending(context, [ROPE]), true);
+  const recalled = recallKnowledge(context, [ROPE], state);
+  assert.deepEqual(recalled.map(record => record.entryRef), [ROPE, rope.definitionId].sort());
+  const read = withRecalledKnowledge(context, recalled);
+  assert.equal(proposalKnowledgeRecallPending(read, [ROPE]), false);
+  assert.ok(proposalInventoryEntryRefs(proposalContextView(read, [], [ROPE])).includes(ROPE));
+  assert.ok(!proposalContextView(read, [], []).entries.some(entry => entry.entryRef === ROPE), "a stage that did not name it does not see it");
+  const changed = structuredClone(state);
+  changed.campaignRuntime.itemSystem.entries[ROPE].condition = "broken";
+  assert.throws(() => recallKnowledge(context, [ROPE], changed), /possession-recall:record-changed/);
+  assert.throws(() => withRecalledKnowledge(context, recalled.map(record => record.entryRef === ROPE
+    ? { ...record, value: { ...record.value, quantity: 9 } } : record)), /possession-recall:record-invalid/);
+});
+
+// ADR 0132: the directory stays bounded by what differs, not by how much is
+// carried. Ninety identical tubes are one row read through one instance;
+// past the row limit the rest are counted, equipped and loose items first.
+test("alike carried items share one row and a long directory lists its limit and counts the rest", () => {
+  const f = createAuthoredProbeFixture("possession-groups");
+  const freeze = state => freezeAdjudicationContext({ state, profiles: f.profiles, moduleProfile: f.moduleProfile, actorCharacterId: PROBE_ACTOR,
+    kpProjection: { kind: "projected", viewer: { kind: "kp" }, stateVersion: state.version, activeBranchId: state.activeBranchId, projectionHash: canonicalHash(state), spatialEvidence: {} },
+    replayHead: { eventSeq: state.version, stateHash: canonicalHash(state) }, preparedActionId: "prepared:possession-groups", rootActionId: "root:possession-groups",
+    submissionRef: "submission:possession-groups", intentText: "把那个收起来。", focusRefs: [], maxUnits: 160_000 });
+  const add = (state, definitionId, label, count, prefix) => {
+    const definition = { ...healingPotionItemDefinition(), definitionId };
+    definition.content = { ...definition.content, label, description: `一件${label}。`, stackable: false, use: null };
+    state.campaignRuntime.itemSystem.definitions[definitionId] = definition;
+    for (let i = 0; i < count; i++) {
+      const entryId = `item-entry:${prefix}:${String(i).padStart(2, "0")}`;
+      state.campaignRuntime.itemSystem.entries[entryId] = createInitialItemEntry(definition, { entryId, quantity: 1,
+        placement: { kind: "held", holderRef: PROBE_ACTOR, equippedSlot: null }, ownership: { kind: "character", ownerRef: PROBE_ACTOR } });
+    }
+  };
+  const tubes = structuredClone(f.state);
+  add(tubes, "item-definition:group:tube", "标本管", 90, "group-tube");
+  const one = freeze(tubes);
+  assert.equal(one.kind, "ready", JSON.stringify(one.issues));
+  assert.deepEqual(one.context.references.possessionRecall.map(row => [row.entryRef, row.label, row.count]), [["item-entry:group-tube:00", "标本管", 90]]);
+  const many = structuredClone(f.state);
+  for (let i = 0; i < 30; i++) add(many, `item-definition:group:${i}`, `杂物${i}`, 1, `group-${String(i).padStart(2, "0")}`);
+  const capped = freeze(many);
+  assert.equal(capped.kind, "ready", JSON.stringify(capped.issues));
+  assert.equal(capped.context.references.possessionRecall.length, POSSESSION_RECALL_MAX_ROWS);
+  assert.equal(capped.context.references.possessionRecallOmitted, 30 - POSSESSION_RECALL_MAX_ROWS);
+  assert.equal(proposalModelContext(capped.context).references.possessionRecall.notListed, 30 - POSSESSION_RECALL_MAX_ROWS);
 });
