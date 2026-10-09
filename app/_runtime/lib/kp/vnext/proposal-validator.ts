@@ -109,9 +109,9 @@ export function validateVNextProposalBundle(
     if (value.mode === "adjudication") {
       // The ruling and each step are validated on their own, so one
       // correction is told about every one that fails rather than the first
-      // alone. A failure inside one object still stops at that object's
-      // first bad field. The cross-field and dependency checks read every
-      // step and run once all of them pass.
+      // alone; inside one object `allFields` checks each independent field.
+      // The cross-field and dependency checks read every step and run once
+      // all of them pass.
       const failures: { issues: string[]; diagnostics: ProposalDiagnostic[] } = { issues: [], diagnostics: [] };
       const collect = (error: unknown): void => {
         const issues = error instanceof AuthoredSourceValidationError ? error.issues : [issue(error)];
@@ -181,27 +181,36 @@ function validateEntry(value: unknown, index: number, entries: readonly unknown[
   })]);
   enumField(value, "kind", PROPOSAL_ENTRY_KINDS);
   const commonKeys = ["basisRefs", "consumes", "kind", "outcomeBinding", "produces"];
-  if (!isTypedRefArray(value.basisRefs, 0, value, "basisRefs")
-    || !isConsumes(value.consumes, value)
-    || !isProduces(value.produces, value)
-    || !enumField(value, "outcomeBinding", ["always", "onSuccess", "onFailure"])) {
+  if (!allFields([
+    () => isTypedRefArray(value.basisRefs, 0, value, "basisRefs"),
+    () => isConsumes(value.consumes, value),
+    () => isProduces(value.produces, value),
+    () => enumField(value, "outcomeBinding", ["always", "onSuccess", "onFailure"]),
+  ])) {
     invalid(`bundle:entry-common-invalid:${value.kind}`);
   }
   if (value.kind === "completeObject") {
     // SPEC 0015 §11.1: a door's completion also carries its AC and hit points;
     // lowering checks that the ref is such a door and the state one it can be.
     const mechanics = Object.hasOwn(value, "mechanics");
-    if (!exactKeys(value, [...commonKeys, "definitionRef", "description", "observableState", "summary", ...(mechanics ? ["mechanics"] : [])])
-      || (mechanics && !rulesShapeField(value.mechanics, value, "mechanics", isObjectMechanics))
-      || !refField(value.definitionRef, value, "definitionRef") || value.definitionRef.startsWith("prospective:")
-      || !textField(value.description, value, "description", 4000)
-      || !textField(value.observableState, value, "observableState", 500)
-      || !textField(value.summary, value, "summary", 2000)
-      || value.outcomeBinding !== "always" || !isProducerForEntry(value)) invalid("bundle:object-completion-invalid");
+    if (!allFields([
+      () => exactKeys(value, [...commonKeys, "definitionRef", "description", "observableState", "summary", ...(mechanics ? ["mechanics"] : [])]),
+      () => !mechanics || rulesShapeField(value.mechanics, value, "mechanics", isObjectMechanics),
+      () => refField(value.definitionRef, value, "definitionRef") && !value.definitionRef.startsWith("prospective:"),
+      () => textField(value.description, value, "description", 4000),
+      () => textField(value.observableState, value, "observableState", 500),
+      () => textField(value.summary, value, "summary", 2000),
+      () => value.outcomeBinding === "always",
+      () => isProducerForEntry(value),
+    ])) invalid("bundle:object-completion-invalid");
     return value as VNextProposalBundleEntry;
   }
   if (value.kind === "storyContinuity") {
-    if (!exactKeys(value, ["kind", "basisRefs", "consumes", "produces", "outcomeBinding", "operation"]) || !isStoryContinuityOperation(value.operation) || !isProducerForEntry(value)) invalid("story-continuity:operation-invalid");
+    if (!allFields([
+      () => exactKeys(value, ["kind", "basisRefs", "consumes", "produces", "outcomeBinding", "operation"]),
+      () => isStoryContinuityOperation(value.operation),
+      () => isProducerForEntry(value),
+    ])) invalid("story-continuity:operation-invalid");
     return value as VNextProposalBundleEntry;
   }
   if (value.kind === "formActorPlan") {
@@ -233,24 +242,37 @@ function validateEntry(value: unknown, index: number, entries: readonly unknown[
   }
 
   if (value.kind === "commitNarrativeDetail") {
-    if (!exactKeys(value, [...commonKeys, "sceneRef", "label", "description", "audience"])
-      || !refField(value.sceneRef, value, "sceneRef") || !textField(value.label, value, "label", 500) || !textField(value.description, value, "description", 2_000)
-      || !enumField(value, "audience", ["sceneObservers", "actorOnly"]) || value.outcomeBinding !== "always"
-      || !arrayField(value.consumes, value, "consumes", 0, 0) || !isProducerForEntry(value)) invalid("bundle:narrative-detail-invalid");
+    if (!allFields([
+      () => exactKeys(value, [...commonKeys, "sceneRef", "label", "description", "audience"]),
+      () => refField(value.sceneRef, value, "sceneRef"),
+      () => textField(value.label, value, "label", 500),
+      () => textField(value.description, value, "description", 2_000),
+      () => enumField(value, "audience", ["sceneObservers", "actorOnly"]),
+      () => value.outcomeBinding === "always",
+      () => arrayField(value.consumes, value, "consumes", 0, 0),
+      () => isProducerForEntry(value),
+    ])) invalid("bundle:narrative-detail-invalid");
     return value as VNextProposalBundleEntry;
   }
 
   if (value.kind === "social") {
-    if (!exactKeys(value, [...commonKeys, "sceneRef", "npcRef", "actorSpeech", "goal", "method", "communication", "audience", "branches", ...(value.playerStopsFightingRefs === undefined ? [] : ["playerStopsFightingRefs"])])
-      || !refField(value.sceneRef, value, "sceneRef") || !refField(value.npcRef, value, "npcRef")
-      || !textField(value.actorSpeech, value, "actorSpeech", 4000)
-      || (value.playerStopsFightingRefs !== undefined && !isTypedRefArray(value.playerStopsFightingRefs, 0, value, "playerStopsFightingRefs"))
-      || !textField(value.goal, value, "goal", 4000) || !textField(value.method, value, "method", 4000) || !enumField(value, "communication", ["spokenConversation"])
-      || !enumField(value, "audience", ["participants", "sceneListeners"])
-      || !isProducerForEntry(value)
-      || !objectField(value.branches, value, "branches") || !exactKeys(value.branches, ["success", "failure"])
-      || !rulesShapeField(value.branches.success, value.branches, "success", proposalSocialBranchConform)
-      || !(value.branches.failure === null || rulesShapeField(value.branches.failure, value.branches, "failure", proposalSocialBranchConform))) invalid("bundle:social-invalid");
+    const branches = value.branches;
+    if (!allFields([
+      () => exactKeys(value, [...commonKeys, "sceneRef", "npcRef", "actorSpeech", "goal", "method", "communication", "audience", "branches", ...(value.playerStopsFightingRefs === undefined ? [] : ["playerStopsFightingRefs"])]),
+      () => refField(value.sceneRef, value, "sceneRef"),
+      () => refField(value.npcRef, value, "npcRef"),
+      () => textField(value.actorSpeech, value, "actorSpeech", 4000),
+      () => value.playerStopsFightingRefs === undefined || isTypedRefArray(value.playerStopsFightingRefs, 0, value, "playerStopsFightingRefs"),
+      () => textField(value.goal, value, "goal", 4000),
+      () => textField(value.method, value, "method", 4000),
+      () => enumField(value, "communication", ["spokenConversation"]),
+      () => enumField(value, "audience", ["participants", "sceneListeners"]),
+      () => isProducerForEntry(value),
+      () => objectField(branches, value, "branches") && exactKeys(branches, ["success", "failure"]) && allFields([
+        () => rulesShapeField(branches.success, branches, "success", proposalSocialBranchConform),
+        () => branches.failure === null || rulesShapeField(branches.failure, branches, "failure", proposalSocialBranchConform),
+      ]),
+    ]) || !isPlainRecord(value.branches)) invalid("bundle:social-invalid");
     const knowledgeDiagnostics: ProposalDiagnostic[] = [];
     for (const branchName of ["success", "failure"] as const) {
       const branch = value.branches[branchName];
@@ -273,17 +295,27 @@ function validateEntry(value: unknown, index: number, entries: readonly unknown[
   }
 
   if (value.kind === "observe") {
-    const branchValid = (branch: unknown): boolean => isPlainRecord(branch)
-      && exactKeys(branch, ["outcomeCode", "summary", "sensoryEvidence", "characterInferences"])
-      && isBranchEvidence(branch)
-      && arrayField(branch.characterInferences, branch, "characterInferences", 0, 16)
-      && branch.characterInferences.every(observationInferenceConform);
-    if (!exactKeys(value, [...commonKeys, "sceneRef", "focusRefs", "existingFactRefs", "inquiry", "method", "branches", ...approachKey(value)])
-      || !approachField(value)
-      || !refField(value.sceneRef, value, "sceneRef") || !isTypedRefArray(value.focusRefs, 0, value, "focusRefs") || !isTypedRefArray(value.existingFactRefs, 0, value, "existingFactRefs")
-      || !textField(value.inquiry, value, "inquiry", 4000) || !textField(value.method, value, "method", 4000) || !isProducerForEntry(value)
-      || !objectField(value.branches, value, "branches") || !exactKeys(value.branches, ["success", "failure"])
-      || !branchValid(value.branches.success) || !(value.branches.failure === null || branchValid(value.branches.failure))) invalid("bundle:observe-invalid");
+    const branchValid = (branch: unknown): boolean => isPlainRecord(branch) && allFields([
+      () => exactKeys(branch, ["outcomeCode", "summary", "sensoryEvidence", "characterInferences"]),
+      () => isBranchEvidence(branch),
+      () => arrayField(branch.characterInferences, branch, "characterInferences", 0, 16)
+        && branch.characterInferences.every(observationInferenceConform),
+    ]);
+    const branches = value.branches;
+    if (!allFields([
+      () => exactKeys(value, [...commonKeys, "sceneRef", "focusRefs", "existingFactRefs", "inquiry", "method", "branches", ...approachKey(value)]),
+      () => approachField(value),
+      () => refField(value.sceneRef, value, "sceneRef"),
+      () => isTypedRefArray(value.focusRefs, 0, value, "focusRefs"),
+      () => isTypedRefArray(value.existingFactRefs, 0, value, "existingFactRefs"),
+      () => textField(value.inquiry, value, "inquiry", 4000),
+      () => textField(value.method, value, "method", 4000),
+      () => isProducerForEntry(value),
+      () => objectField(branches, value, "branches") && exactKeys(branches, ["success", "failure"]) && allFields([
+        () => branchValid(branches.success),
+        () => branches.failure === null || branchValid(branches.failure),
+      ]),
+    ])) invalid("bundle:observe-invalid");
     return value as VNextProposalBundleEntry;
   }
 
@@ -299,28 +331,36 @@ function validateEntry(value: unknown, index: number, entries: readonly unknown[
   }
 
   if (value.kind === "materializeNpc") {
-    if (!exactKeys(value, [...commonKeys, "sceneRef", "source", "visibilityPolicyRef", "summary"])
-      || !refField(value.sceneRef, value, "sceneRef", true) || !isNpcMaterializationSource(value.source)
-      || !enumField(value, "visibilityPolicyRef", ["visibility:public", "visibility:scene-observers"])
-      || !textField(value.summary, value, "summary", 2000) || !isProducerForEntry(value)) invalid("bundle:npc-materialization-invalid");
+    if (!allFields([
+      () => exactKeys(value, [...commonKeys, "sceneRef", "source", "visibilityPolicyRef", "summary"]),
+      () => refField(value.sceneRef, value, "sceneRef", true),
+      () => isNpcMaterializationSource(value.source),
+      () => enumField(value, "visibilityPolicyRef", ["visibility:public", "visibility:scene-observers"]),
+      () => textField(value.summary, value, "summary", 2000),
+      () => isProducerForEntry(value),
+    ])) invalid("bundle:npc-materialization-invalid");
     return value as VNextProposalBundleEntry;
   }
 
   if (value.kind === "materializeObject") {
-    if (!exactKeys(value, [
-      ...commonKeys,
-      "definition", "semanticKind", "summary", "templateHash", "templateRef",
-      "visibilityPolicyRef",
-    ])
-      || !enumField(value, "semanticKind", ["sceneFeature", "worldFact", "location", "passage"])
-      || !refField(value.templateRef, value, "templateRef")
-      || !checkedField(value, "templateHash", isSha256, { type: "string", pattern: SHA256_PATTERN.source })
-      || !enumField(value, "visibilityPolicyRef", [
-        "visibility:public", "visibility:scene-observers", "visibility:hidden-until-evidence", "visibility:narrative-audience",
-      ])
-      || !isMaterializedDefinition(value.definition, value)
-      || !textField(value.summary, value, "summary", 2_000)
-      || !isProducerForEntry(value)) {
+    const kinds = ["sceneFeature", "worldFact", "location", "passage"];
+    const policies = ["visibility:public", "visibility:scene-observers", "visibility:hidden-until-evidence", "visibility:narrative-audience"];
+    if (!allFields([
+      () => exactKeys(value, [
+        ...commonKeys,
+        "definition", "semanticKind", "summary", "templateHash", "templateRef",
+        "visibilityPolicyRef",
+      ]),
+      () => enumField(value, "semanticKind", kinds),
+      () => refField(value.templateRef, value, "templateRef"),
+      () => checkedField(value, "templateHash", isSha256, { type: "string", pattern: SHA256_PATTERN.source }),
+      () => enumField(value, "visibilityPolicyRef", policies),
+      // The definition's shape follows the kind and policy: read it once both are valid.
+      () => !kinds.includes(String(value.semanticKind)) || !policies.includes(String(value.visibilityPolicyRef))
+        || isMaterializedDefinition(value.definition, value),
+      () => textField(value.summary, value, "summary", 2_000),
+      () => isProducerForEntry(value),
+    ])) {
       invalid("bundle:materialization-invalid");
     }
     return value as VNextMaterializeObjectEntry;
@@ -328,30 +368,41 @@ function validateEntry(value: unknown, index: number, entries: readonly unknown[
 
   if (value.kind === "materializeDefinition" || value.kind === "materializeItem" || value.kind === "inventoryOperation") {
     const sourceValidation = value.kind === "materializeDefinition" ? validateAuthoredDefinitionSource(value.source) : undefined;
-    if (sourceValidation !== undefined && !sourceValidation.ok) {
-      throw new AuthoredSourceValidationError(value, sourceValidation.diagnostics, index);
-    }
     const extra = value.kind === "materializeDefinition" ? ["source", "visibilityPolicyRef", "summary"]
       : value.kind === "materializeItem" ? ["definitionRef", "sceneRef", "quantity", "ownership", "visibilityPolicyRef", "summary", ...(value.uniquenessBasisRef === undefined ? [] : ["uniquenessBasisRef"]), ...(value.containerRef === undefined ? [] : ["containerRef"]), ...(value.initialState === undefined ? [] : ["initialState"])]
         : ["operation", "summary"];
-    if (!exactKeys(value, [...commonKeys, ...extra]) || !textField(value.summary, value, "summary", 2000)) invalid("bundle:authored-entry-invalid");
-    authoredReferenceSlots(value, (ref, parent, key) => { refField(ref, parent, key, true); });
-    if (value.kind === "inventoryOperation") {
-      if (!isProducerForEntry(value) || !authoredSchemaField(value, "operation", index,
-        "bundle:inventory-operation-invalid", isInventoryOperationSource)) invalid("bundle:inventory-operation-invalid");
-    } else {
-      if (!enumField(value, "visibilityPolicyRef", ["visibility:public", "visibility:scene-observers", "visibility:hidden-until-evidence", "visibility:narrative-audience"])) invalid("bundle:authored-producer-invalid");
-      if (value.kind === "materializeDefinition") {
-        if (!sourceValidation?.ok || !isProducerForEntry(value)) invalid("bundle:authored-producer-kind-invalid");
-      } else if (!isProducerForEntry(value) || !refField(value.definitionRef, value, "definitionRef", true) || !refField(value.sceneRef, value, "sceneRef", true)
-        || !checkedField(value, "quantity", entry => Number.isSafeInteger(entry) && Number(entry) >= 1 && Number(entry) <= 1_000_000,
-          { type: "integer", minimum: 1, maximum: 1_000_000 })
-        || (value.uniquenessBasisRef !== undefined && (!refField(value.uniquenessBasisRef, value, "uniquenessBasisRef") || value.quantity !== 1))
-        || (value.containerRef !== undefined && !refField(value.containerRef, value, "containerRef", true))
-        || (value.initialState !== undefined && !["absent", "open", "closed", "locked"].includes(String(value.initialState)))
-        || !authoredSchemaField(value, "ownership", index, "bundle:item-materialization-invalid",
-          (entry, diagnostics) => matchesAuthoredSourceSchema(entry, AUTHORED_ITEM_OWNERSHIP_SCHEMA, diagnostics))) invalid("bundle:item-materialization-invalid");
-    }
+    // A check that fails without a diagnostic keeps its own rejection.
+    const item = (message: string, check: () => boolean) => () => check() || invalid(message);
+    if (!allFields([
+      () => {
+        if (sourceValidation !== undefined && !sourceValidation.ok) throw new AuthoredSourceValidationError(value, sourceValidation.diagnostics, index);
+        return true;
+      },
+      () => exactKeys(value, [...commonKeys, ...extra]),
+      () => textField(value.summary, value, "summary", 2000),
+      () => { authoredReferenceSlots(value, (ref, parent, key) => { refField(ref, parent, key, true); }); return true; },
+      ...(value.kind === "inventoryOperation" ? [
+        item("bundle:inventory-operation-invalid", () => isProducerForEntry(value)),
+        item("bundle:inventory-operation-invalid", () => authoredSchemaField(value, "operation", index,
+          "bundle:inventory-operation-invalid", isInventoryOperationSource)),
+      ] : [
+        () => enumField(value, "visibilityPolicyRef", ["visibility:public", "visibility:scene-observers", "visibility:hidden-until-evidence", "visibility:narrative-audience"]),
+        ...(value.kind === "materializeDefinition" ? [item("bundle:authored-producer-kind-invalid", () => isProducerForEntry(value))] : [
+          item("bundle:item-materialization-invalid", () => isProducerForEntry(value)),
+          () => refField(value.definitionRef, value, "definitionRef", true),
+          () => refField(value.sceneRef, value, "sceneRef", true),
+          () => checkedField(value, "quantity", entry => Number.isSafeInteger(entry) && Number(entry) >= 1 && Number(entry) <= 1_000_000,
+            { type: "integer", minimum: 1, maximum: 1_000_000 }),
+          item("bundle:item-materialization-invalid", () => value.uniquenessBasisRef === undefined
+            || (refField(value.uniquenessBasisRef, value, "uniquenessBasisRef") && value.quantity === 1)),
+          () => value.containerRef === undefined || refField(value.containerRef, value, "containerRef", true),
+          item("bundle:item-materialization-invalid", () => value.initialState === undefined
+            || ["absent", "open", "closed", "locked"].includes(String(value.initialState))),
+          item("bundle:item-materialization-invalid", () => authoredSchemaField(value, "ownership", index, "bundle:item-materialization-invalid",
+            (entry, diagnostics) => matchesAuthoredSourceSchema(entry, AUTHORED_ITEM_OWNERSHIP_SCHEMA, diagnostics))),
+        ]),
+      ]),
+    ])) invalid("bundle:authored-entry-invalid");
     return value as VNextProposalBundleEntry;
   }
 
@@ -378,29 +429,31 @@ function validateEntry(value: unknown, index: number, entries: readonly unknown[
     return value as VNextProposalBundleEntry;
   }
 
-  if (value.kind !== "worldInteraction"
-    || !exactKeys(value, [
+  const worldBranches = value.branches;
+  if (value.kind !== "worldInteraction" || !allFields([
+    () => exactKeys(value, [
       ...commonKeys,
       "abilityRef", "branches", "directTargetRefs", "instrumentRefs", "intent",
       "method", "sceneRef", "targetRefs", ...approachKey(value), ...(Object.hasOwn(value, "commonAction") ? ["commonAction"] : []),
-    ])
-    || !approachField(value)
-    || !commonActionField(value)
-    || !refField(value.sceneRef, value, "sceneRef")
+    ]),
+    () => approachField(value),
+    () => commonActionField(value),
+    () => refField(value.sceneRef, value, "sceneRef"),
     // SPEC 0016 §3.1 (ADR 0092): a common action names whom it acts on; lowering adds it.
-    || !isTypedRefArray(value.targetRefs, Object.hasOwn(value, "commonAction") ? 0 : 1, value, "targetRefs")
-    || !isTypedRefArray(value.directTargetRefs, Object.hasOwn(value, "commonAction") ? 0 : 1, value, "directTargetRefs")
-    || !checkedField(value, "directTargetRefs", refs => isSubset(refs, value.targetRefs),
-      { type: "array", subsetOf: "targetRefs" }, "direct-targets-must-be-targets", "CONSTRAINT_CONFLICT")
-    || !isTypedRefArray(value.instrumentRefs, 0, value, "instrumentRefs")
-    || !(value.abilityRef === null || refField(value.abilityRef, value, "abilityRef"))
-    || !textField(value.intent, value, "intent", 4_000)
-    || !textField(value.method, value, "method", 4_000)
-    || !objectField(value.branches, value, "branches")
-    || !exactKeys(value.branches, ["failure", "success"])
-    || !isBranch(value.branches.success)
-    || !(value.branches.failure === null || isBranch(value.branches.failure))
-    || !isProducerForEntry(value)) {
+    () => isTypedRefArray(value.targetRefs, Object.hasOwn(value, "commonAction") ? 0 : 1, value, "targetRefs"),
+    () => isTypedRefArray(value.directTargetRefs, Object.hasOwn(value, "commonAction") ? 0 : 1, value, "directTargetRefs")
+      && (!Array.isArray(value.targetRefs) || checkedField(value, "directTargetRefs", refs => isSubset(refs, value.targetRefs),
+        { type: "array", subsetOf: "targetRefs" }, "direct-targets-must-be-targets", "CONSTRAINT_CONFLICT")),
+    () => isTypedRefArray(value.instrumentRefs, 0, value, "instrumentRefs"),
+    () => value.abilityRef === null || refField(value.abilityRef, value, "abilityRef"),
+    () => textField(value.intent, value, "intent", 4_000),
+    () => textField(value.method, value, "method", 4_000),
+    () => objectField(worldBranches, value, "branches") && exactKeys(worldBranches, ["failure", "success"]) && allFields([
+      () => isBranch(worldBranches.success),
+      () => worldBranches.failure === null || isBranch(worldBranches.failure),
+    ]),
+    () => isProducerForEntry(value),
+  ])) {
     invalid("bundle:world-interaction-invalid");
   }
   return value as VNextWorldInteractionEntry;
@@ -613,11 +666,13 @@ function isFeasibilityRuling(value: unknown): value is VNextFeasibilityRuling {
     "endsAt:shape-invalid", "VALUE_INVALID"));
   if (value.kind === "directSuccess") {
     const said = ends(["successEndsAt"]);
-    return exactKeys(value, ["durationMicros", "kind", "risk", "successOutcome", ...said])
-      && textField(value.risk, value, "risk", 4_000)
-      && textField(value.successOutcome, value, "successOutcome", 4_000)
-      && isActionDuration(value.durationMicros)
-      && endsValid(said);
+    return allFields([
+      () => exactKeys(value, ["durationMicros", "kind", "risk", "successOutcome", ...said]),
+      () => textField(value.risk, value, "risk", 4_000),
+      () => textField(value.successOutcome, value, "successOutcome", 4_000),
+      () => isActionDuration(value.durationMicros),
+      () => endsValid(said),
+    ]);
   }
   if (value.kind === "check") {
     const risk = value.risk;
@@ -626,33 +681,35 @@ function isFeasibilityRuling(value: unknown): value is VNextFeasibilityRuling {
     const concealed = Object.hasOwn(value, "concealment");
     const opposed = Object.hasOwn(value, "opposition");
     const said = ends(["successEndsAt", "failureEndsAt"]);
-    return exactKeys(value, [
-      "ability", "checkKind", "dc", "durationMicros", "failureOutcome", "kind", "mode", "risk",
-      "skill", "successOutcome", ...(concealed ? ["concealment"] : []), ...(opposed ? ["opposition"] : []), ...said,
-    ])
-      && endsValid(said)
-      && checkedField(value, "opposition", () => !(concealed && opposed), { type: "absent", with: "concealment" }, "contest:not-hidden", "CONSTRAINT_CONFLICT")
+    return allFields([
+      () => exactKeys(value, [
+        "ability", "checkKind", "dc", "durationMicros", "failureOutcome", "kind", "mode", "risk",
+        "skill", "successOutcome", ...(concealed ? ["concealment"] : []), ...(opposed ? ["opposition"] : []), ...said,
+      ]),
+      () => endsValid(said),
+      () => checkedField(value, "opposition", () => !(concealed && opposed), { type: "absent", with: "concealment" }, "contest:not-hidden", "CONSTRAINT_CONFLICT"),
       // SPEC 0016 §7.3: a covert act carries no DC; Rules derives it.
       // SPEC 0004 §4: a contest carries no DC; its opponent rolls instead.
-      && (concealed ? isConcealedCheckParameterValues(value) && isConcealmentDeclaration(value.concealment, value)
-        : opposed ? isConcealedCheckParameterValues(value) && isOppositionDeclaration(value.opposition, value)
-        : isCheckParameterValues(value))
-      && textField(risk, value, "risk", 4_000)
-      && textField(successOutcome, value, "successOutcome", 4_000)
-      && textField(failureOutcome, value, "failureOutcome", 4_000)
-      && isActionDuration(value.durationMicros);
+      () => concealed || opposed ? isConcealedCheckParameterValues(value) : isCheckParameterValues(value),
+      () => concealed ? isConcealmentDeclaration(value.concealment, value) : opposed ? isOppositionDeclaration(value.opposition, value) : true,
+      () => textField(risk, value, "risk", 4_000),
+      () => textField(successOutcome, value, "successOutcome", 4_000),
+      () => textField(failureOutcome, value, "failureOutcome", 4_000),
+      () => isActionDuration(value.durationMicros),
+    ]);
   }
-  return value.kind === "highRisk"
-    && exactKeys(value, [
+  return value.kind === "highRisk" && allFields([
+    () => exactKeys(value, [
       "acceptedCosts", "check", "confirmationQuestion", "failureOutcome", "kind",
       "risk", "successOutcome",
-    ])
-    && textField(value.risk, value, "risk", 4_000)
-    && textField(value.confirmationQuestion, value, "confirmationQuestion", 2_000)
-    && textField(value.successOutcome, value, "successOutcome", 4_000)
-    && textField(value.failureOutcome, value, "failureOutcome", 4_000)
-    && (value.check === null || isCheckParameters(value.check))
-    && isAttemptCosts(value.acceptedCosts);
+    ]),
+    () => textField(value.risk, value, "risk", 4_000),
+    () => textField(value.confirmationQuestion, value, "confirmationQuestion", 2_000),
+    () => textField(value.successOutcome, value, "successOutcome", 4_000),
+    () => textField(value.failureOutcome, value, "failureOutcome", 4_000),
+    () => value.check === null || isCheckParameters(value.check),
+    () => isAttemptCosts(value.acceptedCosts),
+  ]);
 }
 
 function isActorEnd(value: unknown): boolean {
@@ -685,17 +742,20 @@ function isRefusalRuling(value: unknown): boolean {
 }
 
 function isCheckParameters(value: unknown): value is VNextCheckParameters {
-  return isPlainRecord(value)
-    && exactKeys(value, ["ability", "checkKind", "dc", "mode", "skill"])
-    && isCheckParameterValues(value);
+  return isPlainRecord(value) && allFields([
+    () => exactKeys(value, ["ability", "checkKind", "dc", "mode", "skill"]),
+    () => isCheckParameterValues(value),
+  ]);
 }
 
 function isConcealedCheckParameterValues(value: Record<string, unknown>): boolean {
-  return enumField(value, "checkKind", ["abilityCheck"])
-    && enumField(value, "ability", ["str", "dex", "con", "int", "wis", "cha"])
-    && (value.skill === null || refField(value.skill, value, "skill"))
-    && checkedField(value, "dc", entry => entry === null, { type: "null" })
-    && enumField(value, "mode", ["normal", "advantage", "disadvantage"]);
+  return allFields([
+    () => enumField(value, "checkKind", ["abilityCheck"]),
+    () => enumField(value, "ability", ["str", "dex", "con", "int", "wis", "cha"]),
+    () => value.skill === null || refField(value.skill, value, "skill"),
+    () => checkedField(value, "dc", entry => entry === null, { type: "null" }),
+    () => enumField(value, "mode", ["normal", "advantage", "disadvantage"]),
+  ]);
 }
 
 /** SPEC 0004 §4: who resists and with which one or two checks. Whether that
@@ -735,13 +795,14 @@ function isConcealmentDeclaration(value: unknown, parent: Record<string, unknown
 }
 
 function isCheckParameterValues(value: Record<string, unknown>): boolean {
-  return isPlainRecord(value)
-    && enumField(value, "checkKind", ["abilityCheck", "attack"])
-    && enumField(value, "ability", ["str", "dex", "con", "int", "wis", "cha"])
-    && (value.skill === null || refField(value.skill, value, "skill"))
-    && checkedField(value, "dc", entry => Number.isSafeInteger(entry) && Number(entry) >= 1 && Number(entry) <= 40,
-      { type: "integer", minimum: 1, maximum: 40 })
-    && enumField(value, "mode", ["normal", "advantage", "disadvantage"]);
+  return isPlainRecord(value) && allFields([
+    () => enumField(value, "checkKind", ["abilityCheck", "attack"]),
+    () => enumField(value, "ability", ["str", "dex", "con", "int", "wis", "cha"]),
+    () => value.skill === null || refField(value.skill, value, "skill"),
+    () => checkedField(value, "dc", entry => Number.isSafeInteger(entry) && Number(entry) >= 1 && Number(entry) <= 40,
+      { type: "integer", minimum: 1, maximum: 40 }),
+    () => enumField(value, "mode", ["normal", "advantage", "disadvantage"]),
+  ]);
 }
 
 function isAttemptCosts(value: unknown): value is readonly VNextAttemptCost[] {
@@ -879,49 +940,55 @@ function pathEquals(value: readonly string[], expected: readonly string[]): bool
 }
 
 function isBranch(value: unknown): value is VNextWorldInteractionBranchProposal {
-  return isPlainRecord(value)
-    && exactKeys(value, [
+  return isPlainRecord(value) && allFields([
+    () => exactKeys(value, [
       "effects", "opportunities", "outcomeCode", "pressures", "sensoryEvidence", "summary",
-    ])
-    && isBranchEvidence(value)
-    && arrayField(value.effects, value, "effects", 0, MAX_EFFECTS)
-    // Each effect is checked in place so a malformed one names its index and
-    // the shapes it may take, instead of failing the whole step without a path.
-    && value.effects.every((effect, index) => isPerceptionRecord(effect)
-      // Round 147 labelled a bystander's perception as an effect and, told only
-      // the effect shapes, deleted it: name the record kind it belongs to.
-      ? checkedField(value.effects as unknown[], index, isWorldEffect,
-        { type: "object", recordKind: "sensoryEvidence", keep: ["observerRef", "subjectRef", "sense", "evidence", "basisRefs"] }, "world-effect-is-a-perception")
-      : checkedField(value.effects as unknown[], index, isWorldEffect,
-        { type: "object", oneOf: WORLD_EFFECT_SHAPES }, "world-effect-contract"))
-    && arrayField(value.pressures, value, "pressures", 0, MAX_PRESSURES)
-    && value.pressures.every((entry) => isPlainRecord(entry)
-      && exactKeys(entry, ["basisRefs", "description", "sourceRef"])
-      && textField(entry.description, entry, "description", 2_000)
-      && (entry.sourceRef === null || refField(entry.sourceRef, entry, "sourceRef", true))
-      && isTypedRefArray(entry.basisRefs, 0, entry, "basisRefs"))
-    && arrayField(value.opportunities, value, "opportunities", 0, MAX_OPPORTUNITIES)
-    && value.opportunities.every((entry) => isPlainRecord(entry)
-      && exactKeys(entry, ["actionHint", "basisRefs", "description", "targetRef"])
-      && textField(entry.description, entry, "description", 2_000)
-      && (entry.targetRef === null || refField(entry.targetRef, entry, "targetRef", true))
-      && (entry.actionHint === null || textField(entry.actionHint, entry, "actionHint", 2_000))
-      && isTypedRefArray(entry.basisRefs, 0, entry, "basisRefs"));
+    ]),
+    () => isBranchEvidence(value),
+    () => arrayField(value.effects, value, "effects", 0, MAX_EFFECTS)
+      // Each effect is checked in place so a malformed one names its index and
+      // the shapes it may take, instead of failing the whole step without a path.
+      && allFields(value.effects.map((effect, index) => () => isPerceptionRecord(effect)
+        // Round 147 labelled a bystander's perception as an effect and, told only
+        // the effect shapes, deleted it: name the record kind it belongs to.
+        ? checkedField(value.effects as unknown[], index, isWorldEffect,
+          { type: "object", recordKind: "sensoryEvidence", keep: ["observerRef", "subjectRef", "sense", "evidence", "basisRefs"] }, "world-effect-is-a-perception")
+        : checkedField(value.effects as unknown[], index, isWorldEffect,
+          { type: "object", oneOf: WORLD_EFFECT_SHAPES }, "world-effect-contract"))),
+    () => arrayField(value.pressures, value, "pressures", 0, MAX_PRESSURES)
+      && allFields(value.pressures.map((entry) => () => isPlainRecord(entry) && allFields([
+        () => exactKeys(entry, ["basisRefs", "description", "sourceRef"]),
+        () => textField(entry.description, entry, "description", 2_000),
+        () => entry.sourceRef === null || refField(entry.sourceRef, entry, "sourceRef", true),
+        () => isTypedRefArray(entry.basisRefs, 0, entry, "basisRefs"),
+      ]))),
+    () => arrayField(value.opportunities, value, "opportunities", 0, MAX_OPPORTUNITIES)
+      && allFields(value.opportunities.map((entry) => () => isPlainRecord(entry) && allFields([
+        () => exactKeys(entry, ["actionHint", "basisRefs", "description", "targetRef"]),
+        () => textField(entry.description, entry, "description", 2_000),
+        () => entry.targetRef === null || refField(entry.targetRef, entry, "targetRef", true),
+        () => entry.actionHint === null || textField(entry.actionHint, entry, "actionHint", 2_000),
+        () => isTypedRefArray(entry.basisRefs, 0, entry, "basisRefs"),
+      ]))),
+  ]);
 }
 
 /** Observation and world interactions validate the same submitted evidence
  * objects; do not synthesize a branch whose diagnostic identity is lost. */
 function isBranchEvidence(value: Record<string, unknown>): boolean {
-  return refField(value.outcomeCode, value, "outcomeCode")
-    && textField(value.summary, value, "summary", 4_000)
-    && arrayField(value.sensoryEvidence, value, "sensoryEvidence", 0, MAX_EVIDENCE)
-    && value.sensoryEvidence.every((entry) => isPlainRecord(entry)
-      && exactKeys(entry, ["basisRefs", "evidence", "observerRef", "sense", "subjectRef"])
-      && refField(entry.observerRef, entry, "observerRef")
-      && (entry.subjectRef === null || refField(entry.subjectRef, entry, "subjectRef", true))
-      && enumField(entry, "sense", ["sight", "hearing", "smell", "touch", "taste", "special"])
-      && textField(entry.evidence, entry, "evidence", 2_000)
-      && isTypedRefArray(entry.basisRefs, 0, entry, "basisRefs"));
+  return allFields([
+    () => refField(value.outcomeCode, value, "outcomeCode"),
+    () => textField(value.summary, value, "summary", 4_000),
+    () => arrayField(value.sensoryEvidence, value, "sensoryEvidence", 0, MAX_EVIDENCE)
+      && allFields(value.sensoryEvidence.map((entry) => () => isPlainRecord(entry) && allFields([
+        () => exactKeys(entry, ["basisRefs", "evidence", "observerRef", "sense", "subjectRef"]),
+        () => refField(entry.observerRef, entry, "observerRef"),
+        () => entry.subjectRef === null || refField(entry.subjectRef, entry, "subjectRef", true),
+        () => enumField(entry, "sense", ["sight", "hearing", "smell", "touch", "taste", "special"]),
+        () => textField(entry.evidence, entry, "evidence", 2_000),
+        () => isTypedRefArray(entry.basisRefs, 0, entry, "basisRefs"),
+      ]))),
+  ]);
 }
 
 /** A record with an observer and evidence is a perception, whatever it was
@@ -1305,6 +1372,47 @@ class FieldValidationError extends TypeError {
     return this.details.map(({ path, ...detail }) => proposalDiagnostic(detail.code, detail.constraint,
       { ...detail, ...(matches.length === 1 ? { path: [...matches[0]!, ...(path ?? [])] } : {}) }));
   }
+}
+
+/** Several fields' problems reported as one. Each part keeps the object it
+ * checked, so its paths resolve as before; a field named twice (missing from
+ * the object and failing its own check) is reported once. */
+class FieldValidationErrors extends FieldValidationError {
+  constructor(readonly parts: readonly (FieldValidationError | AuthoredSourceValidationError)[]) {
+    super(parts[0]!.subject, []);
+    this.message = parts.map(part => part.message).join(",");
+  }
+  override diagnostics(root: unknown): readonly ProposalDiagnostic[] {
+    const seen = new Set<string>();
+    return this.parts.flatMap(part => part.diagnostics(root)).filter(detail => {
+      const key = `${detail.code}\u0000${JSON.stringify(detail.path ?? [])}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+}
+
+/** SPEC 0016 §7.2 (ADR 0095): every independent field of one object is
+ * checked, so one revision hears of all its problems instead of the first.
+ * A check that reads into a nested value stays one thunk and still stops at
+ * that value's first problem. */
+function allFields(checks: readonly (() => boolean)[]): boolean {
+  const parts: (FieldValidationError | AuthoredSourceValidationError)[] = [];
+  let passed = true;
+  for (const check of checks) {
+    try {
+      if (!check()) passed = false;
+    } catch (error) {
+      if (error instanceof FieldValidationErrors) parts.push(...error.parts);
+      else if (error instanceof FieldValidationError || error instanceof AuthoredSourceValidationError) parts.push(error);
+      else if (parts.length === 0) throw error;
+      else break;
+    }
+  }
+  if (parts.length === 1) throw parts[0];
+  if (parts.length > 1) throw new FieldValidationErrors(parts);
+  return passed;
 }
 
 /** SPEC 0014 §4 (ADR 0087): the optional walk before a world or observe step;

@@ -769,6 +769,28 @@ test('the ruling and every failing step are diagnosed together, so one correctio
   assert.equal(parsed(wire).kind, 'locallyRejected');
 });
 
+// SPEC 0016 §7.2 (ADR 0095): independent fields of one object are all
+// reported. A ruling missing its ability with a string DC used to take two
+// revisions, one per field; a nested value that is not an object still
+// yields one diagnostic for that value, not guesses about its contents.
+test('every bad field of the ruling and of one step is reported in the same pass', () => {
+  const source = sharedCheckBundle('worldInteraction'), wire = wireFor(source), step = stepOf(wire, source, 1);
+  delete wire.decision.ability; wire.decision.dc = '14'; wire.decision.mode = 'easy';
+  step.intent = ''; step.method = '';
+  const paths = diagnostics(wire).map(detail => `${detail.code}@${detail.path.join('/')}`);
+  for (const expected of ['FIELD_MISSING@adjudication/ability', 'TYPE_MISMATCH@adjudication/dc', 'VALUE_INVALID@adjudication/mode',
+    'VALUE_INVALID@proposals/0/intent', 'VALUE_INVALID@proposals/0/method']) assert.ok(paths.includes(expected), `${expected}: ${JSON.stringify(paths)}`);
+  assert.equal(paths.filter(path => path.endsWith('@adjudication/ability')).length, 1, 'a missing field is named once');
+  const repaired = clone(wire), repairedStep = stepOf(repaired, source, 1), original = wireFor(source);
+  Object.assign(repaired.decision, { ability: original.decision.ability, dc: original.decision.dc, mode: original.decision.mode });
+  Object.assign(repairedStep, { intent: stepOf(original, source, 1).intent, method: stepOf(original, source, 1).method });
+  assert.equal(parsed(repaired).kind, 'accepted', JSON.stringify(parsed(repaired)));
+  const nested = clone(original); stepOf(nested, source, 1).success = 'not-an-object'; stepOf(nested, source, 1).method = '';
+  const nestedPaths = diagnostics(nested).map(detail => detail.path.join('/'));
+  assert.ok(nestedPaths.includes('proposals/0/method'), JSON.stringify(nestedPaths));
+  assert.ok(nestedPaths.every(path => !path.startsWith('proposals/0/branches/success/')), JSON.stringify(nestedPaths));
+});
+
 test('every problem of a step, of its results and of the entries the form cannot take is reported together', () => {
   // Rounds 109, 113 and 114 were told one field of one step per round.
   const source = sharedCheckBundle('worldInteraction'), wire = wireFor(source), owner = stepPath(source, 1).join('/');

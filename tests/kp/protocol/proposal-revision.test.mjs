@@ -205,20 +205,21 @@ test('patch operations are atomic, closed, version bound, and cannot access serv
   assert.equal({}.owned, undefined);
 });
 
-test('a repeated draft ends the conversation at once; a newly exposed error earns another round until the diagnostics repeat', async () => {
+test('a repeated draft ends the conversation at once; a changed set of problems earns another round until the diagnostics repeat', async () => {
   const invalid = wire(); delete invalid.decision.ability; invalid.decision.dc = '14';
   // Replacing the draft with itself is no revision: rejected on the spot.
   const unchanged = await revise(invalid, replace(invalid));
   assert.equal(unchanged.calls, 2); assert.equal(unchanged.result.kind, 'rejected'); assert.equal(unchanged.result.code, 'PROPOSAL_REPAIR_EXHAUSTED');
   assert.ok(unchanged.result.diagnostics.some(d => d.constraint === 'revision:unchanged-draft'));
-  // The patch fixes the ability and exposes the dc: a second round is sent
-  // with the dc alone diagnosed. The double answers with the same patch,
-  // which changes nothing of a draft that already has the ability, so the
-  // conversation stops there as an unchanged draft.
+  // SPEC 0016 §7.2 (ADR 0095): the first ticket names both bad fields of the
+  // ruling. The patch fixes only the ability, so a second round is sent with
+  // the dc left. The double answers with the same patch, which changes
+  // nothing of a draft that already has the ability, so the conversation
+  // stops there as an unchanged draft.
   const rounds = [];
   const exposed = await revise(invalid, patch([{ op: 'add', path: '/decision/ability', value: 'wis' }]),
     body => rounds.push([body.round, body.diagnostics.map(d => d.path.at(-1))]));
-  assert.deepEqual(rounds, [[1, ['ability']], [2, ['dc']]]);
+  assert.deepEqual(rounds, [[1, ['ability', 'dc']], [2, ['dc']]]);
   assert.equal(exposed.calls, 3); assert.equal(exposed.result.kind, 'rejected'); assert.equal(exposed.result.code, 'PROPOSAL_REPAIR_EXHAUSTED');
   assert.ok(exposed.result.diagnostics.some(d => d.constraint === 'revision:unchanged-draft'));
 });
