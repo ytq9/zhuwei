@@ -125,6 +125,11 @@ gates:
   - "tests/kp/provider/model-call-scope.test.mjs"
   - "tests/kp/knowledge/concealed-check.test.mjs"
   - "tests/kp/knowledge/long-session-context.test.mjs"
+  - "tests/kp/context/observable-context.test.mjs"
+  - "tests/kp/knowledge/observation-reference-surface.test.mjs"
+  - "tests/kp/protocol/schema-retrieval.test.mjs"
+  - "tests/kp/protocol/structured-diagnostics.test.mjs"
+  - "tests/kp/protocol/unparsed-revision.test.mjs"
 ---
 # SPEC 0016：粗粒度 Form、冻结裁决上下文与类型化主张
 

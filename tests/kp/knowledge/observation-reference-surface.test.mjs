@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { VNEXT_ALWAYS_OFFERED_TERMINAL_KINDS as OFFERED } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
 import { createAuthoredProbeFixture, PROBE_ACTOR as ACTOR, PROBE_SCENE as SCENE } from '../../../tools/lib/vnext-authored-probe-fixture.mjs';
-import { proposalObservationSubjectRefs, proposalItemEntryRefs, proposalCreatureTargetRefs, proposalNpcSourceChoices, proposalModelContext, proposalNpcRecall, proposalKnowledgeRecall, proposalContextView, proposalItemDefinitionRefs, proposalUnofferedCapabilities } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
+import { proposalObservationSubjectRefs, proposalItemEntryRefs, proposalCreatureTargetRefs, proposalNpcSourceChoices, proposalModelContext, proposalNpcRecall, proposalKnowledgeRecall, proposalContextView, proposalItemDefinitionRefs, proposalUnofferedCapabilities, proposalInventoryEntryRefs } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
+import { bindProposalWire, proposalReferenceDialect } from '../../../app/_runtime/lib/kp/vnext/proposal-reference-dialect.ts';
 import { requiredContextBasisReferences } from '../../../app/_runtime/lib/kp/vnext/required-context-runtime.ts';
 import { invokeVNextProposalOffer, invokeSubmitKpProposalBundleFirstPass } from '../../../app/_runtime/lib/kp/vnext/proposal-provider.ts';
 import { createVNextProposalBundleSchema, createSubmitKpProposalBundleModelInput } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
@@ -14,6 +15,8 @@ import { kpRequestBody } from '../../../app/_runtime/lib/kp/model-request.ts';
 import { expandDeepSeekSchema } from '../../support/fixtures/expand-deepseek-schema.mjs';
 import { withContextBody, sentContext } from '../../support/fixtures/vnext-request-layout.mjs';
 
+// SPEC 0016 §3.2: what an observation looks at is a physical subject, never
+// the actor's knowledge; §7.2: Room rebuilds the same filling surface.
 function fields(schema) {
   const result = [];
   function walk(value) {
@@ -40,21 +43,24 @@ function fixture(label) {
 test('the selected provider stage offers physical subjects independently of knowledge evidence and selection has no world references', async () => {
   for (const stage of ['offer', 'expanded']) {
     const f = fixture(stage), before = structuredClone(f.requiredContext), refs = proposalObservationSubjectRefs(f.requiredContext);
+    // The model reads and writes frozen identities as their short wire
+    // references (ADR 0131); a reference with no short form is sent as is.
+    const wire = ref => proposalReferenceDialect(f.requiredContext).forward.get(ref) ?? ref;
     assert.ok(refs.includes(SCENE)); assert.ok(refs.includes(ACTOR)); assert.ok(!refs.includes(f.knowledgeRef));
     let calls = 0;
     const result = await (stage === 'offer' ? invokeVNextProposalOffer : invokeSubmitKpProposalBundleFirstPass)({
       modelId: 'test-double', message: JSON.stringify({ requiredContext: proposalModelContext(f.requiredContext) }), requiredContext: f.requiredContext,
       binding: { async run(_model, request) {
         calls++; assertDeepSeekStrictToolModelInput(request);
-        const context = sentContext(request).requiredContext;
+        const context = bindProposalWire(sentContext(request).requiredContext, f.requiredContext);
         const scene = context.entries.find(entry => entry.entryRef === SCENE).value;
         assert.deepEqual(scene.worldDescription, { scene: { name: '蒸汽廊道' } });
         assert.ok(scene.adjudication.combatScene.geometry);
         const tool = request.tools[0].function;
         for (const field of stage === "offer" ? [] : fields(tool.parameters)) {
-          for (const valid of [SCENE, ACTOR, 'prospective:new-object']) assert.equal(matchesAuthoredSourceSchema(valid, field.schema), true);
+          for (const valid of [SCENE, ACTOR, 'prospective:new-object']) assert.equal(matchesAuthoredSourceSchema(wire(valid), field.schema), true);
           for (const invalid of [f.knowledgeRef, `knowledge:${ACTOR}:${f.knowledgeRef}`, 'unknown:world-object', 'profile:rules'])
-            assert.equal(matchesAuthoredSourceSchema(invalid, field.schema), false);
+            for (const form of new Set([invalid, wire(invalid)])) assert.equal(matchesAuthoredSourceSchema(form, field.schema), false);
           if (field.kind === 'subject') assert.equal(matchesAuthoredSourceSchema({ kind: 'none' }, field.schema), true);
         }
         return { choices: [{ message: { tool_calls: [{ type: 'function', function: { name: tool.name,
@@ -90,7 +96,7 @@ test('Room reconstructs the identical subject schema from frozen context and rej
     proposalItemEntryRefs(view), subjectRefs, OFFERED,
     proposalNpcSourceChoices(view), requiredContextBasisReferences(view), creatureRefs, true, proposalItemDefinitionRefs(view),
     proposalNpcRecall(f.requiredContext).requestableRefs, proposalKnowledgeRecall(f.requiredContext, []).map(record => record.handle),
-    undefined, proposalUnofferedCapabilities(f.requiredContext));
+    undefined, proposalUnofferedCapabilities(f.requiredContext), proposalInventoryEntryRefs(view), f.requiredContext);
   const request = surface(proposalObservationSubjectRefs(view), proposalCreatureTargetRefs(view));
   const input = { ordinal: 2, contextHash: f.requiredContext.binding.contextHash,
     bindingHash: 'sha256:fixture', requestHash: 'sha256:fixture', request: kpRequestBody(DEFAULT_KP_MODEL, request) };
@@ -112,7 +118,8 @@ test('Room reconstructs the identical subject schema from frozen context and rej
   }
   const changedDescription = structuredClone(request);
   const body = sentContext(changedDescription);
-  body.requiredContext.entries.find(entry => entry.entryRef === SCENE).value.worldDescription.scene.name = '凭空新增的场景';
+  const sceneWire = proposalReferenceDialect(f.requiredContext).forward.get(SCENE) ?? SCENE;
+  body.requiredContext.entries.find(entry => entry.entryRef === sceneWire).value.worldDescription.scene.name = '凭空新增的场景';
   withContextBody(changedDescription, JSON.stringify(body));
   assert.throws(() => assertVNextInvocationTransition({ ...input, request: kpRequestBody(DEFAULT_KP_MODEL, changedDescription) }, prior, f.requiredContext), /PROPOSAL_REPAIR_EXHAUSTED/);
 });

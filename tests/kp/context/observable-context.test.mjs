@@ -17,6 +17,8 @@ import { VNEXT_SEMANTIC_TEMPLATES } from '../../../app/_runtime/lib/rules/profil
 import { dynamicLocationSceneRef } from '../../../app/_runtime/lib/rules/v2/dynamic-locations.ts';
 import { lowerVNext2ProposalBundle } from '../../../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts';
 import { recallKnowledgeBodies } from '../../../app/_runtime/lib/kp/vnext/proposal-context.ts';
+import { ITEM_DEFINITION_SCHEMA } from '../../../app/_runtime/lib/rules/v2/items.ts';
+import { VNEXT_STORED_SEMANTIC_DEFINITION_SCHEMA } from '../../../app/_runtime/lib/rules/v2/semantic-definitions.ts';
 
 const NPC = 'npc:unaddressed-witness', HIDDEN = 'npc:concealed', REMOTE = 'npc:different-scope';
 const held = (characterId, content) => ({ characterId, knowledgeRef: 'knowledge:same',
@@ -82,15 +84,21 @@ test('model context separates established world descriptions from technical stat
   assert.ok(scene.adjudication.combatScene.geometry);
   // Description fields move once; recombining the presentation must recover
   // every exact original value, including mechanics, metadata and unknowns.
-  // The presentation keeps every entry in frozen order, except that what the
-  // selection loaded follows the rest (ADR 0044), and carries no server-owned
+  // The presentation sends definitions and module constraints first, then the
+  // other entries, then what the selection loaded, each group in frozen order
+  // (ADR 0131, superseding ADR 0044's layout), and carries no server-owned
   // hash at any depth; Room and lowering read those from the frozen context.
   // Knowledge catalogs bind versions for Rules and are not sent to the model.
   const beforeSent = before.entries.filter(entry => !String(entry.entryRef).startsWith('knowledge-catalog:'));
   const loaded = new Set([...before.references.npcRecall.find(entry => entry.npcRef === NPC).entryRefs,
     ...(before.references.knowledgeRecall ?? []).flatMap(entry => entry.records.map(record => record.entryRef))]);
-  assert.deepEqual(presented.entries.map(entry => entry.entryRef), [...beforeSent.filter(entry => !loaded.has(entry.entryRef)),
-    ...beforeSent.filter(entry => loaded.has(entry.entryRef))].map(entry => entry.entryRef));
+  const definitionOrConstraint = entry => entry.kind === 'known' && (entry.entryRef.startsWith('profile-context:')
+    || [ITEM_DEFINITION_SCHEMA, VNEXT_STORED_SEMANTIC_DEFINITION_SCHEMA].includes(entry.value?.schema));
+  const unloaded = beforeSent.filter(entry => !loaded.has(entry.entryRef));
+  assert.deepEqual(presented.entries.map(entry => entry.entryRef), [...unloaded.filter(definitionOrConstraint),
+    ...unloaded.filter(entry => !definitionOrConstraint(entry)), ...beforeSent.filter(entry => loaded.has(entry.entryRef))]
+    .map(entry => entry.entryRef));
+  assert.ok(unloaded.some(definitionOrConstraint) && unloaded.some(entry => !definitionOrConstraint(entry)));
   for (const entry of beforeSent) {
     const shown = presented.entries.find(other => other.entryRef === entry.entryRef);
     if (entry.kind !== 'known') { assert.deepEqual(shown, withoutServerHashes(entry)); continue; }

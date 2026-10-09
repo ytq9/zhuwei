@@ -72,8 +72,9 @@ test("selected schemas preserve exact full-contract variants and resolve all str
     // group must be the full contract's group of the same key. Producer
     // availability guidance reflects the selected producer types. A
     // conversation's reply and its sources are the NPC's own form (ADR 0073).
+    // Every completion type fills the one completeObject group (ADR 0129).
     const selectedGroups = expanded.properties.steps.properties;
-    assert.ok(Object.keys(selectedGroups).includes(id), `${id}:own group`);
+    assert.ok(Object.keys(selectedGroups).includes(capability.completionKind === undefined ? id : capability.proposalKind), `${id}:own group`);
     // The check groups are the selected result types' check rows, each the
     // full contract's row of the same key.
     const checkGroups = expanded.properties.check?.properties ?? {};
@@ -85,6 +86,18 @@ test("selected schemas preserve exact full-contract variants and resolve all str
       assert.equal(variants.length, originals.length, `${id}:${key}`);
       for (const [index, variant] of variants.entries()) {
         const expected = structuredClone(originals[index]);
+        // The completion types share one completeObject step, and each loads
+        // only its own fragment of it (ADR 0129): the description, observable
+        // state and switch preset are the object fragment; every other type is
+        // one mechanics variant, exactly the full contract's.
+        if (key === "completeObject") {
+          const fragment = shape => shape.properties.kind?.enum?.[0] ?? "object";
+          const own = capability.completionKind === "object" ? ["none", "object"] : [capability.completionKind];
+          expected.properties.mechanics.anyOf = expected.properties.mechanics.anyOf.filter(shape => own.includes(fragment(shape)));
+          assert.equal(expected.properties.mechanics.anyOf.length, own.length, `${id}:own mechanics fragment`);
+          if (capability.completionKind !== "object") for (const name of ["description", "observableState"])
+            expected.properties[name] = { type: "string", enum: ["none"] };
+        }
         if (key === "social") for (const name of ["result", "success", "failure"]) if (variant.properties[name])
           assert.ok(!Object.hasOwn(variant.properties[name].properties, "response"), "the ruling's form asks for no reply");
         assert.deepEqual(withoutProducerAvailabilityGuidance(variant), withoutProducerAvailabilityGuidance(expected), `${id}:${container}.${key}[${index}]`);

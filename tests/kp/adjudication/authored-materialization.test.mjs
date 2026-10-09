@@ -14,6 +14,8 @@ import { freezeAdjudicationContext } from "../../../app/_runtime/lib/kp/vnext/co
 import { VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST } from "../../../app/_runtime/lib/rules/profiles/vnext-world-interaction.ts";
 import { PROBE_MODULE_PROFILE } from "../../../tools/lib/vnext-authored-probe-fixture.mjs";
 
+// SPEC 0004 §§6、9: an item or hazard the KP authors is validated and frozen
+// as a definition before any evidence, use or mechanical effect relies on it.
 const HASH = `sha256:${"a".repeat(64)}`;
 const ROOT = "root:authored";
 const ACTOR = "character:author";
@@ -66,6 +68,10 @@ function context(refs = [ACTOR, SCENE, SOURCE, ZONE], authority = state()) {
   assert.equal(frozen.kind, "ready", JSON.stringify(frozen));
   return frozen.context;
 }
+// Every record CampaignRuntimeState requires: context freezing reads them.
+const EMPTY_CAMPAIGN_RECORDS = Object.fromEntries(["chapters", "relationships", "promises", "debts", "factions", "activities",
+  "sourceClaims", "npcPlans", "factionPlans", "meaningfulFailures", "adjudicationPrecedents", "retryChanges", "sceneQuestions",
+  "endingCandidates", "stories", "epilogues", "inheritanceSources"].map((key) => [key, {}]));
 function state() {
   const definitions = Object.fromEntries([SOURCE, ZONE].map((ref) => [ref, storedSemanticDefinition("sceneFeature", "visibility:public", createDefinitionSnapshot(ref, "1", {
     sceneRef: SCENE, label: ref, description: "有形场景物件", observableState: "intact", affordances: ["interact"],
@@ -76,7 +82,7 @@ function state() {
     multiplayerRuntime: { characterTimelineIds: {} }, scenes: { [SCENE]: { id: SCENE } }, canonicalFacts: {}, knowledge: {},
     entities: { [ACTOR]: { id: ACTOR, name: "创作测试角色", kind: "player", tenureStatus: "active", sceneId: SCENE } },
     campaignRuntime: { campaign: { campaignId: "campaign:authored", moduleRef: PROBE_MODULE_PROFILE.moduleRef },
-      definitions, adjudicationPrecedents: {}, itemSystem: { entries: {}, definitions: {} } },
+      definitions, ...EMPTY_CAMPAIGN_RECORDS, unresolvedThreats: [], itemSystem: { entries: {}, definitions: {} } },
     combatRuntime: { definitions: {}, entities: {}, scenes: {}, effects: {} } };
 }
 function lower(value, refs, authority = state()) { return lowerVNext2ProposalBundle({ value, rootActionId: ROOT, actorCharacterId: ACTOR, requiredContext: context(refs, authority), state: authority }); }

@@ -57,8 +57,12 @@ test("a wizard's longsword attack adds no proficiency bonus, its dagger does, so
   };
   const longsword = attack(wizard.proficientWeapons, "longsword");
   assert.deepEqual([longsword.proficient, longsword.bonus], [false, 2]);
-  assert.match(longsword.definitionId, /:not-proficient$/);
-  assert.deepEqual([attack(wizard.proficientWeapons, "dagger").proficient, attack(wizard.proficientWeapons, "dagger").bonus], [true, 4]);
+  // The frozen ID names the missing proficiency; ADR 0126 versions each
+  // compiled weapon variant with a hash of its source after it.
+  assert.match(longsword.definitionId, /:not-proficient:weapon-v2:[0-9a-f]{16}$/);
+  const dagger = attack(wizard.proficientWeapons, "dagger");
+  assert.deepEqual([dagger.proficient, dagger.bonus], [true, 4]);
+  assert.doesNotMatch(dagger.definitionId, /not-proficient/);
   // A category covers every weapon in it; an NPC's stat block lists none.
   assert.equal(attack(["simple", "martial"], "longsword").proficient, true);
   assert.equal(attack(undefined, "longsword").proficient, true);

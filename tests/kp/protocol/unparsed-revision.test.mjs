@@ -48,17 +48,19 @@ test('a parseable empty object receives the same durable revision ticket, with m
 test('an empty object re-sends the original filling request once, and a full reply then fills the proposal', async () => {
   const { createVNextProposalRevisionModelInput, evaluateVNextProposalRevisionResponse, vnextProposalTicketIsEmptyDraft } = await import('../../../app/_runtime/lib/kp/vnext/proposal-provider.ts');
   const { createSubmitKpProposalBundleModelInput } = await import('../../../app/_runtime/lib/kp/vnext/proposal-schema.ts');
-  const { proposalModelContext, proposalItemEntryRefs, proposalObservationSubjectRefs, proposalNpcSourceChoices, proposalCreatureTargetRefs, proposalItemDefinitionRefs, proposalUnofferedCapabilities } = await import('../../../app/_runtime/lib/kp/vnext/proposal-context.ts');
+  const { proposalModelContext, proposalItemEntryRefs, proposalObservationSubjectRefs, proposalNpcSourceChoices, proposalCreatureTargetRefs, proposalItemDefinitionRefs, proposalUnofferedCapabilities, proposalInventoryEntryRefs, vnextProposalContextBody } = await import('../../../app/_runtime/lib/kp/vnext/proposal-context.ts');
+  const { proposalWireReferences } = await import('../../../app/_runtime/lib/kp/vnext/proposal-reference-dialect.ts');
   const { requiredContextBasisReferences } = await import('../../../app/_runtime/lib/kp/vnext/required-context-runtime.ts');
   const result = await invokeSubmitKpProposalBundleFirstPass({ modelId: 'scripted', message: '检查周围。', requiredContext: context,
     capabilities: ['observe'], terminalKinds: OFFERED, binding: { async run() { return response('{}'); } } });
   assert.equal(result.kind, 'repairRequired'); assert.equal(vnextProposalTicketIsEmptyDraft(result.repairTicket), true);
   const reemit = createVNextProposalRevisionModelInput(result.repairTicket, context);
   assert.deepEqual(reemit.tools.map(tool => tool.function.name), ['submit_kp_proposal_bundle']);
-  assert.equal(sentContextBody(reemit), JSON.stringify({ requiredContext: proposalModelContext(context) }));
-  assert.deepEqual(reemit, createSubmitKpProposalBundleModelInput(sentContextBody(reemit), ['observe'], proposalItemEntryRefs(context), proposalObservationSubjectRefs(context), OFFERED,
+  // The context travels with frozen identities as short wire references (ADR 0131).
+  assert.equal(sentContextBody(reemit), JSON.stringify(proposalWireReferences({ requiredContext: proposalModelContext(context) }, context)));
+  assert.deepEqual(reemit, createSubmitKpProposalBundleModelInput(vnextProposalContextBody(context), ['observe'], proposalItemEntryRefs(context), proposalObservationSubjectRefs(context), OFFERED,
     proposalNpcSourceChoices(context), requiredContextBasisReferences(context), proposalCreatureTargetRefs(context), false, proposalItemDefinitionRefs(context),
-    [], [], undefined, proposalUnofferedCapabilities(context)));
+    [], [], undefined, proposalUnofferedCapabilities(context), proposalInventoryEntryRefs(context), context));
   const again = evaluateVNextProposalRevisionResponse(response('{}'), result.repairTicket);
   assert.equal(again.result.kind, 'rejected'); assert.equal(again.result.code, 'PROPOSAL_REPAIR_EXHAUSTED'); assert.equal(again.synthesis, undefined);
 });
