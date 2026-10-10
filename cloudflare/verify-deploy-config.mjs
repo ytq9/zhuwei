@@ -6,8 +6,10 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const defaultRepoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-// Same approved behavior; 2026-09-14 freeze updates only the relocated test gate.
-const frozenSpecSha256 = "d1ab636b9b30827b7da94bd5bcf2db7ebdc5ce4cc38f82390a999ac3d9f22c8d";
+// 2026-10-10 freeze, confirmed by the user: the user-ruled SPEC 0001
+// revisions of 2026-10-02 (§19, ADR 0081), 2026-10-05 (§§7、21 P, ADR 0121)
+// and 2026-10-06 (§16, ADR 0130).
+const frozenSpecSha256 = "fabb6f445fb80b12efd0ec35ab88610e3e10dc8cac628304cb946a0a76bcc4c0";
 const expectedConfigKeys = [
   "$schema",
   "ai",
