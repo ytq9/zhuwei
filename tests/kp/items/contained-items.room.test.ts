@@ -172,6 +172,56 @@ it('a vague put-back reads the listed carried item when a revision or the select
   await withObjectRoomScenario(restored, async (_act, target) => expect(target.authoritativeReplay().state.campaignRuntime.itemSystem).toEqual(saved));
 }, 60_000);
 
+// SPEC 0016 §7.2 (ADR 0138): a put-back refused by the form beside a drop
+// only Rules refuses are told in one round: Room preflights the rest of the
+// refused filling before its ticket is sent, and proves it again at the call.
+it('a refused put-back and a fault only Rules finds in another step reach the same revision', async () => {
+  const { stub } = await initializeObjectRoom('stand-in-preflight-room');
+  await withObjectRoomScenario(stub, async (act, target, calls) => {
+    const template = VNEXT_SEMANTIC_TEMPLATES.sceneFeature;
+    const contents = defineContents('wake', '布条', 'stand-in-cloth', 3, true);
+    contents[1].containerRef = 'prospective:stand-in-barrel';
+    await act('stand-in-barrel', '我查看这只原有的敞口木桶和里面的布条。', [{ ...common('wake'),
+      kind: 'materializeObject', semanticKind: 'sceneFeature', templateRef: template.templateRef, templateHash: template.templateHash,
+      visibilityPolicyRef: 'visibility:scene-observers', produces: [{ handle: 'prospective:stand-in-barrel', kind: 'semanticDefinition', outcomeBinding: 'always' }],
+      definition: { sceneRef: 'wake', label: '敞口语义木桶', description: '没有桶盖的敞口木桶。', observableState: 'open',
+        affordances: ['存放物品'], mechanicDefinitionRefs: [], visibilityFactId: null }, summary: '确定原木桶及其敞口状态。' }, ...contents], '0');
+    let state = target.authoritativeReplay().state;
+    const barrel = Object.values(state.campaignRuntime.definitions).find((definition: any) => definition.content?.label === '敞口语义木桶') as Data;
+    const cloth = find(state, '布条', barrel.definitionId).entryId;
+    const sword = (Object.values(state.campaignRuntime.itemSystem.entries) as Data[]).find(entry => entry.holderRef === ACTOR
+      && entry.containerRef === undefined && state.campaignRuntime.itemSystem.definitions[entry.definitionRef].content.label === '长剑')!;
+    await act('stand-in-take', '我从这只敞口木桶里取出一块布条。', [inventory('wake', { kind: 'acquire', entryRef: cloth, quantity: 1 })], '300000000',
+      wire => { wire.steps.inventoryOperation[0].operation = { kind: 'containerTransfer', direction: 'takeOut', containerRef: barrel.definitionId,
+        entryRef: cloth, quantity: 1, access: 'alreadyOpen', after: 'leaveAsIs' }; return wire; });
+    state = target.authoritativeReplay().state;
+    const loose = (Object.values(state.campaignRuntime.itemSystem.entries) as Data[]).find(entry => entry.definitionRef === state.campaignRuntime.itemSystem.entries[cloth].definitionRef
+      && entry.holderRef === ACTOR && entry.containerRef === undefined)!;
+    // The first filling puts back the stack still inside, which the form
+    // refuses, and drops two longswords where one is carried, which only
+    // Rules refuses. The revision fixes both.
+    let round = 0;
+    const before = calls.length;
+    await act('stand-in-both', '我把刚取出的这一块放回木桶，再把长剑放在地上。', [
+      inventory('wake', { kind: 'store', entryRef: loose.entryId, quantity: 1, containerRef: barrel.definitionId }),
+      inventory('wake', { kind: 'release', entryRef: sword.entryId, quantity: 1, sceneRef: 'wake', releaseKind: 'placement' })], '300000000', wire => {
+      const first = round++ === 0;
+      wire.steps.inventoryOperation[0].operation = { kind: 'containerTransfer', direction: 'putIn', containerRef: barrel.definitionId,
+        entryRef: first ? cloth : loose.entryId, quantity: 1, access: 'alreadyOpen', after: 'leaveAsIs' };
+      wire.steps.inventoryOperation[1].operation.quantity = first ? 2 : 1;
+      return wire;
+    });
+    expect(calls.length - before).toBe(3);
+    const told = JSON.parse(String(calls[before + 2].messages.at(-1).content).match(/\{"contextHash".*$/s)![0]).diagnostics as Data[];
+    expect(told.map(diagnostic => [diagnostic.constraint, diagnostic.path.slice(0, 3)])).toEqual(expect.arrayContaining([
+      ['container-transfer:put-in-needs-loose-held-source', ['steps', 'inventoryOperation', 0]],
+      [expect.any(String), ['steps', 'inventoryOperation', 1]]]));
+    expect(told.find(diagnostic => diagnostic.path[2] === 1).path.at(-1)).toBe('quantity');
+    state = target.authoritativeReplay().state;
+    expect(state.campaignRuntime.itemSystem.entries[sword.entryId]).toMatchObject({ holderRef: null });
+  });
+}, 60_000);
+
 it('live inspection acceptance rejects identify on a hidden definition and permits the public cloth control', () => {
   const actor = 'actor:live-inspection-boundary', loose = 'item-entry:live-inspection:returned', peer = 'item-entry:live-inspection:peer';
   const entries = { [LIVE_CONTAINER]: { entryId: LIVE_CONTAINER, definitionRef: LIVE_BOX_DEFINITION, holderRef: actor, stateMachine: { state: 'closed' } },

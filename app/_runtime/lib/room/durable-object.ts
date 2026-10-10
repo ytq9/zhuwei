@@ -132,7 +132,8 @@ import { assertVNextInvocationTransition, assertVNextNpcReplyTransition, assertV
   vnextRulesRevisionDiagnostics, vnextSavedAcceptedProposal } from "./vnext-proposal-invocation";
 import { isNpcReplyTicket, npcReplySteps, type NpcReplySaved } from "../kp/vnext/npc-reply";
 import { VNEXT2_PROPOSAL_BUNDLE_SCHEMA, type VNextProposalBundle } from "../kp/vnext/proposal-schema";
-import { evaluateVNextProposalRevisionResponse, type VNextProposalBundleRepairTicket } from "../kp/vnext/proposal-provider";
+import { evaluateVNextProposalRevisionResponse, vnextProposalTicketPreflight, vnextProposalTicketWithSavedPreflight,
+  type VNextProposalBundleRepairTicket } from "../kp/vnext/proposal-provider";
 import type { VersionedRulesRuntime } from "../rules/v2-runtime";
 import { INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE } from "../rules/profiles/manifests";
 import { characterProficiencyProfileEnabled } from "../rules/profiles/character-proficiency";
@@ -3847,6 +3848,47 @@ export class RoomDurableObject extends DurableObject<Env> {
     });
   }
 
+  /** SPEC 0016 §7.2 (ADR 0138): what lowering and the Rules preflight hold
+   * against the rest of a locally refused filling, asked before its ticket is
+   * sent. Nothing is saved; Room proves the ticket again when that round
+   * begins. */
+  async preflightStandInForAction(context: TrustedPrincipalContext, preparedActionId: string, bundle: unknown): Promise<unknown> {
+    const rejected = (code: string) => ({ kind: "rejected" as const, code });
+    if (this.authorityStore.roomDeletion() !== undefined || !isJsonRecord(bundle)) return rejected("PROPOSAL_PREFLIGHT_INVALID");
+    return this.ctx.storage.transactionSync(() => {
+      const replay = this.authoritativeReplay();
+      const authenticated = this.authenticatedAuthorityViewer(context, replay.state);
+      const submission = this.authorityStore.submissionByPrepared(preparedActionId);
+      const prepared = submission === undefined ? undefined : this.preparedActionSnapshot(submission);
+      if (!authenticated || !submission || !prepared?.requiredContext
+        || submission.principal_id !== authenticated.principalId
+        || !authenticated.characterIds.includes(submission.character_id)
+        || submission.status !== "prepared" || submission.proposal_hash !== null) return rejected("PROPOSAL_PREFLIGHT_INVALID");
+      // The same freeze as a round's proof: past it no revision is granted.
+      if (this.authorityStore.randomnessBatch(preparedActionId) !== undefined
+        || this.authorityStore.npcDecision(preparedActionId) !== undefined) return { kind: "ready" as const, diagnostics: [] };
+      try { return { kind: "ready" as const, diagnostics: this.proposalPreflight(submission, prepared, replay, authenticated.principalId, bundle as unknown as VNextProposalBundle) }; }
+      catch { return rejected("PROPOSAL_PREFLIGHT_INVALID"); }
+    });
+  }
+
+  /** What lowering and the Rules preflight hold against a complete plan. It
+   * neither draws dice nor persists candidate events. */
+  private proposalPreflight(submission: AuthoritySubmissionRow, prepared: PreparedAuthoritativeAction,
+    replay: ReturnType<RoomDurableObject["authoritativeReplay"]>, principalId: string, bundle: VNextProposalBundle): readonly ProposalDiagnostic[] {
+    const lowered = this.vnextAdjudicationBridge!.lowerProposal?.({ proposal: bundle,
+      preparedActionId: submission.prepared_action_id, rootActionId: submission.root_action_id,
+      actorCharacterId: submission.character_id, principalId,
+      requiredContext: this.preparedContext(prepared), profiles: replay.profiles, state: replay.state,
+      ...(this.retryAddressed(prepared) === undefined ? {} : { retryAddressed: this.retryAddressed(prepared) }) });
+    // A reference the Room cannot lower is answered like a Rules
+    // rejection: its diagnostics name the reference.
+    if (lowered?.kind === "rejected") return Array.isArray(lowered.diagnostics) ? authorityProposalDiagnostics(lowered.diagnostics) : [];
+    if (lowered?.kind !== "accepted"
+      || this.validatePreparedReadSet(submission, replay, "beforeFirstRulesStep", lowered.input) !== undefined) return [];
+    return vnextRulesRevisionDiagnostics(this.rulesRuntime.step(replay.profiles, replay.state, lowered.input), { bundle, rulesInput: lowered.input });
+  }
+
   /** The frozen context with the memories the stages brought back (ADR 0051). */
   private preparedContext(prepared: PreparedAuthoritativeAction): VNextRequiredContext {
     return withRecalledKnowledge(prepared.requiredContext!, prepared.recalledKnowledge ?? []);
@@ -4098,22 +4140,8 @@ export class RoomDurableObject extends DurableObject<Env> {
         && this.authorityStore.npcDecision(preparedActionId) === undefined;
       try {
         const preparedContext = this.preparedContext(prepared);
-        /** What lowering and the Rules preflight hold against a complete
-         * plan. It neither draws dice nor persists candidate events. */
-        const preflight = (bundle: VNextProposalBundle): readonly ProposalDiagnostic[] => {
-          if (!unfrozen) return [];
-          const lowered = this.vnextAdjudicationBridge!.lowerProposal?.({ proposal: bundle,
-            preparedActionId, rootActionId: submission.root_action_id,
-            actorCharacterId: submission.character_id, principalId: authenticated.principalId,
-            requiredContext: preparedContext, profiles: replay.profiles, state: replay.state,
-            ...(this.retryAddressed(prepared) === undefined ? {} : { retryAddressed: this.retryAddressed(prepared) }) });
-          // A reference the Room cannot lower is answered like a Rules
-          // rejection: its diagnostics name the reference.
-          if (lowered?.kind === "rejected") return Array.isArray(lowered.diagnostics) ? authorityProposalDiagnostics(lowered.diagnostics) : [];
-          if (lowered?.kind !== "accepted"
-            || this.validatePreparedReadSet(submission, replay, "beforeFirstRulesStep", lowered.input) !== undefined) return [];
-          return vnextRulesRevisionDiagnostics(this.rulesRuntime.step(replay.profiles, replay.state, lowered.input), { bundle, rulesInput: lowered.input });
-        };
+        const preflight = (bundle: VNextProposalBundle): readonly ProposalDiagnostic[] =>
+          unfrozen ? this.proposalPreflight(submission, prepared, replay, authenticated.principalId, bundle) : [];
         if (input.npcReview !== undefined) {
           if (!isNpcReviewTicket(input.npcReview)) throw new TypeError("PROPOSAL_REPAIR_EXHAUSTED");
           if (existing === undefined) {
@@ -4146,7 +4174,12 @@ export class RoomDurableObject extends DurableObject<Env> {
           // ruling has to correct is returned at the ruling's own draft.
           const settled = settleNpcConversation({ bundle, context: preparedContext, saved: this.npcReplyCalls(preparedActionId, "completed"), reviews: this.npcReviewCalls(preparedActionId, "completed"), rejected: preflight });
           return settled.kind === "merged" ? settled.ruling : [];
-        }, "exact", prepared.retryQuestion);
+        }, "exact", prepared.retryQuestion, ticket => {
+          // SPEC 0016 §7.2 (ADR 0138): a refused draft's rest is preflighted
+          // as a plan is; recovery reuses the ticket it saved.
+          if (existing?.repair_ticket_json) return vnextProposalTicketWithSavedPreflight(ticket, JSON.parse(existing.repair_ticket_json) as VNextProposalBundleRepairTicket);
+          return unfrozen ? vnextProposalTicketPreflight(ticket, preparedContext, preflight) : ticket;
+        });
       } catch { return { kind: "rejected", code: "PROPOSAL_REPAIR_EXHAUSTED" }; }
       if (existing === undefined && (submission.status !== "prepared" || submission.proposal_hash !== null)) {
         return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID" };

@@ -8,7 +8,8 @@ import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as 
 import { proposalModelContext, recallKnowledge, withRecalledKnowledge } from "../../../app/_runtime/lib/kp/vnext/proposal-context.ts";
 import { encodeVNextStrictToolBundle, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME } from "../../../app/_runtime/lib/kp/vnext/proposal-schema.ts";
 import { vnextProposalRevisionCandidate, createRepairTicket, createVNextAuthorityRevisionTicket,
-  vnextProposalCorrectionPrompt } from "../../../app/_runtime/lib/kp/vnext/proposal-provider.ts";
+  vnextProposalCorrectionPrompt, vnextProposalTicketPreflight, vnextProposalTicketWithSavedPreflight,
+  assertRepairTicket } from "../../../app/_runtime/lib/kp/vnext/proposal-provider.ts";
 import { bindProposalWire } from "../../../app/_runtime/lib/kp/vnext/proposal-reference-dialect.ts";
 import { authorityProposalDiagnostics } from "../../../app/_runtime/lib/kp/vnext/proposal-diagnostics.ts";
 import { VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE } from "../../../app/_runtime/lib/kp/vnext/room-bridge.ts";
@@ -23,19 +24,10 @@ import { vnextRulesRevisionDiagnostics } from "../../../app/_runtime/lib/room/vn
 
 /** What the audit still finds, each a piece of later work. Close one and
  * remove it here; a new one fails the test. Found 2026-10-10 at 36e6a76d;
- * the location, candidate and Rules one-round gaps (ADR 0135) and the
- * context gaps (ADR 0136) closed the same day. */
-const KNOWN_GAPS = new Map([
-  // One round across stages: a filling with a refused declaration is never
-  // lowered or preflighted, so a fault only lowering or Rules finds in
-  // another step waits for the next round. Rules refusals reach the KP only
-  // through a commit attempt; telling them in the same ticket needs Room to
-  // preflight before the ticket is made.
-  ["one-round:put-back-the-stack-left-inside+store-what-another-holds:missing-inventory:another-holders-item-needs-a-shared-check",
-    "a Rules fault behind a refused declaration waits a round"],
-  ["one-round:put-back-the-stack-left-inside+store-an-item-never-seen:missing-proposal:dependency-not-read-bound",
-    "a lowering fault behind a refused declaration waits a round"],
-]);
+ * the location, candidate and Rules one-round gaps (ADR 0135), the context
+ * gaps (ADR 0136) and the cross-stage one-round gaps (ADR 0138) closed the
+ * same day. */
+const KNOWN_GAPS = new Map();
 function assertGaps(found, kinds) {
   const known = [...KNOWN_GAPS.keys()].filter(gap => kinds.some(kind => gap.startsWith(`${kind}:`)));
   assert.deepEqual({ new: found.filter(gap => !KNOWN_GAPS.has(gap)), closed: known.filter(gap => !found.includes(gap)) }, { new: [], closed: [] },
@@ -189,9 +181,21 @@ function filling(operations) {
 const reply = value => ({ choices: [{ finish_reason: "tool_calls", message: { tool_calls: [{ type: "function",
   function: { name: SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, arguments: JSON.stringify(value) } }] } }] });
 
+/** Room's preflight of a plan: lowering, then a Rules step that commits
+ * nothing, as Room runs it before any dice. */
+const rulesPreflight = (w, context) => bundle => {
+  const rootActionId = context.binding.rootActionId;
+  const lowered = VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE.lowerProposal({ proposal: bundle, preparedActionId: `prepared:${rootActionId}`,
+    rootActionId, actorCharacterId: ACTOR, principalId: "principal:probe-actor", requiredContext: context, profiles: w.f.profiles, state: w.state });
+  return lowered.kind === "rejected" ? authorityProposalDiagnostics(lowered.diagnostics ?? [])
+    : (outcome => outcome.kind === "committed" ? [] : vnextRulesRevisionDiagnostics(outcome, { bundle, rulesInput: lowered.input }))(
+      w.f.runtime.step(w.f.profiles, w.state, lowered.input));
+};
+
 /** The production path a filling takes: Room reads a listed carried item the
  * filling names (ADR 0133), the form is checked, and an accepted plan is
- * lowered and preflighted by Rules exactly as Room does before any dice. What
+ * lowered and preflighted by Rules exactly as Room does before any dice; a
+ * refused one has the rest of it preflighted the same way (ADR 0138). What
  * comes back is what the revision is told: the diagnostics of its ticket,
  * as the correction prompt sends them, in full references. */
 function checkFilling(w, frozen, document, capabilities = ["inventoryOperation"]) {
@@ -200,14 +204,10 @@ function checkFilling(w, frozen, document, capabilities = ["inventoryOperation"]
   const named = [...new Set(JSON.stringify(bound).match(/item-entry:[^"]+/g) ?? [])].filter(ref => rows.has(ref));
   const context = named.length === 0 ? frozen : withRecalledKnowledge(frozen, recallKnowledge(frozen, named, w.state));
   const told = ticket => bindProposalWire(JSON.parse(vnextProposalCorrectionPrompt(ticket, context)).diagnostics, context);
+  const preflight = rulesPreflight(w, context);
   const candidate = vnextProposalRevisionCandidate(reply(document), capabilities, [], context, []);
-  if (candidate.kind !== "accepted") return told(createRepairTicket(candidate, context, capabilities, []));
-  const rootActionId = context.binding.rootActionId;
-  const lowered = VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE.lowerProposal({ proposal: candidate.bundle, preparedActionId: `prepared:${rootActionId}`,
-    rootActionId, actorCharacterId: ACTOR, principalId: "principal:probe-actor", requiredContext: context, profiles: w.f.profiles, state: w.state });
-  const refused = lowered.kind === "rejected" ? authorityProposalDiagnostics(lowered.diagnostics ?? [])
-    : (outcome => outcome.kind === "committed" ? [] : vnextRulesRevisionDiagnostics(outcome, { bundle: candidate.bundle, rulesInput: lowered.input }))(
-      w.f.runtime.step(w.f.profiles, w.state, lowered.input));
+  if (candidate.kind !== "accepted") return told(vnextProposalTicketPreflight(createRepairTicket(candidate, context, capabilities, []), context, preflight));
+  const refused = preflight(candidate.bundle);
   return refused.length === 0 ? [] : told(createVNextAuthorityRevisionTicket(reply(document), context, capabilities, [], refused));
 }
 const at = (document, path) => path.reduce((value, key) => value?.[key], document);
@@ -260,7 +260,20 @@ const CONTROLS = [
 
 /** Faults on different things, filled together. */
 const COMBINED = [["put-back-the-stack-left-inside", "store-what-another-holds"], ["put-back-the-stack-left-inside", "store-an-item-never-seen"], ["put-back-the-stack-left-inside", "store-a-zero-quantity"], ["put-the-box-into-itself", "take-out-of-the-wrong-container"],
-  ["store-into-other-holders-satchel", "take-what-another-holds"], ["store-into-closed-box", "drop-what-is-in-the-box"]];
+  ["store-into-other-holders-satchel", "take-what-another-holds"], ["store-into-closed-box", "drop-what-is-in-the-box"],
+  // ADR 0138: a step refused by the form, a declaration or not, beside one
+  // only lowering or Rules refuses.
+  ["store-a-zero-quantity", "store-what-another-holds"], ["store-a-zero-quantity", "store-an-item-never-seen"],
+  ["put-in-with-kind-dropped", "store-what-another-holds"], ["put-in-closed-box-declared-open", "store-what-another-holds"]];
+/** ADR 0138: a refused step beside steps the preflight of the rest must not
+ * fault -- one that is right, one that relies on the box the refused
+ * declaration would open, and one that moves the piece the refused step
+ * names. Each is told the refused step's problems and nothing else. */
+const STAND_IN_CONTROLS = s => [
+  ["put-back-the-stack-left-inside", { kind: "store", entryRef: E.keyGround, quantity: 1, containerRef: E.pouch }],
+  ["put-back-the-stack-left-inside", { kind: "store", entryRef: E.keyA, quantity: 1, containerRef: E.box }],
+  ["store-a-zero-quantity", { kind: "release", entryRef: s.loose, quantity: 1, sceneRef: SCENE, releaseKind: "drop" }],
+];
 
 function formGaps() {
   const w = world();
@@ -310,6 +323,12 @@ function formGaps() {
     const missing = [...new Set(ids.flatMap(id => results.get(id).map(diagnostic => diagnostic.constraint)))].filter(constraint => !reported.has(constraint));
     if (missing.length > 0) gaps.push(`one-round:${ids.join("+")}:missing-${missing.join("+")}`);
   }
+  for (const [id, operation] of STAND_IN_CONTROLS(s)) {
+    const document = filling([...FAULTS.find(fault => fault.id === id).ops(s), operation]);
+    const allowed = new Set(results.get(id).map(diagnostic => diagnostic.constraint));
+    const added = [...new Set(checkFilling(w, frozen, document).map(diagnostic => diagnostic.constraint))].filter(constraint => !allowed.has(constraint));
+    if (added.length > 0) gaps.push(`control:${id}+${operation.kind}-${name(operation.containerRef ?? operation.entryRef)}:added-${added.join("+")}`);
+  }
   return gaps;
 }
 
@@ -323,4 +342,30 @@ test("the context tells the referent apart for each way an item came to hand, ex
 // only candidates that clear it.
 test("a wrong filling is refused at its field, offers only candidates that clear it, and reports every fault at once; a right one passes; except the known gaps", () => {
   assertGaps(formGaps(), ["location", "candidates", "one-round", "control"]);
+});
+
+// SPEC 0016 §7.2 (ADR 0138): the ticket of a refused filling carries what the
+// preflight of the rest found, after the form's own problems and at rows of
+// the reply; a saved ticket gives the same one back, and an added problem
+// placed outside a row is not a ticket.
+test("a refused filling's ticket carries the rest's preflight after its own problems, re-derived from the saved ticket", () => {
+  const w = world();
+  const s = { loose: w.takeFromBox() };
+  const context = freezeAuthoredProbeContext(w.f, w.state, { rootActionId: "root:audit:stand-in", intentText: "我把刚拿出的那一块放回同一个盒子，再把同桌的麻绳收进布袋。",
+    focusRefs: [ACTOR, GIVER, E.box, E.boxStack, E.pouch, E.ropeGift, s.loose] }).context;
+  const document = filling([...FAULTS.find(fault => fault.id === "put-back-the-stack-left-inside").ops(s),
+    { kind: "store", entryRef: E.ropeGift, quantity: 1, containerRef: E.pouch }]);
+  const candidate = vnextProposalRevisionCandidate(reply(document), ["inventoryOperation"], [], context, []);
+  assert.equal(candidate.kind, "locallyRejected");
+  const local = createRepairTicket(candidate, context, ["inventoryOperation"], []);
+  const ticket = vnextProposalTicketPreflight(local, context, rulesPreflight(w, context));
+  const added = ticket.diagnostics.slice(local.diagnostics.length);
+  assert.deepEqual(ticket.diagnostics.slice(0, local.diagnostics.length), local.diagnostics);
+  assert.deepEqual(added.map(detail => [detail.constraint, detail.path.slice(0, 3)]),
+    [["inventory:another-holders-item-needs-a-shared-check", ["steps", "inventoryOperation", 1]]]);
+  assert.doesNotThrow(() => assertRepairTicket(ticket, context.binding.contextHash, context));
+  assert.deepEqual(vnextProposalTicketWithSavedPreflight(local, ticket), ticket);
+  const misplaced = structuredClone(ticket);
+  misplaced.diagnostics.at(-1).path = ["decision"];
+  assert.throws(() => assertRepairTicket(misplaced, context.binding.contextHash, context), /VNEXT_PROPOSAL_REPAIR_TICKET_INVALID/);
 });

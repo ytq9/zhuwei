@@ -8,11 +8,13 @@ ruled_on: 2026-09-01
 production_switched: false
 status_detail: "已裁定；阶段三代表性纵切已有开发期回执，Availability/Bundle/真实 Provider 收口实施中；完整 Form 家族尚未全部纵切。V5 提案路径已于 2026-09-20 按 ADR 0034 删除，vNext 是唯一提案路径；尚未执行 migration、部署或发布"
 depends_on: ["0001", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015"]
-adr: ["0015", "0024", "0025", "0026", "0034", "0038", "0059", "0064", "0065", "0066", "0067", "0068", "0069", "0070", "0071", "0072", "0073", "0074", "0076", "0077", "0078", "0081", "0082", "0083", "0084", "0085", "0089", "0092", "0095", "0096", "0105", "0107", "0109", "0111", "0115", "0128"]
+adr: ["0015", "0024", "0025", "0026", "0034", "0038", "0059", "0064", "0065", "0066", "0067", "0068", "0069", "0070", "0071", "0072", "0073", "0074", "0076", "0077", "0078", "0081", "0082", "0083", "0084", "0085", "0089", "0092", "0095", "0096", "0105", "0107", "0109", "0111", "0115", "0128", "0138"]
 supersedes:
   - spec: "0015"
     scope: "旧 Form Catalog、environmental-stunt/详细材料阈值、model-visible compound/DAG"
 revisions:
+  - date: 2026-10-10
+    scope: "§7.2：首稿有本地被拒步骤时，Room 对其余部分做 lowering/Rules 预检，与本地错误列在同一张修订工单；部分预检不判定最终结果（ADR 0138）"
   - date: 2026-10-06
     scope: "§7.2：按用户批准将同身份缺项补全扩展到 NPC、实物、场景物件和地形，保留已定事实与持续状态"
   - date: 2026-10-05
@@ -89,6 +91,7 @@ gates:
   - "tests/kp/world/native-object-completion.test.mjs"
   - "tests/kp/items/contained-items.test.mjs"
   - "tests/kp/items/contained-items.room.test.ts"
+  - "tests/kp/items/item-reference-audit.test.mjs"
   - "tests/kp/protocol/call-budget.test.mjs"
   - "tests/kp/knowledge/knowledge-summary.test.mjs"
   - "tests/kp/knowledge/knowledge-summary.room.test.ts"

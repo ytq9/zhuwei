@@ -35,8 +35,10 @@ export async function withObjectRoomScenario<T>(stub: ReturnType<typeof env.VNEX
         async propose() { throw new Error("unused"); } } as unknown as AuthoritativeKpAdapter,
         journal: { begin: (key, request) => target.beginVNextProposalInvocation(ALICE, key, request), complete: (key, completion) => target.completeVNextProposalInvocation(ALICE, key, completion) },
         // As the Room server wires it: a stage that names a memory or a
-        // carried item has Room read it (ADR 0051, ADR 0132).
+        // carried item has Room read it (ADR 0051, ADR 0132), and a refused
+        // filling has Room preflight the rest of it (ADR 0138).
         recallKnowledge: (preparedActionId, refs) => target.recallKnowledgeForAction(ALICE, preparedActionId, [...refs]),
+        preflightStandIn: (preparedActionId, bundle) => target.preflightStandInForAction(ALICE, preparedActionId, bundle),
         proposalBinding: { async run(_model: string, value: unknown) {
           const request = value as Data, name = String(request.tools[0].function.name); calls.push(request);
           const wire = name === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME ? { requestedCapabilities: [...new Set(proposals.map(p => { const capability = vnextProposalCapabilityForEntry(p); if (!capability) throw new Error(`Unknown capability for ${p.kind}`); return capability; }))] }

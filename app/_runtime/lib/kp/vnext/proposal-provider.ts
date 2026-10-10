@@ -73,6 +73,7 @@ import { draftCommonActionDiagnostics } from "./common-actions";
 import { bindProposalWire, proposalWireReferences, proposalWireDiagnosticReferences, proposalUsesTypedReplacement } from "./proposal-reference-dialect";
 import { expandContainerTransferWire, ContainerTransferWireError, containerTransferDiagnostics } from "./container-transfer-wire";
 import { frozenRecords, inventoryEntryCandidates } from "./inventory-reference-candidates";
+import { npcReplySteps } from "./npc-reply";
 
 // Ephemeral proof derived solely from the original wire and frozen context.
 // Re-parsing by Room derives it again; no model field can claim this exemption.
@@ -135,7 +136,10 @@ async function contextForNamedPossessions(context: VNextRequiredContext, respons
 export const VNEXT_PROPOSAL_CORRECTION_ROUNDS = 3;
 
 export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
-  version: "kp-vnext2-proposal-parser-v92",
+  version: "kp-vnext2-proposal-parser-v93",
+  // SPEC 0016 §7.2 (ADR 0138): a locally refused filling's ticket also tells
+  // what lowering and Rules find in the rest of it, proved by Room.
+  standInPreflight: "rest-of-a-locally-refused-filling-less-related-rows-preflighted-by-room-and-appended-to-its-ticket-v1",
   // ADR 0132, ADR 0133: a selection may name carried items the freeze only
   // listed; so may a filling or correction, read before that reply is checked.
   possessionRecall: "requested-item-refs-ride-the-recall-request-and-read-at-the-listed-version-an-item-already-held-by-the-forms-reads-as-not-requested-v2",
@@ -607,6 +611,144 @@ function beyondRefusedDeclarations(raw: unknown, context: VNextRequiredContext,
   }
   return containerTransferDiagnostics(proposalFillingDiagnostics(draft, diagnostics, expanded.value), expanded.origins)
     .filter(detail => !(detail.path?.[0] === "steps" && detail.path[1] === "inventoryOperation" && indices.has(Number(detail.path[2]))));
+}
+
+/** SPEC 0016 §7.2 (ADR 0138): the part of a locally refused filling Room
+ * preflights, so the faults only lowering or Rules finds in the other steps
+ * reach the same revision. `rows` maps each kept row, at its place in
+ * `wire`, back to its place in the reply. */
+export type VNextProposalStandIn = Readonly<{ bundle: VNextProposalBundle; wire: JsonRecord;
+  rows: ReadonlyMap<string, readonly [string, string, number]> }>;
+
+const STAND_IN_VALIDATION_CODES: readonly string[] = ["PROPOSAL_BUNDLE_INVALID", "BUNDLE_DEPENDENCY_INVALID", "PROPOSAL_WIRE_INVALID"];
+const FILLING_ROW_CONTAINERS = ["check", "steps"] as const;
+
+/** The refs a filling row names. Read as what the row acts on, what it cites
+ * (its basis), who observes and where it ends are left out. The actor is in
+ * every row and is never shared; a sentinel such as "none" is no ref. */
+function fillingRowRefs(row: unknown, actorRef: string, actsOn: boolean): ReadonlySet<string> {
+  const refs = new Set<string>();
+  const visit = (value: unknown, key: string): void => {
+    if (typeof value === "string") {
+      if ((/Refs?$/u.test(key) || key === "handle") && value.includes(":") && value !== actorRef) refs.add(value);
+    } else if (Array.isArray(value)) value.forEach(member => visit(member, key));
+    else if (isPlainRecord(value)) for (const [field, member] of Object.entries(value)) {
+      if (field === "sceneRef" || (actsOn && (field === "basisRefs" || field === "observerRef" || field === "subjectRef"))) continue;
+      visit(member, field);
+    }
+  };
+  visit(row, "");
+  return refs;
+}
+
+/** What a left-out row may change for the rows after it. A plain inventory
+ * operation moves its item; containers hold any number of things, so the
+ * container it names is unchanged. A declaration also opens or closes its
+ * container, and a row of any other kind is taken to change all it names. */
+function fillingRowChanges(family: string, row: unknown, actorRef: string): ReadonlySet<string> {
+  const operation = isPlainRecord(row) ? row.operation : undefined;
+  if (family !== "inventoryOperation" || !isPlainRecord(operation) || typeof operation.kind !== "string" || operation.kind === "containerTransfer")
+    return fillingRowRefs(row, actorRef, true);
+  const produced = fillingRowRefs(isPlainRecord(row) ? { produces: row.produces } : {}, actorRef, true);
+  return new Set([...produced, ...(typeof operation.entryRef === "string" && operation.entryRef.includes(":") ? [operation.entryRef] : [])]);
+}
+
+/** SPEC 0016 §7.2 (ADR 0138): the reply less its locally refused rows and the
+ * rows that touch what those would have changed, when that rest is itself a
+ * whole plan. None when a problem is not in a row, when nothing is left, when
+ * the rest fails local checks, or when it addresses an NPC, whose replies a
+ * Rules preflight needs first. */
+export function vnextProposalStandIn(ticket: VNextProposalBundleRepairTicket, requiredContext: VNextRequiredContext): VNextProposalStandIn | undefined {
+  const source = ticket.sourceDraft;
+  if (!STAND_IN_VALIDATION_CODES.includes(ticket.validationCode) || !isPlainRecord(source)
+    || (isPlainRecord(source.decision) && source.decision.kind === "clarification")) return undefined;
+  const checked = proposalDraftContext(requiredContext, ticket.knowledgeRefs, draftNamedPossessions(requiredContext, source));
+  const key = (container: string, family: string, index: number) => JSON.stringify([container, family, index]);
+  const removed = new Set<string>();
+  for (const diagnostic of wireFillingDiagnostics(ticket.draft, ticket.diagnostics, source, checked)) {
+    const [container, family, index] = diagnostic.path ?? [];
+    if (!FILLING_ROW_CONTAINERS.includes(container as never) || typeof family !== "string" || typeof index !== "number") return undefined;
+    removed.add(key(String(container), family, index));
+  }
+  let bound: unknown;
+  try { bound = bindProposalWire(source, checked); } catch { return undefined; }
+  const actorRef = requiredContext.intent.actorRef;
+  const rows = FILLING_ROW_CONTAINERS.flatMap(container => {
+    const groups = isPlainRecord(bound) && isPlainRecord(bound[container]) ? bound[container] : {};
+    return Object.entries(groups).flatMap(([family, list]) => Array.isArray(list)
+      ? list.map((row, index) => ({ key: key(container, family, index), family, row })) : []);
+  });
+  const changed = new Set<string>();
+  const leaveOut = (row: typeof rows[number]) => { removed.add(row.key); fillingRowChanges(row.family, row.row, actorRef).forEach(ref => changed.add(ref)); };
+  rows.filter(row => removed.has(row.key)).forEach(leaveOut);
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const row of rows) if (!removed.has(row.key) && [...fillingRowRefs(row.row, actorRef, false)].some(ref => changed.has(ref))) { leaveOut(row); grew = true; }
+  }
+  if (rows.every(row => removed.has(row.key))) return undefined;
+  const wire = canonicalClone(source) as Record<string, unknown>;
+  const kept = new Map<string, readonly [string, string, number]>();
+  for (const container of FILLING_ROW_CONTAINERS) {
+    if (!isPlainRecord(wire[container])) continue;
+    const groups = wire[container] as Record<string, unknown>;
+    for (const [family, list] of Object.entries(groups)) {
+      if (!Array.isArray(list)) continue;
+      const rest: unknown[] = [];
+      list.forEach((row, index) => {
+        if (removed.has(key(container, family, index))) return;
+        kept.set(key(container, family, rest.length), [container, family, index]);
+        rest.push(row);
+      });
+      groups[family] = rest;
+    }
+  }
+  let candidate: VNextProposalBundleCandidate;
+  try { candidate = vnextProposalRevisionCandidate(vnextProposalDraftReply(wire as JsonRecord), ticket.capabilities, ticket.terminalKinds, requiredContext, ticket.knowledgeRefs); }
+  catch { return undefined; }
+  if (candidate.kind !== "accepted" || npcReplySteps(candidate.bundle, requiredContext).length > 0) return undefined;
+  return deepFreeze({ bundle: candidate.bundle, wire: wire as JsonRecord, rows: kept });
+}
+
+/** SPEC 0016 §7.2 (ADR 0138): the ticket with what lowering and Rules found in
+ * the stand-in, each at its row in the reply and after the ticket's own. Only
+ * problems of a kept row are added; the plan as a whole is judged again once
+ * revised. */
+export function vnextProposalStandInTicket(ticket: VNextProposalBundleRepairTicket, requiredContext: VNextRequiredContext,
+  standIn: VNextProposalStandIn, diagnostics: readonly ProposalDiagnostic[]): VNextProposalBundleRepairTicket {
+  const checked = proposalDraftContext(requiredContext, ticket.knowledgeRefs, draftNamedPossessions(requiredContext, standIn.wire));
+  const located = wireFillingDiagnostics(standIn.bundle, withInventoryEntryCandidates(diagnostics, standIn.bundle, requiredContext), standIn.wire, checked);
+  return withAppendedDiagnostics(ticket, located.flatMap(diagnostic => {
+    const [container, family, index, ...rest] = diagnostic.path ?? [];
+    const at = standIn.rows.get(JSON.stringify([container, family, index]));
+    return at === undefined ? [] : [{ ...diagnostic, path: [...at, ...rest], pathBase: "arguments" as const,
+      repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } }];
+  }));
+}
+
+/** The ticket with a preflight run now: by Room for the round it is about to
+ * send, and by tests standing in for Room. */
+export function vnextProposalTicketPreflight(ticket: VNextProposalBundleRepairTicket, requiredContext: VNextRequiredContext,
+  preflight: (bundle: VNextProposalBundle) => readonly ProposalDiagnostic[]): VNextProposalBundleRepairTicket {
+  const standIn = vnextProposalStandIn(ticket, requiredContext);
+  return standIn === undefined ? ticket : vnextProposalStandInTicket(ticket, requiredContext, standIn, preflight(standIn.bundle));
+}
+
+/** The ticket with the preflight a saved one carried, re-derived from the
+ * ticket's own diagnostics: Room proved what follows them when it sent that
+ * round. A saved ticket that does not begin with them adds nothing, and the
+ * comparison that follows fails. */
+export function vnextProposalTicketWithSavedPreflight(ticket: VNextProposalBundleRepairTicket, saved: VNextProposalBundleRepairTicket): VNextProposalBundleRepairTicket {
+  if (!STAND_IN_VALIDATION_CODES.includes(ticket.validationCode) || saved.diagnostics.length <= ticket.diagnostics.length
+    || !sameCanonical(saved.diagnostics.slice(0, ticket.diagnostics.length), ticket.diagnostics)) return ticket;
+  return withAppendedDiagnostics(ticket, saved.diagnostics.slice(ticket.diagnostics.length));
+}
+
+function withAppendedDiagnostics(ticket: VNextProposalBundleRepairTicket, appended: readonly ProposalDiagnostic[]): VNextProposalBundleRepairTicket {
+  if (appended.length === 0) return ticket;
+  const { ticketHash: _ticketHash, ...body } = ticket;
+  const next = canonicalClone({ ...body, issues: [...ticket.issues, ...appended.map(detail => detail.constraint)],
+    diagnostics: [...ticket.diagnostics, ...appended] }) as Omit<VNextProposalBundleRepairTicket, "ticketHash">;
+  return deepFreeze({ ...next, ticketHash: canonicalHash(next) });
 }
 
 function readProposalArguments(value: unknown, _toolName: string): { raw: unknown } {
@@ -1385,10 +1527,21 @@ export function assertRepairTicket(ticket: unknown, contextHash: string, require
         || !sameCanonical(ticket.diagnostics.slice(0, derived.length), derived)
         || ticket.diagnostics.some(detail => !isPlainRecord(detail) || typeof detail.constraint !== "string")
         || !sameCanonical(ticket.diagnostics.map(detail => detail.constraint), ticket.issues)) return invalid();
-    } else if (proven.kind !== "locallyRejected" || proven.bundleHash !== ticket.bundleHash
-      || !sameCanonical(proven.draft, ticket.draft) || proven.argumentSource !== ticket.argumentSource
-      || proven.validationCode !== ticket.validationCode || !sameCanonical(proven.issues, ticket.issues)
-      || !sameCanonical(vnextProposalModelRepairDiagnostics(proven.draft, proven.diagnostics, proven.originalArguments), ticket.diagnostics)) return invalid();
+    } else {
+      // ADR 0138: what Room's preflight of the rest found follows the draft's
+      // own diagnostics, each at a row of the reply; only Room proves those.
+      if (proven.kind !== "locallyRejected" || !Array.isArray(ticket.diagnostics)) return invalid();
+      const derived = vnextProposalModelRepairDiagnostics(proven.draft, proven.diagnostics, proven.originalArguments);
+      const appended = ticket.diagnostics.slice(derived.length) as unknown[];
+      if (proven.bundleHash !== ticket.bundleHash
+        || !sameCanonical(proven.draft, ticket.draft) || proven.argumentSource !== ticket.argumentSource
+        || proven.validationCode !== ticket.validationCode
+        || !sameCanonical(ticket.diagnostics.slice(0, derived.length), derived)
+        || (appended.length > 0 && !STAND_IN_VALIDATION_CODES.includes(proven.validationCode))
+        || appended.some(detail => !isPlainRecord(detail) || typeof detail.constraint !== "string" || detail.pathBase !== "arguments"
+          || !Array.isArray(detail.path) || !FILLING_ROW_CONTAINERS.includes(detail.path[0] as never))
+        || !sameCanonical([...proven.issues, ...appended.map(detail => (detail as ProposalDiagnostic).constraint)], ticket.issues)) return invalid();
+    }
   } catch { return invalid(); }
 }
 

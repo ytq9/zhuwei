@@ -10,7 +10,7 @@ import { assertRepairTicket,
   parseVNextProposalOfferResponse, vnextProposalDraftIsEmpty, vnextProposalHasExecutionRepairBudget, vnextProposalHasThirdCallBudget,
   vnextProposalUnparsedArguments, createVNextUnparsedRevisionTicket, createRepairTicket,
   vnextProposalAmendmentRequest, VNextProposalBundleOutputError, vnextProposalRevisionCandidate, createVNextProposalRevisionModelInput,
-  createVNextAuthorityRevisionTicket, vnextProposalCalledSelectionTool, evaluateVNextProposalRevisionResponse,
+  createVNextAuthorityRevisionTicket, vnextProposalCalledSelectionTool, evaluateVNextProposalRevisionResponse, vnextProposalTicketWithSavedPreflight,
   vnextProposalCorrectionAdmitted, vnextProposalDraftReply } from "../kp/vnext/proposal-provider";
 import { authorityProposalDiagnostics, type ProposalDiagnostic } from "../kp/vnext/proposal-diagnostics";
 import type { VNextProposalBundle } from "../kp/vnext/proposal-schema";
@@ -88,7 +88,11 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
   /** The question this action asked the player and the answer (ADR 0081):
    * before it, the selection may offer the question tool; after it, every
    * task carries the answer. */
-  retryQuestion?: VNextRetryQuestion): void {
+  retryQuestion?: VNextRetryQuestion,
+  /** SPEC 0016 §7.2 (ADR 0138): the ticket of a locally refused draft with
+   * what Room's preflight of the rest finds now, for the round being sent.
+   * Without it nothing is added. */
+  preflightLocalTicket?: (ticket: VNextProposalBundleRepairTicket) => VNextProposalBundleRepairTicket): void {
   const invalid = (): never => { throw new TypeError("PROPOSAL_REPAIR_EXHAUSTED"); };
   if (!isVNextInvocationOrdinal(input.ordinal) || input.npcReply !== undefined || input.npcReview !== undefined) invalid();
   if (storyBinding !== undefined && !storyContextBindingMatches(requiredContext, storyBinding)) invalid();
@@ -211,6 +215,10 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
         || !sameCanonical(createVNextAuthorityRevisionTicket(reply, requiredContext, loaded, terminalKinds, saved.diagnostics, npcRefs, knowledgeRefs, round), saved)) return invalid();
       return saved;
     };
+    /** A locally refused draft's ticket: preflighted now for the round being
+     * sent, or with the preflight Room proved when it sent an earlier one. */
+    const localTicket = (ticket: VNextProposalBundleRepairTicket, ordinal: number): VNextProposalBundleRepairTicket =>
+      ordinal === input.ordinal ? preflightLocalTicket?.(ticket) ?? ticket : vnextProposalTicketWithSavedPreflight(ticket, savedTicket(ordinal));
     const chain: VNextProposalBundleRepairTicket[] = [];
     for (let ordinal = fillOrdinal + 1; ordinal <= input.ordinal; ordinal += 1) {
       const reply = response(ordinal - 1);
@@ -229,14 +237,14 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
           if (!(vnextProposalDraftIsEmpty(draft) ? vnextProposalHasThirdCallBudget(capabilities)
             : vnextProposalHasExecutionRepairBudget(draft, capabilities))) return invalid();
           expected = candidate.kind === "accepted" ? rulesTicket(reply, candidate.bundle, candidate.bundleHash, round, ordinal, capabilities)
-            : createRepairTicket(candidate, requiredContext, capabilities, terminalKinds, npcRefs, knowledgeRefs, round);
+            : localTicket(createRepairTicket(candidate, requiredContext, capabilities, terminalKinds, npcRefs, knowledgeRefs, round), ordinal);
         }
       } else {
         // A correction reply, read against the ticket it answered: the next
         // round's ticket, or an accepted draft whose Rules rejection is the
         // ticket. A re-emit's reply is read as a fresh filling by the same call.
         const evaluated = evaluateVNextProposalRevisionResponse(reply, previous, requiredContext, chain.slice(0, -1));
-        if (evaluated.result.kind === "repairRequired") expected = evaluated.result.repairTicket;
+        if (evaluated.result.kind === "repairRequired") expected = localTicket(evaluated.result.repairTicket, ordinal);
         else if (evaluated.result.kind === "locallyAccepted") {
           const accepted = evaluated.synthesis === undefined ? reply : vnextProposalDraftReply(evaluated.synthesis.draft);
           // Inherit only the ticket already re-proved in this loop, never the

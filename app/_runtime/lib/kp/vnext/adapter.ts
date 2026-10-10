@@ -13,7 +13,8 @@ import { assembleProviderInvocation, INITIAL_REPAIR_LEDGER } from "./invocation/
 import { invokeVNextProposalOffer, invokeSubmitKpProposalBundleFirstPass, invokeCorrectKpProposalBundle,
   vnextProposalHasExecutionRepairBudget, vnextProposalHasThirdCallBudget, createVNextAuthorityRevisionTicket,
   vnextProposalCorrectionAdmitted, vnextProposalDraftReply, VNEXT_PROPOSAL_CORRECTION_ROUNDS,
-  type VNextProposalBundleRepairTicket, vnextProposalDraftIsEmpty, vnextProposalTicketIsEmptyDraft } from "./proposal-provider";
+  type VNextProposalBundleRepairTicket, vnextProposalDraftIsEmpty, vnextProposalTicketIsEmptyDraft,
+  vnextProposalStandIn, vnextProposalStandInTicket } from "./proposal-provider";
 import { VNEXT_ALWAYS_OFFERED_TERMINAL_KINDS, type VNextProposalBundle } from "./proposal-schema";
 import { vnextProposalCapabilityForEntry, type VNextProposalCapabilityId } from "./proposal-capabilities";
 import type { VNextRequiredContext } from "./required-context";
@@ -75,6 +76,10 @@ export function createVNextKpAdapter(options: Readonly<{
    * directory, and returns the frozen context with them (ADR 0051). */
   recallKnowledge?: (preparedActionId: string, knowledgeRefs: readonly string[]) => Promise<
     { kind: "ready"; context: VNextRequiredContext } | { kind: "rejected"; code: string }>;
+  /** Room preflights the rest of a locally refused filling before its ticket
+   * is sent, and proves that ticket again when the round begins (ADR 0138). */
+  preflightStandIn?: (preparedActionId: string, bundle: VNextProposalBundle) => Promise<
+    { kind: "ready"; diagnostics: readonly ProposalDiagnostic[] } | { kind: "rejected"; code: string }>;
   onInvocation?: (event: Readonly<Record<string, unknown>>) => void;
 }>): KpAdapterCapability {
   const { profile, workflowHash } = vnextKpConfiguration(options.modelId ?? VNEXT_KP_PROFILE.modelId);
@@ -301,7 +306,16 @@ export function createVNextKpAdapter(options: Readonly<{
           catch { throw vnextProposalFailure("CONTEXT_INSUFFICIENT"); }
           return (await boundInvocation(at, undefined, ticket)).run(profile.modelId, input);
         };
-        let pending: VNextProposalBundleRepairTicket | undefined = result.kind === "repairRequired" ? result.repairTicket : undefined;
+        // SPEC 0016 §7.2 (ADR 0138): the ticket of a locally refused draft
+        // also carries what lowering and Rules find in the rest of it.
+        const preflighted = async (ticket: VNextProposalBundleRepairTicket): Promise<VNextProposalBundleRepairTicket> => {
+          const standIn = options.preflightStandIn === undefined ? undefined : vnextProposalStandIn(ticket, requiredContext);
+          if (standIn === undefined) return ticket;
+          const found = await options.preflightStandIn!(request.preparedActionId, standIn.bundle);
+          if (found.kind !== "ready") throw vnextProposalFailure(found.code);
+          return vnextProposalStandInTicket(ticket, requiredContext, standIn, found.diagnostics);
+        };
+        let pending: VNextProposalBundleRepairTicket | undefined = result.kind === "repairRequired" ? await preflighted(result.repairTicket) : undefined;
         let accepted: { bundle: VNextProposalBundle; bundleHash: string; reply: unknown } | undefined =
           result.kind === "locallyAccepted" ? { bundle: result.bundle, bundleHash: result.bundleHash, reply: responses.get(first - 1) } : undefined;
         // Each accepted draft the chain reaches must be the next one Rules
@@ -326,7 +340,11 @@ export function createVNextKpAdapter(options: Readonly<{
             ordinal += 1;
             if (corrected.result.kind === "rejected") throw vnextProposalFailure(corrected.result.code, false, undefined,
               { issues: corrected.result.issues, diagnostics: corrected.result.diagnostics });
-            if (corrected.result.kind === "repairRequired") { pending = corrected.result.repairTicket; continue; }
+            if (corrected.result.kind === "repairRequired") {
+              pending = await preflighted(corrected.result.repairTicket);
+              if (!vnextProposalCorrectionAdmitted([...chain, pending])) exhausted(pending.diagnostics);
+              continue;
+            }
             pending = undefined;
             accepted = { bundle: corrected.result.bundle, bundleHash: corrected.result.bundleHash,
               reply: corrected.synthesis === undefined ? responses.get(at) : vnextProposalDraftReply(corrected.synthesis.draft) };
