@@ -79,6 +79,25 @@ test("a piece put back that joins a stack is told to a Viewer seeing both stacks
   assert.ok([taken, CONTENTS].every(ref => told[0].basisRefs.includes(ref)), "the told move rests on both stacks");
 });
 
+// SPEC 0016 §8.3: one piece set down from a held stack is one move too. The
+// stack on the floor also carries its new state; told once, the move keeps
+// it. A live put-back beside a set-down was told "放置在场景中" twice.
+test("a piece set down from a held stack is told to a Viewer seeing both stacks once, with its state", () => {
+  const f = fixture();
+  const prior = f.state;
+  const result = step(f.profiles, f.state, f.input({ kind: "release", entryRef: CONTENTS, quantity: 1, sceneRef: SCENE, releaseKind: "placement" }));
+  assert.equal(result.kind, "committed", JSON.stringify(result));
+  assert.equal(result.state.campaignRuntime.itemSystem.entries[CONTENTS].quantity, 2, "the piece was split from the stack in hand");
+  const view = project(f.profiles, result.state, { kind: "player", characterId: PLAYER, principalId: PRINCIPAL, seatId: SEAT, sessionVersion: 1 },
+    { channel: "realtime", committedRange: { receiptId: result.receipt.receiptId, actorCharacterId: PLAYER, priorState: prior, events: result.events } });
+  assert.equal(view.kind, "projected", JSON.stringify(view));
+  const told = view.renderableClaims.claims.filter(claim => claim.kind === "inventoryOutcome");
+  assert.equal(told.length, 1, JSON.stringify(told));
+  const actor = told[0].displayNames[PLAYER] ?? "行动角色";
+  assert.deepEqual(told[0].narrationFacts, [`${actor}已将 1 件布条放置在场景中`, "布条的状态为 已放下"]);
+  assert.equal(told[0].state, "已放下");
+});
+
 // SPEC 0001 §16 (ADR 0136): whoever an item reaches remembers how -- out of a
 // container, up from the ground, handed over -- while it holds it loose.
 // Pieces that join one stack keep each source; putting one back where it came

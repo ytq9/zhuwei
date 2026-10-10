@@ -44,10 +44,13 @@ test("committed inventory outcomes reach authorized Viewer Claims without the in
     assert.equal(other.kind, 'projected', JSON.stringify(other));
     assert.ok(other.renderableClaims.claims.some(claim => claim.kind === 'inventoryOutcome' && claim.itemRef === releasedRef));
     if (quantity > 1) {
-      const source = actorView.renderableClaims.claims.find(claim => claim.kind === 'inventoryOutcome' && claim.itemRef === entry.entryId);
-      assert.ok(source);
-      assert.equal(source.state, undefined, 'the remaining held stack was not put down');
-      assert.equal(other.renderableClaims.claims.some(claim => claim.kind === 'inventoryOutcome' && claim.itemRef === entry.entryId), policy === 'visibility:scene-observers');
+      // SPEC 0016 §8.3: whoever sees both stacks is told the one move once,
+      // on the piece set down; the stack still held is never told as put down.
+      for (const viewer of [actorView, other]) {
+        const told = viewer.renderableClaims.claims.filter(claim => claim.kind === 'inventoryOutcome');
+        assert.deepEqual(told.map(claim => [claim.itemRef, claim.state]), [[releasedRef, '已放下']]);
+        assert.equal(told[0].narrationFacts.filter(text => text.includes('放置在场景中')).length, 1);
+      }
     }
     assertReplay(scenario, result.events, result.state);
   }

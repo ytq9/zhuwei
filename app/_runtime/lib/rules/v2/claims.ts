@@ -1749,10 +1749,12 @@ export function mergeAdjacentCombatMoves(claims: readonly RenderableClaim[], eve
 /** SPEC 0016 §8.3: a store, release or transfer that splits a stack or joins
  * another anchors the one moved quantity on each stack it touched, so a
  * Viewer who sees only one of them is still told (`inventoryOperationClaims`).
- * A Viewer who sees both is told the move once: the same event, change,
- * operation and facts merge into the first, with the basis of both. In a live
- * run on 2026-10-10 one cloth put back joined the stack in the box; the review,
- * given "将 1 件干净布条放入随身木盒" twice, rewrote the reply as two pieces. */
+ * A Viewer who sees both is told the move once: the claims of one inventory
+ * event merge into the first place, kept as the claim that carries the new
+ * state, with the facts and basis of both. Live runs on 2026-10-10 told one
+ * cloth put back as "将 1 件干净布条放入随身木盒" twice, and the review rewrote
+ * the reply as two pieces; a piece set down from a held stack was told
+ * "放置在场景中" twice, once with its new state. */
 export function mergeSameInventoryMoves(claims: readonly RenderableClaim[], events: readonly EventEnvelope[]): RenderableClaim[] {
   // A Viewer's basis keeps only granted refs; the event is in the claim's ref.
   const moves = events.flatMap(event => event.eventType === "InventoryOperationApplied" ? [`claim:${event.eventId}:inventory:`] : []);
@@ -1760,16 +1762,17 @@ export function mergeSameInventoryMoves(claims: readonly RenderableClaim[], even
   const merged: RenderableClaim[] = [];
   for (const claim of claims) {
     const move = claim.kind === "inventoryOutcome" && claim.operation !== undefined ? moves.find(prefix => claim.claimRef.startsWith(prefix)) : undefined;
-    const key = move === undefined || claim.kind !== "inventoryOutcome" ? undefined
-      : canonicalSha256({ move, change: claim.change, operation: claim.operation, sourceBefore: claim.sourceBefore ?? null,
-        characterRefs: claim.characterRefs ?? null, narrationFacts: claim.narrationFacts });
-    const at = key === undefined ? undefined : told.get(key);
+    const at = move === undefined ? undefined : told.get(move);
     if (at === undefined) {
-      if (key !== undefined) told.set(key, merged.length);
+      if (move !== undefined) told.set(move, merged.length);
       merged.push(claim);
       continue;
     }
-    merged[at] = deepFreeze({ ...merged[at]!, basisRefs: [...new Set([...merged[at]!.basisRefs, ...claim.basisRefs])] }) as RenderableClaim;
+    const earlier = merged[at]!;
+    const [kept, other] = earlier.kind === "inventoryOutcome" && earlier.state === undefined && claim.kind === "inventoryOutcome" && claim.state !== undefined
+      ? [claim, earlier] : [earlier, claim];
+    merged[at] = deepFreeze({ ...kept, basisRefs: [...new Set([...kept.basisRefs, ...other.basisRefs])],
+      narrationFacts: [...new Set([...kept.narrationFacts, ...other.narrationFacts])] }) as RenderableClaim;
   }
   return merged;
 }
