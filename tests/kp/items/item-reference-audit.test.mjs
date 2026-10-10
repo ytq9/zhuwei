@@ -194,21 +194,21 @@ const reply = value => ({ choices: [{ finish_reason: "tool_calls", message: { to
  * lowered and preflighted by Rules exactly as Room does before any dice. What
  * comes back is what the revision is told: the diagnostics of its ticket,
  * as the correction prompt sends them, in full references. */
-function checkFilling(w, frozen, document) {
+function checkFilling(w, frozen, document, capabilities = ["inventoryOperation"]) {
   const rows = new Set((frozen.references.possessionRecall ?? []).map(row => row.entryRef));
   const bound = bindProposalWire(structuredClone(document), frozen);
   const named = [...new Set(JSON.stringify(bound).match(/item-entry:[^"]+/g) ?? [])].filter(ref => rows.has(ref));
   const context = named.length === 0 ? frozen : withRecalledKnowledge(frozen, recallKnowledge(frozen, named, w.state));
   const told = ticket => bindProposalWire(JSON.parse(vnextProposalCorrectionPrompt(ticket, context)).diagnostics, context);
-  const candidate = vnextProposalRevisionCandidate(reply(document), ["inventoryOperation"], [], context, []);
-  if (candidate.kind !== "accepted") return told(createRepairTicket(candidate, context, ["inventoryOperation"], []));
+  const candidate = vnextProposalRevisionCandidate(reply(document), capabilities, [], context, []);
+  if (candidate.kind !== "accepted") return told(createRepairTicket(candidate, context, capabilities, []));
   const rootActionId = context.binding.rootActionId;
   const lowered = VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE.lowerProposal({ proposal: candidate.bundle, preparedActionId: `prepared:${rootActionId}`,
     rootActionId, actorCharacterId: ACTOR, principalId: "principal:probe-actor", requiredContext: context, profiles: w.f.profiles, state: w.state });
   const refused = lowered.kind === "rejected" ? authorityProposalDiagnostics(lowered.diagnostics ?? [])
     : (outcome => outcome.kind === "committed" ? [] : vnextRulesRevisionDiagnostics(outcome, { bundle: candidate.bundle, rulesInput: lowered.input }))(
       w.f.runtime.step(w.f.profiles, w.state, lowered.input));
-  return refused.length === 0 ? [] : told(createVNextAuthorityRevisionTicket(reply(document), context, ["inventoryOperation"], [], refused));
+  return refused.length === 0 ? [] : told(createVNextAuthorityRevisionTicket(reply(document), context, capabilities, [], refused));
 }
 const at = (document, path) => path.reduce((value, key) => value?.[key], document);
 const put = (document, path, value) => { const copy = structuredClone(document); at(copy, path.slice(0, -1))[path.at(-1)] = value; return copy; };
@@ -241,7 +241,16 @@ const FAULTS = [
  * Live, a put-back citing the piece it returns as its basis was refused
  * once the piece had joined the stack inside (the closing step still read
  * the merged-away piece). */
+/** A world step of the same act describing the put-back, as a live filling
+ * wrote it: it cites the returned piece, which by then has joined the stack. */
+const describingWorldStep = (containerRef, piece) => ({ basisRefs: [containerRef, piece, ACTOR], directTargetRefs: [containerRef], instrumentRefs: [],
+  abilityRef: { kind: "none" }, approach: { kind: "none" }, commonAction: { kind: "none" }, intent: "把刚才拿的那块布放回原处。",
+  method: "把布松手放回去。", otherTargetRefs: [piece], outcomeBinding: "always",
+  result: { outcomeCode: "returned", summary: "布回到了原处。", entries: [{ recordKind: "sensoryEvidence", observerRef: ACTOR,
+    subjectRef: containerRef, sense: "sight", evidence: "布又在原处了。", basisRefs: [containerRef, piece] }] } });
 const CONTROLS = [
+  { id: "put-back-with-a-describing-world-step", ops: s => [transfer("putIn", E.barrel, s.loose, { access: "alreadyOpen", after: "leaveAsIs" })],
+    basis: s => [ACTOR, E.barrel, s.loose], world: s => [describingWorldStep(E.barrel, s.loose)] },
   { id: "put-back-citing-the-piece", ops: s => [transfer("putIn", E.box, s.loose)], basis: s => [ACTOR, E.box, s.loose] },
   { id: "put-back-and-close", ops: s => [transfer("putIn", E.box, s.loose)], basis: () => [ACTOR, E.box] },
   { id: "store-a-key-from-the-floor", ops: () => [{ kind: "store", entryRef: E.keyGround, quantity: 1, containerRef: E.pouch }], basis: () => [ACTOR] },
@@ -289,7 +298,8 @@ function formGaps() {
   for (const control of CONTROLS) {
     const document = filling(control.ops(s));
     for (const row of document.steps.inventoryOperation) row.basisRefs = control.basis(s);
-    const refused = checkFilling(w, frozen, document);
+    if (control.world) document.steps.worldInteraction = control.world(s);
+    const refused = checkFilling(w, frozen, document, control.world ? ["inventoryOperation", "worldInteraction"] : ["inventoryOperation"]);
     if (refused.length > 0) gaps.push(`control:${control.id}:refused:${[...new Set(refused.map(d => d.constraint))].join("+")}`);
   }
   // One round: faults filled together are each reported.

@@ -382,7 +382,7 @@ function settleWorldInteraction(
   if (accumulator.worldCursor === undefined) {
     const faces = request === null ? new Map<string,readonly number[]>() : worldInteractionFaces(request,rolls);
     if (faces === undefined) return rejected("invalidRulesInput", "World interaction faces do not match the frozen dice.");
-    const validation = validatePlanAgainstState(profiles, accumulator.state, plan.actorCharacterId,plan,rootActionId);
+    const validation = validatePlanAgainstState(profiles, accumulator.state, plan.actorCharacterId,plan,rootActionId,actRemovedRefs(accumulator,plan));
     if(validation!==undefined)return validation;
     const effective = worldInteractionEffectiveCheck(accumulator.state,plan);
     if (effective.kind === "rejected") return effective;
@@ -406,7 +406,7 @@ function settleWorldInteraction(
     // branch; their Perception rolls after the act decide whether they find
     // the hider (SPEC 0004 §4, ADR 0097).
     const noticerRefs=noticed.filter(ref=>accumulator.state.entities[ref]?.kind==="npc").sort();
-    const branchValidation=validateBranchAgainstState(accumulator.state,plan,branch,accumulator.transactionCreatedAuthorityRefs);
+    const branchValidation=validateBranchAgainstState(accumulator.state,plan,branch,accumulator.transactionCreatedAuthorityRefs,actRemovedRefs(accumulator,plan));
     if(branchValidation!==undefined)return branchValidation;
     // SPEC 0004 §4: a prone actor outside an encounter stands up to act.
     // SPEC 0014 §4 (ADR 0092): when standing up is the act itself, its own
@@ -1007,11 +1007,12 @@ function resolveWorldInteraction(
   if (options?.accumulator === undefined && !concealmentEvidencePolicyMatches(plan)) {
     return rejected("invalidRulesInput", "The primary evidence source is outside this frozen failure path.");
   }
-  const validation = validatePlanAgainstState(profiles, accumulator.state, input.actorCharacterId, plan, input.rootActionId);
+  const validation = validatePlanAgainstState(profiles, accumulator.state, input.actorCharacterId, plan, input.rootActionId, actRemovedRefs(accumulator, plan));
   if (validation !== undefined) return validation;
-  const successValidation = validateBranchAgainstState(accumulator.state, plan, plan.branches.success, accumulator.transactionCreatedAuthorityRefs);
+  const removed = actRemovedRefs(accumulator, plan);
+  const successValidation = validateBranchAgainstState(accumulator.state, plan, plan.branches.success, accumulator.transactionCreatedAuthorityRefs, removed);
   if (successValidation !== undefined) return successValidation;
-  const failureValidation = validateBranchAgainstState(accumulator.state, plan, plan.branches.failure, accumulator.transactionCreatedAuthorityRefs);
+  const failureValidation = validateBranchAgainstState(accumulator.state, plan, plan.branches.failure, accumulator.transactionCreatedAuthorityRefs, removed);
   if (failureValidation !== undefined) return failureValidation;
 
   // SPEC 0004 §4 (ADR 0097): an action of its own also freezes the
@@ -3110,12 +3111,27 @@ function atomicCompileRejected(message: string): Extract<AtomicCompileResult, { 
   return { kind: "rejected", result: rejected("invalidRulesInput", message) };
 }
 
+/** SPEC 0016 §7.3: the records this world step reads or cites that an earlier
+ * step of the same act removed -- a piece put back into a stack it joined.
+ * That step read them; a later step citing one, as a live put-back's own
+ * world step did, has nothing stale to read and nothing missing to rest on. */
+function actRemovedRefs(accumulator: Pick<TransitionAccumulator, "source" | "state">, plan: WorldInteractionResolutionPlan): ReadonlySet<string> {
+  const source = accumulator.source;
+  if (source === undefined || source === accumulator.state) return new Set();
+  const evidenceBases = [plan.branches.success, plan.branches.failure].flatMap(branch => branch?.sensoryEvidence.flatMap(evidence => evidence.basisRefs) ?? []);
+  return new Set([...plan.readSet.map(binding => binding.ref), ...plan.basisRefs, ...plan.targetRefs, ...evidenceBases]
+    .filter(ref => authorityRefExists(source, ref) && !authorityRefExists(accumulator.state, ref)));
+}
+
 function validatePlanAgainstState(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
   actorCharacterId: string,
   plan: WorldInteractionResolutionPlan,
   rootActionId: string,
+  /** Removed by an earlier step of this act: may be read, cited or named
+   * among the other targets, never be the direct target or an instrument. */
+  actRemoved: ReadonlySet<string> = new Set(),
 ): ReturnType<typeof rejected> | undefined {
   const socialIssue = socialInteractionIssue(state, profiles, rootActionId, plan);
   if (socialIssue) return rejected("privateOrUnknownReference", socialIssue);
@@ -3128,7 +3144,7 @@ function validatePlanAgainstState(
     || state.scenes[plan.sceneRef] === undefined) {
     return rejected("privateOrUnknownReference", "The world interaction actor or scene is unavailable.");
   }
-  if (!authorityReadSetMatches(state, plan.readSet)) {
+  if (!authorityReadSetMatches(state, plan.readSet, actRemoved)) {
     return rejected("causalFrontierConflict", "The world interaction read set changed after prepare.");
   }
   if (plan.observation !== undefined || plan.directTargetRefs.includes(plan.sceneRef)) {
@@ -3155,8 +3171,8 @@ function validatePlanAgainstState(
   if (conditionPermission !== undefined) return conditionPermission;
   const effective = worldInteractionEffectiveCheck(state, plan);
   if (effective.kind === "rejected") return effective;
-  if (![...plan.targetRefs, ...plan.directTargetRefs, ...plan.instrumentRefs, ...plan.basisRefs]
-    .every((ref) => authorityRefExists(state, ref))) {
+  if (![...plan.directTargetRefs, ...plan.instrumentRefs].every((ref) => authorityRefExists(state, ref))
+    || ![...plan.targetRefs, ...plan.basisRefs].every((ref) => actRemoved.has(ref) || authorityRefExists(state, ref))) {
     return rejected("privateOrUnknownReference", "The world interaction cites an unavailable authority ref.");
   }
   if (!plan.directTargetRefs.every((ref) =>
@@ -3287,6 +3303,9 @@ function validateBranchAgainstState(
   plan: WorldInteractionResolutionPlan,
   branch: WorldInteractionBranch,
   createdRefs: ReadonlySet<string> = new Set(),
+  /** Removed by an earlier step of this act (`actRemovedRefs`): evidence may
+   * cite one as its basis, never observe it as its subject. */
+  actRemoved: ReadonlySet<string> = new Set(),
 ): ReturnType<typeof rejected> | undefined {
   const revised = new Set<string>();
   const readRefs = new Set(plan.readSet.map(({ ref }) => ref));
@@ -3432,7 +3451,7 @@ function validateBranchAgainstState(
     if (observer?.tenureStatus !== "active"
       || observer.sceneId !== plan.sceneRef
       || (evidence.subjectRef !== null && !authorityRefExists(state, evidence.subjectRef))
-      || evidence.basisRefs.some((ref) => !authorityRefExists(state, ref))) {
+      || evidence.basisRefs.some((ref) => !actRemoved.has(ref) && !authorityRefExists(state, ref))) {
       return rejected("privateOrUnknownReference", "Frozen sensory evidence cites unavailable authority.");
     }
     // An observation target does not grant other hidden subjects. Ambient
