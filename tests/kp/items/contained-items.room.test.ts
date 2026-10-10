@@ -131,10 +131,10 @@ it('a vague put-back reads the listed carried item when a revision or the select
       wire => transfer('putIn', round++ === 0 ? cloth : loose.entryId)(wire));
     const revised = calls.slice(before);
     expect(revised).toHaveLength(3);
-    // ADR 0134: the row of the piece just taken out says which container.
+    // ADR 0136: the row of the piece just taken out says how it came to hand.
     const sentRows = JSON.parse(revised[0].messages[0].content.match(/\{"requiredContext":.*$/m)[0]).requiredContext.references.possessionRecall.requestable;
-    expect(sentRows.filter((row: Data) => row.takenFrom !== undefined)).toHaveLength(1);
-    expect(sentRows.find((row: Data) => row.takenFrom !== undefined)).toMatchObject({ label: '布条', takenFrom: { quantity: 1 } });
+    expect(sentRows.filter((row: Data) => row.acquiredFrom !== undefined)).toHaveLength(1);
+    expect(sentRows.find((row: Data) => row.acquiredFrom !== undefined)).toMatchObject({ label: '布条', acquiredFrom: [{ from: 'container', quantity: 1 }] });
     expect(JSON.stringify(revised[2].messages)).toContain('container-transfer:put-in-needs-loose-held-source');
     // What the model was sent is unchanged by the read: the same context body.
     expect(revised[2].messages[0].content).toBe(revised[1].messages[0].content);

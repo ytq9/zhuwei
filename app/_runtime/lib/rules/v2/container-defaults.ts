@@ -1,8 +1,8 @@
 import type { RuntimeProfileManifest } from "../profiles/types";
 import type { ItemDefinitionV1, InitialItemEntryInput } from "./items";
 
-export const CONTAINER_EVENT_PROFILE_ID = "room-world-events-vnext-stage3-v7";
-export const CONTAINER_RUNTIME_PROFILE_ID = "runtime-srd51-2014-authoritative-vnext-stage3-v9";
+export const CONTAINER_EVENT_PROFILE_ID = "room-world-events-vnext-stage3-v8";
+export const CONTAINER_RUNTIME_PROFILE_ID = "runtime-srd51-2014-authoritative-vnext-stage3-v10";
 /** Versioned definition identities, not labels or newly edited legacy catalog
  * data. Existing catalogs and their replay checksums remain unchanged. */
 export const UNRESTRICTED_STANDARD_CONTAINER_REFS = Object.freeze([

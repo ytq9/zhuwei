@@ -48,8 +48,8 @@ const COMBAT_ENTRY_COLLECTIONS: readonly CombatEntryCollection[] = [
   "definitions", "effects", "encounters", "pendingInputs", "randomnessResolutions", "scenes",
 ];
 const ITEM_SYSTEM_COLLECTIONS: readonly ItemSystemCollection[] = ["definitions", "entries", "assemblies"];
-const ITEM_AUTHORITY_COLLECTIONS: readonly ItemAuthorityCollection[] = ["uniqueItems", "identifications", "containerMemories", "containerOrigins", "containerAuthorship", "takenFrom"];
-const nestedItemAuthorityCollection = (collection: ItemAuthorityCollection) => ["identifications", "containerMemories", "takenFrom"].includes(collection);
+const ITEM_AUTHORITY_COLLECTIONS: readonly ItemAuthorityCollection[] = ["uniqueItems", "identifications", "containerMemories", "containerOrigins", "containerAuthorship", "acquiredFrom"];
+const nestedItemAuthorityCollection = (collection: ItemAuthorityCollection) => ["identifications", "containerMemories", "acquiredFrom"].includes(collection);
 
 function isItemAuthorityRestore(value: JsonRecord): boolean {
   if (!exact(value, ["kind", "collection", "observerRef", "entryId", "before"])

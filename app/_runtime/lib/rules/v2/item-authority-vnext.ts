@@ -7,7 +7,7 @@ import { canonicalSha256 } from "../profiles/canonical";
 import type { AuthoritativeWorldState } from "./model";
 import type { ItemDefinitionV1, ItemEntryV1 } from "./items";
 import { containedItemAccessible } from "./item-containment";
-import { isContainerMemory, isTakenFromContainer, type ContainerMemory, type ContainerOrigin, type TakenFromContainer } from "./container-knowledge";
+import { acquiredPartsWithin, isAcquiredParts, isContainerMemory, type AcquiredPart, type ContainerMemory, type ContainerOrigin } from "./container-knowledge";
 
 export type ItemUniquenessBoundPayload = {
   basisRef: string;
@@ -28,8 +28,8 @@ export type VNextItemAuthority = {
   containerMemories?: Record<string, Record<string, ContainerMemory>>;
   containerOrigins?: Record<string, ContainerOrigin>;
   containerAuthorship?: Record<string, string>;
-  /** ADR 0134: by taker, then by the item it holds loose. */
-  takenFrom?: Record<string, Record<string, TakenFromContainer>>;
+  /** ADR 0136: by holder, then by the stack it holds loose. */
+  acquiredFrom?: Record<string, Record<string, AcquiredPart[]>>;
 };
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
 const ref = (value: unknown): value is string => typeof value === "string" && /^\S+$/u.test(value) && value.length <= 4000;
@@ -46,7 +46,7 @@ export function isItemIdentifiedPayload(value: unknown): value is ItemIdentified
 }
 export function isVNextItemAuthority(value: unknown): value is VNextItemAuthority {
   return record(value) && exact(value, ["schema", "uniqueItems", "identifications",
-    ...["containerMemories", "containerOrigins", "containerAuthorship", "takenFrom"].filter(key => Object.hasOwn(value, key))])
+    ...["containerMemories", "containerOrigins", "containerAuthorship", "acquiredFrom"].filter(key => Object.hasOwn(value, key))])
     && value.schema === "zhuwei.vnext-item-authority/v1" && record(value.uniqueItems) && record(value.identifications)
     && Object.entries(value.uniqueItems).every(([key, payload]) => isItemUniquenessBoundPayload(payload) && key === payload.basisRef)
     && Object.entries(value.identifications).every(([characterId, entries]) => record(entries)
@@ -57,8 +57,8 @@ export function isVNextItemAuthority(value: unknown): value is VNextItemAuthorit
     && (value.containerOrigins === undefined || record(value.containerOrigins) && Object.values(value.containerOrigins).every(origin => record(origin)
       && exact(origin, ["sourceRef", "eventSeq"]) && ref(origin.sourceRef) && typeof origin.eventSeq === "string" && /^\d+$/.test(origin.eventSeq)))
     && (value.containerAuthorship === undefined || record(value.containerAuthorship) && Object.values(value.containerAuthorship).every(ref))
-    && (value.takenFrom === undefined || record(value.takenFrom) && Object.entries(value.takenFrom).every(([observer, taken]) => record(taken)
-      && Object.values(taken).every(origin => isTakenFromContainer(origin) && origin.observerRef === observer)));
+    && (value.acquiredFrom === undefined || record(value.acquiredFrom) && Object.values(value.acquiredFrom).every(held => record(held)
+      && Object.values(held).every(isAcquiredParts)));
 }
 export function emptyVNextItemAuthority(): VNextItemAuthority {
   return { schema: "zhuwei.vnext-item-authority/v1", uniqueItems: {}, identifications: {} };
@@ -87,12 +87,16 @@ export function authorityItemComposite(state: AuthoritativeWorldState, entryRef:
   const containerMemories = Object.values(state.vNextItemAuthority?.containerMemories ?? {}).flatMap(memories => memories[entryRef] ? [memories[entryRef]] : []);
   const containerOrigin = state.vNextItemAuthority?.containerOrigins?.[entryRef];
   const containerAuthorship = state.vNextItemAuthority?.containerAuthorship?.[entryRef];
-  const takenFrom = Object.keys(state.vNextItemAuthority?.takenFrom ?? {}).sort()
-    .flatMap(observer => { const origin = state.vNextItemAuthority!.takenFrom![observer]![entryRef]; return origin ? [origin] : []; });
+  // ADR 0136: what its holder remembers of how the stack came to hand, while
+  // it holds the stack loose, never more pieces than the stack has.
+  const remembered = entry.disposition === "held" && entry.holderRef !== null && entry.containerRef === undefined
+    ? state.vNextItemAuthority?.acquiredFrom?.[entry.holderRef]?.[entryRef] : undefined;
+  const acquiredFrom = remembered === undefined ? []
+    : acquiredPartsWithin(remembered, entry.quantity).map(part => ({ observerRef: entry.holderRef!, ...part }));
   if (uniqueIdentity === undefined && identifications.length === 0 && containment.length === 0
-    && containerMemories.length === 0 && containerOrigin === undefined && containerAuthorship === undefined && takenFrom.length === 0) return entry;
+    && containerMemories.length === 0 && containerOrigin === undefined && containerAuthorship === undefined && acquiredFrom.length === 0) return entry;
   return { ...entry, ...(uniqueIdentity === undefined ? {} : { uniqueIdentity }),
-    ...(containerMemories.length ? { containerMemories } : {}), ...(takenFrom.length ? { takenFrom } : {}),
+    ...(containerMemories.length ? { containerMemories } : {}), ...(acquiredFrom.length ? { acquiredFrom } : {}),
     ...(containerOrigin ? { containerOrigin } : {}), ...(containerAuthorship ? { containerAuthorship } : {}),
     ...(containment.length === 0 ? {} : { containment }),
     ...(identifications.length === 0 ? {} : { identifications: Object.fromEntries(identifications.sort(([left], [right]) => String(left).localeCompare(String(right)))) }) };

@@ -22,9 +22,13 @@ export type ContainerMemory = {
   entries: RememberedContainerItem[];
 };
 export type ContainerOrigin = { sourceRef: string; eventSeq: string };
-/** ADR 0134: what an actor remembers of an item it took out of a container
- * and still holds loose -- which container, how many, and when. */
-export type TakenFromContainer = { observerRef: string; containerRef: string; quantity: number; eventSeq: string };
+/** ADR 0136: how part of a carried stack came to its holder's hands, as the
+ * holder remembers it -- out of a container, up from the ground, or from
+ * another character -- how many and when. A stack keeps a part per arrival,
+ * so pieces that joined one stack keep their sources. */
+export type AcquiredPart = { from: "container" | "ground" | "character"; ref: string; quantity: number; eventSeq: string };
+/** The newest arrivals kept per stack. */
+export const ACQUIRED_PARTS_LIMIT = 8;
 
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
 function rememberedItem(value: unknown): value is RememberedContainerItem {
@@ -41,12 +45,25 @@ function rememberedItem(value: unknown): value is RememberedContainerItem {
     && (value.objectState === undefined || ["open", "closed", "locked"].includes(String(value.objectState)));
 }
 
-export function isTakenFromContainer(value: unknown): value is TakenFromContainer {
-  return record(value) && Object.keys(value).sort().join() === "containerRef,eventSeq,observerRef,quantity"
-    && typeof value.observerRef === "string" && /^\S+$/.test(value.observerRef)
-    && typeof value.containerRef === "string" && /^\S+$/.test(value.containerRef)
-    && Number.isSafeInteger(value.quantity) && Number(value.quantity) > 0
-    && typeof value.eventSeq === "string" && /^\d+$/.test(value.eventSeq);
+export function isAcquiredParts(value: unknown): value is AcquiredPart[] {
+  return Array.isArray(value) && value.length > 0 && value.length <= ACQUIRED_PARTS_LIMIT && value.every(part => record(part)
+    && Object.keys(part).sort().join() === "eventSeq,from,quantity,ref" && ["container", "ground", "character"].includes(String(part.from))
+    && typeof part.ref === "string" && /^\S+$/.test(part.ref) && Number.isSafeInteger(part.quantity) && Number(part.quantity) > 0
+    && typeof part.eventSeq === "string" && /^\d+$/.test(part.eventSeq));
+}
+
+/** The parts a stack of `quantity` can still hold, oldest given up first,
+ * except that pieces put into `returnedTo` are taken from what came out of
+ * it, newest first: putting "the one from the barrel" back gives up that
+ * part. Pure, so the record and every read of it agree. */
+export function acquiredPartsWithin(parts: readonly AcquiredPart[], quantity: number, returnedTo?: string): AcquiredPart[] {
+  let excess = parts.reduce((sum, part) => sum + part.quantity, 0) - quantity;
+  const kept = parts.map(part => ({ ...part }));
+  const give = (indices: readonly number[]) => { for (const index of indices) {
+    if (excess <= 0) return; const taken = Math.min(excess, kept[index]!.quantity); kept[index]!.quantity -= taken; excess -= taken; } };
+  if (returnedTo !== undefined) give(kept.flatMap((part, index) => part.from === "container" && part.ref === returnedTo ? [index] : []).reverse());
+  give(kept.map((_, index) => index));
+  return kept.filter(part => part.quantity > 0);
 }
 
 export function isContainerMemory(value: unknown): value is ContainerMemory {
@@ -129,7 +146,7 @@ export function recordContainerKnowledge(source: AuthoritativeWorldState, state:
     const p = event.payload as { actorCharacterId: string; featureId: string; toState: string };
     if (p.toState === "open") remember(state, p.actorCharacterId, p.featureId, event.eventSeq);
   } else if (event.eventType === "InventoryOperationApplied") {
-    const p = event.payload as { actorCharacterId: string; operation: { kind: string; entryRef: string; containerRef?: string; quantity?: number }; targetEntryId: string };
+    const p = event.payload as InventoryPayload;
     const prior = source.campaignRuntime.itemSystem.entries[p.operation.entryRef];
     const current = state.campaignRuntime.itemSystem.entries[p.targetEntryId];
     // Taking an unopened world/NPC container preserves its inspectable origin.
@@ -141,18 +158,19 @@ export function recordContainerKnowledge(source: AuthoritativeWorldState, state:
     }
     for (const containerRef of new Set([prior?.containerRef, p.operation.containerRef].filter((ref): ref is string => ref !== undefined)))
       remember(state, p.actorCharacterId, containerRef, event.eventSeq);
-    // ADR 0134: taking an item out of a container is remembered by the one
-    // who took it, while it stays loose in that character's hands. A later
-    // "the piece I just took out" has nothing else to tell it apart from the
-    // stack left inside.
-    if (p.operation.kind === "acquire" && prior?.containerRef !== undefined && current?.disposition === "held"
-      && current.holderRef === p.actorCharacterId && current.containerRef === undefined) {
+    // ADR 0136: whoever an item reaches remembers how -- taken out of a
+    // container, picked up, or handed over -- while it stays loose in that
+    // character's hands. "The piece I just took out", "the key I picked up"
+    // and "the rope he gave me" otherwise match every alike item.
+    const arrival = arrivalOf(source, state, p, event.eventSeq);
+    if (arrival !== undefined) {
       const metadata = state.vNextItemAuthority ??= emptyVNextItemAuthority();
-      ((metadata.takenFrom ??= {})[p.actorCharacterId] ??= {})[current.entryId] = { observerRef: p.actorCharacterId,
-        containerRef: prior.containerRef, quantity: p.operation.quantity ?? current.quantity, eventSeq: event.eventSeq };
+      const held = (metadata.acquiredFrom ??= {})[arrival.holderRef] ??= {};
+      held[arrival.entryId] = [...(held[arrival.entryId] ?? []), arrival.part].slice(-ACQUIRED_PARTS_LIMIT);
     }
-    for (const holderRef of new Set([p.actorCharacterId, prior?.holderRef, current?.holderRef]))
-      if (typeof holderRef === "string") forgetPutAwayItems(state, holderRef);
+    for (const holderRef of new Set([p.actorCharacterId, prior?.holderRef, current?.holderRef, p.operation.targetCharacterRef]))
+      if (typeof holderRef === "string") settleAcquiredParts(state, holderRef,
+        p.operation.kind === "store" && holderRef === p.actorCharacterId ? { entryRef: p.operation.entryRef, containerRef: p.operation.containerRef } : undefined);
   } else if (event.eventType === "ItemMaterialized") {
     const p = event.payload as { entry: { containerRef?: string } };
     if (p.entry.containerRef) {
@@ -162,17 +180,42 @@ export function recordContainerKnowledge(source: AuthoritativeWorldState, state:
   }
 }
 
-/** A taken item stays remembered only while its taker holds it loose: put
- * away, handed over, dropped or used up, the record goes. */
-function forgetPutAwayItems(state: AuthoritativeWorldState, holderRef: string): void {
-  const taken = state.vNextItemAuthority?.takenFrom?.[holderRef];
-  if (taken === undefined) return;
-  for (const entryId of Object.keys(taken)) {
-    const entry = state.campaignRuntime.itemSystem.entries[entryId];
-    if (entry?.disposition !== "held" || entry.holderRef !== holderRef || entry.containerRef !== undefined) delete taken[entryId];
+type InventoryPayload = { actorCharacterId: string; operation: { kind: string; entryRef: string; containerRef?: string; quantity?: number;
+  targetCharacterRef?: string }; targetEntryId: string };
+/** The arrival an inventory operation makes in someone's hands: the item now
+ * loose with the actor who took it, or with the character it was given to. */
+function arrivalOf(source: AuthoritativeWorldState, state: AuthoritativeWorldState, p: InventoryPayload, eventSeq: string) {
+  const prior = source.campaignRuntime.itemSystem.entries[p.operation.entryRef];
+  const current = state.campaignRuntime.itemSystem.entries[p.targetEntryId];
+  if (prior === undefined || current?.disposition !== "held" || current.holderRef === null || current.containerRef !== undefined) return undefined;
+  const holderRef = current.holderRef, quantity = p.operation.quantity ?? current.quantity;
+  const at = (from: AcquiredPart["from"], ref: string | null | undefined) => typeof ref !== "string" ? undefined
+    : { holderRef, entryId: current.entryId, part: { from, ref, quantity, eventSeq } as AcquiredPart };
+  let arrival: ReturnType<typeof at>;
+  if (p.operation.kind === "acquire" && holderRef === p.actorCharacterId) {
+    arrival = prior.containerRef !== undefined ? at("container", prior.containerRef)
+      : prior.disposition === "scene" ? at("ground", prior.sceneRef)
+      : prior.holderRef !== holderRef ? at("character", prior.holderRef) : undefined;
+  } else if (p.operation.kind === "transfer" && holderRef === p.operation.targetCharacterRef && prior.holderRef !== holderRef) {
+    arrival = at("character", prior.holderRef);
   }
-  if (Object.keys(taken).length === 0) delete state.vNextItemAuthority!.takenFrom![holderRef];
-  if (Object.keys(state.vNextItemAuthority!.takenFrom!).length === 0) delete state.vNextItemAuthority!.takenFrom;
+  return arrival;
+}
+
+/** A holder keeps what it remembers of a stack only while it holds the stack
+ * loose, and only as many pieces as the stack has: put away, handed over,
+ * dropped or used up, the record goes or shrinks (`acquiredPartsWithin`). */
+function settleAcquiredParts(state: AuthoritativeWorldState, holderRef: string, stored?: { entryRef: string; containerRef?: string }): void {
+  const held = state.vNextItemAuthority?.acquiredFrom?.[holderRef];
+  if (held === undefined) return;
+  for (const [entryId, parts] of Object.entries(held)) {
+    const entry = state.campaignRuntime.itemSystem.entries[entryId];
+    const kept = entry?.disposition !== "held" || entry.holderRef !== holderRef || entry.containerRef !== undefined ? []
+      : acquiredPartsWithin(parts, entry.quantity, stored?.entryRef === entryId ? stored.containerRef : undefined);
+    if (kept.length === 0) delete held[entryId]; else held[entryId] = kept;
+  }
+  if (Object.keys(held).length === 0) delete state.vNextItemAuthority!.acquiredFrom![holderRef];
+  if (Object.keys(state.vNextItemAuthority!.acquiredFrom!).length === 0) delete state.vNextItemAuthority!.acquiredFrom;
 }
 
 export function projectedClosedContainerMemories(state: AuthoritativeWorldState, characterId: string): ContainerMemory[] {

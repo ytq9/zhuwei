@@ -23,12 +23,9 @@ import { vnextRulesRevisionDiagnostics } from "../../../app/_runtime/lib/room/vn
 
 /** What the audit still finds, each a piece of later work. Close one and
  * remove it here; a new one fails the test. Found 2026-10-10 at 36e6a76d;
- * the location, candidate and Rules one-round gaps closed the same day. */
+ * the location, candidate and Rules one-round gaps (ADR 0135) and the
+ * context gaps (ADR 0136) closed the same day. */
 const KNOWN_GAPS = new Map([
-  // Context: nothing the KP is sent tells the referent apart.
-  ["context:taken-from-two-containers:merged-with-alternative", "two alike pieces taken out join one stack; the earlier one's source is overwritten"],
-  ["context:picked-up-from-floor:no-fact-for-recent", "picking an item up records nothing, so 'the key I just picked up' matches every key"],
-  ["context:handed-over-by-other:no-fact-for-giver", "an item handed over records no giver, so 'the rope he just gave me' matches every rope"],
   // One round across stages: a filling with a refused declaration is never
   // lowered or preflighted, so a fault only lowering or Rules finds in
   // another step waits for the next round. Rules refusals reach the KP only
@@ -108,24 +105,25 @@ function itemViews(context) {
     if (entry.kind !== "known") continue;
     const value = entry.value?.adjudication ?? entry.value;
     if (value?.schema === ITEM_ENTRY_SCHEMA && value.entryId === entry.entryRef) views.set(entry.entryRef, { shown: "frozen",
-      containerRef: value.containerRef ?? null, takenFrom: Array.isArray(value.takenFrom) ? value.takenFrom[0] : undefined });
+      containerRef: value.containerRef ?? null, acquired: value.acquiredFrom ?? [] });
   }
   for (const row of model.references.possessionRecall?.requestable ?? []) views.set(row.ref, { shown: "listed",
-    containerRef: row.containerRef ?? null, takenFrom: row.takenFrom });
+    containerRef: row.containerRef ?? null, acquired: row.acquiredFrom ?? [] });
   return views;
 }
 
 /** What tells the referent apart from the same-named alternatives, for the
  * cue the sentence gives. */
+const newest = view => view.acquired.reduce((latest, part) => BigInt(part.eventSeq) > latest ? BigInt(part.eventSeq) : latest, -1n);
+const cameFrom = (view, from, ref) => view.acquired.some(part => part.from === from && part.ref === ref);
 const CUES = {
   // "the one I just took out / picked up": a record of how it came to hand,
   // newer than any alternative's.
-  recent: (view, others) => view.takenFrom !== undefined && others.every(other => other.takenFrom === undefined
-    || BigInt(other.takenFrom.eventSeq) < BigInt(view.takenFrom.eventSeq)),
+  recent: (view, others) => view.acquired.length > 0 && others.every(other => newest(other) < newest(view)),
   // "the one I took from the barrel": that container named as its source.
-  source: (view, others, ref) => view.takenFrom?.containerRef === ref && others.every(other => other.takenFrom?.containerRef !== ref),
+  source: (view, others, ref) => cameFrom(view, "container", ref) && others.every(other => !cameFrom(other, "container", ref)),
   // "the one he gave me": the giver named as its source.
-  giver: (view, others, ref) => view.receivedFrom?.characterRef === ref && others.every(other => other.receivedFrom?.characterRef !== ref),
+  giver: (view, others, ref) => cameFrom(view, "character", ref) && others.every(other => !cameFrom(other, "character", ref)),
   // "the key in the pouch": where it is now.
   location: (view, others, ref) => view.containerRef === ref && others.every(other => other.containerRef !== ref),
 };
@@ -161,13 +159,13 @@ function contextGaps() {
     const { referent, others } = scenario.play(w);
     const context = freezeAuthoredProbeContext(w.f, w.state, { rootActionId: `root:audit:context:${scenario.id}`,
       focusRefs: [ACTOR], intentText: scenario.text }).context;
-    // Pieces that joined one stack cannot be told apart by anything the KP
-    // is sent; the stack has one record.
-    if (others.includes(referent)) { gaps.push(`context:${scenario.id}:merged-with-alternative`); continue; }
+    // Pieces that joined the referent's stack are not alternatives: alike
+    // pieces of one stack are one choice, and its record must say how many
+    // came from where.
     const views = itemViews(context);
     const view = views.get(referent);
     if (view === undefined) { gaps.push(`context:${scenario.id}:referent-not-reachable`); continue; }
-    const alternatives = others.map(ref => views.get(ref)).filter(other => other !== undefined);
+    const alternatives = others.filter(ref => ref !== referent).map(ref => views.get(ref)).filter(other => other !== undefined);
     if (!CUES[scenario.cue](view, alternatives, scenario.cueRef?.())) gaps.push(`context:${scenario.id}:no-fact-for-${scenario.cue}`);
   }
   return gaps;

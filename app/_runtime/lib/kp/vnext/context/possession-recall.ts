@@ -41,8 +41,8 @@ export function possessionRecallRows(state: AuthoritativeWorldState, actorRef: s
     if (entry.disposition !== "held" || entry.holderRef !== actorRef || entry.assemblyRef !== undefined
       || frozen.has(entry.entryId) || system.definitions[entry.definitionRef] === undefined
       || !containedItemAccessible(system, entry) || !authoritySpatialRefVisibleTo(state, entry.entryId, sceneRef, actorRef)) continue;
-    // Alike as the actor reads them: what it remembers taking out of a
-    // container sets an item apart (ADR 0134).
+    // Alike as the actor reads them: how a stack came to its hands sets it
+    // apart (ADR 0136).
     const composite = possessionRecordValue(state, entry.entryId, actorRef);
     if (!isPlainRecord(composite)) continue;
     const { entryId: _entryId, ...alike } = composite;
@@ -73,12 +73,13 @@ export function possessionRecallRows(state: AuthoritativeWorldState, actorRef: s
       records.push({ entryRef: ref, revisionOrHash, ...(valueHash === revisionOrHash ? {} : { valueHash }) });
     }
     if (!complete) continue;
-    const taken = state.vNextItemAuthority?.takenFrom?.[actorRef]?.[entry.entryId];
+    const own = possessionRecordValue(state, entry.entryId, actorRef);
+    const parts = isPlainRecord(own) && Array.isArray(own.acquiredFrom) ? own.acquiredFrom.flatMap(part => isPlainRecord(part)
+      ? [Object.freeze({ from: part.from as "container" | "ground" | "character", ref: String(part.ref), quantity: Number(part.quantity),
+        eventSeq: String(part.eventSeq) })] : []) : [];
     rows.push(Object.freeze({ entryRef: entry.entryId, label: system.definitions[entry.definitionRef]!.content.label,
       quantity: entry.quantity, ...(group.count === 1 ? {} : { count: group.count }), equippedSlot: entry.equippedSlot,
-      containerRef: entry.containerRef ?? null,
-      ...(taken === undefined || entry.containerRef !== undefined ? {} : { takenFrom: Object.freeze({ containerRef: taken.containerRef,
-        quantity: taken.quantity, eventSeq: taken.eventSeq }) }),
+      containerRef: entry.containerRef ?? null, ...(parts.length === 0 ? {} : { acquiredFrom: Object.freeze(parts) }),
       records: Object.freeze(records) }));
   }
   return Object.freeze({ rows: Object.freeze(rows.sort((left, right) => compareCodeUnits(left.entryRef, right.entryRef))), omitted });
@@ -113,13 +114,14 @@ export function possessionRecordValue(state: AuthoritativeWorldState, ref: strin
 }
 
 /** An item or container composite as one actor reads it: the inspection
- * memories and taking-out records are that actor's own (ADR 0130, ADR 0134).
- * Another character's are left out, and an empty list goes with them. */
+ * memories and how a stack came to hand are that actor's own (ADR 0130,
+ * ADR 0136). Another character's are left out, and an empty list of how it
+ * came to hand goes with them. */
 export function actorItemRecord(record: unknown, actorRef: string): unknown {
-  if (!isPlainRecord(record) || (!Array.isArray(record.containerMemories) && !Array.isArray(record.takenFrom))) return record;
+  if (!isPlainRecord(record) || (!Array.isArray(record.containerMemories) && !Array.isArray(record.acquiredFrom))) return record;
   const own = (list: unknown) => (Array.isArray(list) ? list : []).filter(item => isPlainRecord(item) && item.observerRef === actorRef);
   return Object.fromEntries(Object.entries(record).flatMap(([key, value]) => key === "containerMemories" ? [[key, own(value)]]
-    : key !== "takenFrom" ? [[key, value]] : own(value).length === 0 ? [] : [[key, own(value)]]));
+    : key !== "acquiredFrom" ? [[key, value]] : own(value).length === 0 ? [] : [[key, own(value)]]));
 }
 
 /** Room's read when a stage names carried items (ADR 0132): each record the

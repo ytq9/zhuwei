@@ -59,26 +59,35 @@ test("container contents survive partial withdrawal, transfer and replay", () =>
   assertReplay(f, f.events, f.state);
 });
 
-// SPEC 0001 §16 (ADR 0134): the one who takes a piece out of a container
-// remembers which container while it holds the piece loose. Both cloths share
-// a name; nothing else told "the piece I just took out" from the stack inside.
-// Putting it back or handing it over forgets it; replay rebuilds the record.
-test("a piece taken out of a container is remembered by its taker until it is put away or handed over", () => {
+// SPEC 0001 §16 (ADR 0136): whoever an item reaches remembers how -- out of a
+// container, up from the ground, handed over -- while it holds it loose.
+// Pieces that join one stack keep each source; putting one back where it came
+// from gives up that part; putting away or handing over forgets it, and the
+// recipient remembers the giver. Replay rebuilds every record.
+test("a holder remembers how each loose stack came to hand, keeps every source when pieces join, and forgets what it puts away", () => {
   const f = fixture();
+  const own = (holder, ref) => f.state.vNextItemAuthority?.acquiredFrom?.[holder]?.[ref]?.map(({ from, ref: source, quantity }) => [from, source, quantity]);
   f.act({ kind: "store", entryRef: CONTENTS, quantity: 3, containerRef: FIRST });
-  assert.equal(f.state.vNextItemAuthority.takenFrom, undefined, "storing is not taking out");
-  const taken = f.act({ kind: "acquire", entryRef: CONTENTS, quantity: 1 });
-  const record = f.state.vNextItemAuthority.takenFrom[PLAYER][taken];
-  assert.deepEqual(record, { observerRef: PLAYER, containerRef: FIRST, quantity: 1, eventSeq: record.eventSeq });
-  assert.deepEqual(Object.keys(f.state.vNextItemAuthority.takenFrom), [PLAYER]);
-  assert.deepEqual(authorityItemComposite(f.state, taken).takenFrom, [record]);
-  assert.equal(authorityItemComposite(f.state, CONTENTS).takenFrom, undefined, "the stack left inside carries no record");
-  f.act({ kind: "store", entryRef: taken, quantity: 1, containerRef: FIRST });
-  assert.equal(f.state.vNextItemAuthority.takenFrom, undefined);
-  const again = f.act({ kind: "acquire", entryRef: CONTENTS, quantity: 1 });
-  assert.equal(f.state.vNextItemAuthority.takenFrom[PLAYER][again].containerRef, FIRST);
-  f.act({ kind: "transfer", entryRef: again, quantity: 1, targetCharacterRef: RECIPIENT, ownershipDisposition: "transferToRecipient" });
-  assert.equal(f.state.vNextItemAuthority.takenFrom, undefined, "the recipient did not take it out of the container");
+  assert.equal(f.state.vNextItemAuthority.acquiredFrom, undefined, "storing is not coming to hand");
+  const parked = f.act({ kind: "acquire", entryRef: CONTENTS, quantity: 1 });
+  assert.deepEqual(own(PLAYER, parked), [["container", FIRST, 1]]);
+  f.act({ kind: "store", entryRef: parked, quantity: 1, containerRef: SECOND });
+  assert.equal(f.state.vNextItemAuthority.acquiredFrom, undefined);
+  const stack = f.act({ kind: "acquire", entryRef: CONTENTS, quantity: 1 });
+  assert.equal(f.act({ kind: "acquire", entryRef: parked, quantity: 1 }), stack, "the second piece joins the first");
+  assert.deepEqual(own(PLAYER, stack), [["container", FIRST, 1], ["container", SECOND, 1]]);
+  assert.deepEqual(authorityItemComposite(f.state, stack).acquiredFrom.map(part => [part.observerRef, part.from, part.ref]),
+    [[PLAYER, "container", FIRST], [PLAYER, "container", SECOND]]);
+  assert.equal(authorityItemComposite(f.state, CONTENTS).acquiredFrom, undefined, "the stack left inside carries no record");
+  f.act({ kind: "store", entryRef: stack, quantity: 1, containerRef: SECOND });
+  assert.deepEqual(own(PLAYER, stack), [["container", FIRST, 1]], "the piece put back into the second container was the one from it");
+  f.act({ kind: "release", entryRef: stack, quantity: 1, sceneRef: SCENE, releaseKind: "drop" });
+  assert.equal(f.state.vNextItemAuthority.acquiredFrom, undefined, "dropped, it is no longer in hand");
+  const picked = f.act({ kind: "acquire", entryRef: stack, quantity: 1 });
+  assert.deepEqual(own(PLAYER, picked), [["ground", SCENE, 1]]);
+  const given = f.act({ kind: "transfer", entryRef: picked, quantity: 1, targetCharacterRef: RECIPIENT, ownershipDisposition: "transferToRecipient" });
+  assert.equal(own(PLAYER, picked), undefined);
+  assert.deepEqual(own(RECIPIENT, given), [["character", PLAYER, 1]], "the recipient remembers who gave it");
   assertReplay(f, f.events, f.state);
 });
 
@@ -278,11 +287,11 @@ test("carried items nothing names are listed, read at their version when named, 
     error => error.diagnostics?.some(diagnostic => diagnostic.constraint === "offer:requested-item-ref-not-requestable"));
 });
 
-// SPEC 0001 §16 (ADR 0134): what the actor took out of a container reaches
-// the KP as the actor's own record -- on the directory row of a carried item
-// nothing named, and on the record of one the closure froze -- and another
-// character's record of the same piece does not. Two alike pieces, one just
-// taken out, are no longer one row.
+// SPEC 0001 §16 (ADR 0136): how a stack came to the actor's hands reaches the
+// KP as the actor's own record -- on the directory row of a carried item
+// nothing named, and on the record of one the closure froze -- and a record
+// kept for someone who does not hold the piece does not. Two alike pieces,
+// one just taken out, are no longer one row.
 test("a carried piece taken out of a container shows the actor which container, on its row and its record", () => {
   const ROPE = "item-entry:taken:rope", SPARE = "item-entry:taken:spare", BAG = "item-entry:taken:bag", OTHER = "character:taken:other";
   const definition = (id, label, extra = {}) => { const value = healingPotionItemDefinition(); value.definitionId = id;
@@ -293,23 +302,22 @@ test("a carried piece taken out of a container shows the actor which container, 
   const f = createAuthoredProbeFixture("taken-from", { itemDefinitions: [rope, bag],
     itemEntries: [held(ROPE, rope.definitionId), held(SPARE, rope.definitionId), held(BAG, bag.definitionId, { initialState: "closed" })] });
   const state = structuredClone(f.state);
-  const taken = { observerRef: PROBE_ACTOR, containerRef: BAG, quantity: 1, eventSeq: "7" };
+  const part = { from: "container", ref: BAG, quantity: 1, eventSeq: "7" }, taken = { observerRef: PROBE_ACTOR, ...part };
   state.vNextItemAuthority = { schema: "zhuwei.vnext-item-authority/v1", uniqueItems: {}, identifications: {},
-    takenFrom: { [PROBE_ACTOR]: { [ROPE]: taken }, [OTHER]: { [SPARE]: { ...taken, observerRef: OTHER } } } };
+    acquiredFrom: { [PROBE_ACTOR]: { [ROPE]: [part] }, [OTHER]: { [SPARE]: [part] } } };
   const listed = freezeAuthoredProbeContext(f, state, { focusRefs: [PROBE_ACTOR], intentText: "把刚拿出的那段放回去。" }).context;
   const rows = listed.references.possessionRecall;
-  assert.deepEqual(rows.find(row => row.entryRef === ROPE).takenFrom, { containerRef: BAG, quantity: 1, eventSeq: "7" });
-  assert.equal(rows.find(row => row.entryRef === SPARE).takenFrom, undefined, "another character's record is not the actor's");
+  assert.deepEqual(rows.find(row => row.entryRef === ROPE).acquiredFrom, [part]);
+  assert.equal(rows.find(row => row.entryRef === SPARE).acquiredFrom, undefined, "a record kept for one who does not hold it is not read");
   assert.equal(rows.find(row => row.entryRef === SPARE).count, undefined, "the piece taken out is not grouped with the other");
-  assert.deepEqual(proposalModelContext(listed).references.possessionRecall.requestable.find(row => row.ref === ROPE).takenFrom,
-    { containerRef: BAG, quantity: 1, eventSeq: "7" });
+  assert.deepEqual(proposalModelContext(listed).references.possessionRecall.requestable.find(row => row.ref === ROPE).acquiredFrom, [part]);
   const read = recallKnowledge(listed, [ROPE, SPARE], state);
-  assert.deepEqual(read.find(record => record.entryRef === ROPE).value.takenFrom, [taken]);
-  assert.equal(read.find(record => record.entryRef === SPARE).value.takenFrom, undefined);
+  assert.deepEqual(read.find(record => record.entryRef === ROPE).value.acquiredFrom, [taken]);
+  assert.equal(read.find(record => record.entryRef === SPARE).value.acquiredFrom, undefined);
   const frozen = freezeAuthoredProbeContext(f, state, { focusRefs: [PROBE_ACTOR, ROPE, SPARE], intentText: "把刚拿出的那段麻绳放回去。" }).context;
   const value = ref => frozen.entries.find(entry => entry.entryRef === ref).value;
-  assert.deepEqual(value(ROPE).takenFrom, [taken]);
-  assert.equal(value(SPARE).takenFrom, undefined);
+  assert.deepEqual(value(ROPE).acquiredFrom, [taken]);
+  assert.equal(value(SPARE).acquiredFrom, undefined);
 });
 
 // ADR 0132: the directory stays bounded by what differs, not by how much is

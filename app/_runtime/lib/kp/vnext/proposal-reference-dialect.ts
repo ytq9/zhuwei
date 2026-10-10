@@ -15,7 +15,7 @@ export function proposalReferenceDialect(context: VNextRequiredContext) {
     // ADR 0132: a carried item is named by the same short handle in its
     // directory row, the selection field and the forms once read.
     ...(context.references.possessionRecall ?? []).flatMap(row => [...row.records.map(record => record.entryRef),
-      ...(row.containerRef === null ? [] : [row.containerRef]), ...(row.takenFrom === undefined ? [] : [row.takenFrom.containerRef])])]) refs.add(ref);
+      ...(row.containerRef === null ? [] : [row.containerRef]), ...(row.acquiredFrom ?? []).map(part => part.ref)])]) refs.add(ref);
   const forward = new Map<string, string>(), reverse = new Map<string, string>();
   for (const ref of [...refs].sort()) {
     if (ref.length < 16) continue;

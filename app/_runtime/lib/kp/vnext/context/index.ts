@@ -359,7 +359,7 @@ export function freezeAdjudicationContext(
     const containerRecord = node?.kind === "itemEntry" || node?.kind === "geometryFeature"
       ? authorityCompositeRecord(input.state, node) : undefined;
     // Inspection memories and taking-out records are read as the actor's own.
-    const containerView = isPlainRecord(containerRecord) && (Array.isArray(containerRecord.containerMemories) || Array.isArray(containerRecord.takenFrom))
+    const containerView = isPlainRecord(containerRecord) && (Array.isArray(containerRecord.containerMemories) || Array.isArray(containerRecord.acquiredFrom))
       ? actorItemRecord(containerRecord, input.actorCharacterId) as JsonValue : undefined;
     const read = node === undefined
       ? undefined

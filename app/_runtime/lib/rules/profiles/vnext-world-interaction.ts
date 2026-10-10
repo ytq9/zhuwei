@@ -197,7 +197,7 @@ export const VNEXT_STAGE3_EVENT_SCHEMA_PROFILE_DOCUMENT: CanonicalProfileDocumen
   schema: "zhuwei.runtime-profile/v1",
   profileKind: "eventSchema",
   profileId: CONTAINER_EVENT_PROFILE_ID,
-  semanticVersion: "9.0.0",
+  semanticVersion: "10.0.0",
   normativePayload: Object.freeze({
     spec: "SPEC 0016",
     authoritativeEnvelope: "zhuwei.room-world-event/v2",
@@ -225,7 +225,7 @@ export const VNEXT_STAGE3_EVENT_SCHEMA_PROFILE_DOCUMENT: CanonicalProfileDocumen
     ]),
     // SPEC 0004 §4: a door's state change may be a KP-ruled unlock of a locked door.
     environmentFeatureTransitionIntents: Object.freeze(["close", "lock", "open", "unlock"]),
-    objectOperation: "same-identity-native-completion;finite-container-open-access-close-dependencies;damage-keeps-explicit-access-state;inspection-memory-freezes-when-closed;original-content-provenance;taker-remembers-container-of-loose-taken-item;record-level-item-authority-correction",
+    objectOperation: "same-identity-native-completion;finite-container-open-access-close-dependencies;damage-keeps-explicit-access-state;inspection-memory-freezes-when-closed;original-content-provenance;holder-remembers-how-each-loose-stack-came-to-hand;record-level-item-authority-correction",
     unrestrictedContainerDefaults: UNRESTRICTED_STANDARD_CONTAINER_REFS,
     replay: "complete-next-definitions-and-typed-results-only",
   }),
@@ -254,7 +254,7 @@ export const VNEXT_STAGE3_RUNTIME_MANIFEST_PROFILE_DOCUMENT: CanonicalProfileDoc
     schema: "zhuwei.runtime-profile/v1",
     profileKind: "runtimeManifest",
     profileId: CONTAINER_RUNTIME_PROFILE_ID,
-    semanticVersion: "9.0.0",
+    semanticVersion: "10.0.0",
     normativePayload: Object.freeze({
       spec: "SPEC 0016",
       productGeneration: "zhuwei-0.4-vnext-isolated-stage3",
