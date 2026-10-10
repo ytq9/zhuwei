@@ -183,8 +183,13 @@ export function expandContainerTransferWire(value: unknown, context: VNextRequir
           if (problems.length > before) { refused.push(at); continue; }
           const interval = intervals.get(containerRef);
           intervals.set(containerRef, { access: op.access, after: op.after });
+          // The opening and closing act on the container alone. They do not
+          // cite the moved item: put back into a stack it joins, it is gone
+          // by the closing, which a live put-back citing it was refused for.
+          const cited = Array.isArray(row.basisRefs) ? row.basisRefs.filter(ref => ref !== entryRef) : [];
+          const accessBasis = cited.length > 0 ? cited : [containerRef];
           const world = (action: "open" | "close") => {
-            const result = { basisRefs: row.basisRefs, outcomeBinding: row.outcomeBinding, sceneRef: scene,
+            const result = { basisRefs: accessBasis, outcomeBinding: row.outcomeBinding, sceneRef: scene,
               directTargetRefs: [containerRef], otherTargetRefs: [], instrumentRefs: [], abilityRef: { kind: "none" }, approach: { kind: "none" },
               commonAction: { kind: "operateObject", targetRef: containerRef, destinationRef: "none", option: action },
               intent: action === "open" ? "为本次取放正常打开容器。" : "按已声明的取放后要求合上容器。",

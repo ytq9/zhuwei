@@ -237,6 +237,17 @@ const FAULTS = [
   { id: "drop-what-is-in-the-box", ops: () => [{ kind: "release", entryRef: E.boxStack, quantity: 1, sceneRef: SCENE, releaseKind: "drop" }],
     field: "entryRef", fix: () => E.keyA },
 ];
+/** Fillings that are right and must pass: a refusal of one is a gap too.
+ * Live, a put-back citing the piece it returns as its basis was refused
+ * once the piece had joined the stack inside (the closing step still read
+ * the merged-away piece). */
+const CONTROLS = [
+  { id: "put-back-citing-the-piece", ops: s => [transfer("putIn", E.box, s.loose)], basis: s => [ACTOR, E.box, s.loose] },
+  { id: "put-back-and-close", ops: s => [transfer("putIn", E.box, s.loose)], basis: () => [ACTOR, E.box] },
+  { id: "store-a-key-from-the-floor", ops: () => [{ kind: "store", entryRef: E.keyGround, quantity: 1, containerRef: E.pouch }], basis: () => [ACTOR] },
+  { id: "take-out-and-close", ops: () => [transfer("takeOut", E.box, E.boxStack)], basis: () => [ACTOR, E.box] },
+];
+
 /** Faults on different things, filled together. */
 const COMBINED = [["put-back-the-stack-left-inside", "store-what-another-holds"], ["put-back-the-stack-left-inside", "store-an-item-never-seen"], ["put-back-the-stack-left-inside", "store-a-zero-quantity"], ["put-the-box-into-itself", "take-out-of-the-wrong-container"],
   ["store-into-other-holders-satchel", "take-what-another-holds"], ["store-into-closed-box", "drop-what-is-in-the-box"]];
@@ -275,6 +286,12 @@ function formGaps() {
       }
     }
   }
+  for (const control of CONTROLS) {
+    const document = filling(control.ops(s));
+    for (const row of document.steps.inventoryOperation) row.basisRefs = control.basis(s);
+    const refused = checkFilling(w, frozen, document);
+    if (refused.length > 0) gaps.push(`control:${control.id}:refused:${[...new Set(refused.map(d => d.constraint))].join("+")}`);
+  }
   // One round: faults filled together are each reported.
   for (const ids of COMBINED) {
     const document = filling(ids.flatMap(id => FAULTS.find(fault => fault.id === id).ops(s)));
@@ -293,6 +310,6 @@ test("the context tells the referent apart for each way an item came to hand, ex
 
 // SPEC 0016 §7.2: a revision is told every problem, where it is, and with
 // only candidates that clear it.
-test("a wrong filling is refused at its field, offers only candidates that clear it, and reports every fault at once, except the known gaps", () => {
-  assertGaps(formGaps(), ["location", "candidates", "one-round"]);
+test("a wrong filling is refused at its field, offers only candidates that clear it, and reports every fault at once; a right one passes; except the known gaps", () => {
+  assertGaps(formGaps(), ["location", "candidates", "one-round", "control"]);
 });

@@ -135,7 +135,7 @@ async function contextForNamedPossessions(context: VNextRequiredContext, respons
 export const VNEXT_PROPOSAL_CORRECTION_ROUNDS = 3;
 
 export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
-  version: "kp-vnext2-proposal-parser-v91",
+  version: "kp-vnext2-proposal-parser-v92",
   // ADR 0132, ADR 0133: a selection may name carried items the freeze only
   // listed; so may a filling or correction, read before that reply is checked.
   possessionRecall: "requested-item-refs-ride-the-recall-request-and-read-at-the-listed-version-an-item-already-held-by-the-forms-reads-as-not-requested-v2",
@@ -146,6 +146,9 @@ export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
   // ADR 0135: a Rules refusal of an item reference offers the items the
   // revision may name instead, from what the stage was sent.
   rulesRefusalCandidates: "inventory-entry-refusals-offer-carried-loose-items-read-or-listed-v1",
+  // SPEC 0016 §7.3: the opening and closing a declaration expands to cite
+  // what the declaration cites less the moved item, else the container.
+  containerAccessBasis: "generated-access-steps-never-cite-the-moved-item-v1",
   containerState: "frozen-item-mechanism-and-shared-geometry-before-semantic-state-v1",
   // ADR 0096: a selection asking for an NPC view already loaded is read without it.
   loadedNpcSelection: "a-requested-view-already-loaded-reads-as-not-requested-v1",
