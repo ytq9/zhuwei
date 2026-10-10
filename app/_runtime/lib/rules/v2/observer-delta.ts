@@ -29,6 +29,7 @@ import {
   deriveAuthorityClaims,
   deriveAuthorityClaimsFromCommittedRange,
   mergeAdjacentCombatMoves,
+  mergeSameInventoryMoves,
   projectRenderableClaims,
   RENDERABLE_CLAIMS_SCHEMA,
   type FrozenAuthorityClaims,
@@ -850,7 +851,7 @@ function observerRenderableClaims(
   // use the vNext Claims seam at all.
   const core = { schema: RENDERABLE_CLAIMS_SCHEMA, receiptId: range.receipt.receiptId,
     rootActionId: range.receipt.rootActionId, viewerKey, projectionHash: after.projectionHash,
-    claims: Object.freeze(mergeAdjacentCombatMoves(claims, range.events)) };
+    claims: Object.freeze(mergeSameInventoryMoves(mergeAdjacentCombatMoves(claims, range.events), range.events)) };
   return Object.freeze({ ...core, claimsHash: canonicalSha256(core) });
 }
 

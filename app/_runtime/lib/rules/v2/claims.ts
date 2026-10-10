@@ -1746,6 +1746,34 @@ export function mergeAdjacentCombatMoves(claims: readonly RenderableClaim[], eve
   return merged;
 }
 
+/** SPEC 0016 §8.3: a store, release or transfer that splits a stack or joins
+ * another anchors the one moved quantity on each stack it touched, so a
+ * Viewer who sees only one of them is still told (`inventoryOperationClaims`).
+ * A Viewer who sees both is told the move once: the same event, change,
+ * operation and facts merge into the first, with the basis of both. In a live
+ * run on 2026-10-10 one cloth put back joined the stack in the box; the review,
+ * given "将 1 件干净布条放入随身木盒" twice, rewrote the reply as two pieces. */
+export function mergeSameInventoryMoves(claims: readonly RenderableClaim[], events: readonly EventEnvelope[]): RenderableClaim[] {
+  // A Viewer's basis keeps only granted refs; the event is in the claim's ref.
+  const moves = events.flatMap(event => event.eventType === "InventoryOperationApplied" ? [`claim:${event.eventId}:inventory:`] : []);
+  const told = new Map<string, number>();
+  const merged: RenderableClaim[] = [];
+  for (const claim of claims) {
+    const move = claim.kind === "inventoryOutcome" && claim.operation !== undefined ? moves.find(prefix => claim.claimRef.startsWith(prefix)) : undefined;
+    const key = move === undefined || claim.kind !== "inventoryOutcome" ? undefined
+      : canonicalSha256({ move, change: claim.change, operation: claim.operation, sourceBefore: claim.sourceBefore ?? null,
+        characterRefs: claim.characterRefs ?? null, narrationFacts: claim.narrationFacts });
+    const at = key === undefined ? undefined : told.get(key);
+    if (at === undefined) {
+      if (key !== undefined) told.set(key, merged.length);
+      merged.push(claim);
+      continue;
+    }
+    merged[at] = deepFreeze({ ...merged[at]!, basisRefs: [...new Set([...merged[at]!.basisRefs, ...claim.basisRefs])] }) as RenderableClaim;
+  }
+  return merged;
+}
+
 /** SPEC 0012 §6.3, SPEC 0014 §4 (ADR 0104): how an attack came out -- hit or
  * miss, a critical, its total -- for whoever sees both the attacker and the
  * creature attacked. The creature comes from the attack's own frozen roll in

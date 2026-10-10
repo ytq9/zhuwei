@@ -59,6 +59,26 @@ test("container contents survive partial withdrawal, transfer and replay", () =>
   assertReplay(f, f.events, f.state);
 });
 
+// SPEC 0016 §8.3: one piece put back that joins the stack in the barrel is
+// one move. Rules anchors it on both stacks so a Viewer who sees only one is
+// still told; the actor, who sees both, is told it once.
+test("a piece put back that joins a stack is told to a Viewer seeing both stacks once", () => {
+  const f = fixture();
+  f.act({ kind: "store", entryRef: CONTENTS, quantity: 3, containerRef: FIRST });
+  const taken = f.act({ kind: "acquire", entryRef: CONTENTS, quantity: 1 });
+  const prior = f.state;
+  const result = step(f.profiles, f.state, f.input({ kind: "store", entryRef: taken, quantity: 1, containerRef: FIRST }));
+  assert.equal(result.kind, "committed", JSON.stringify(result));
+  assert.equal(result.state.campaignRuntime.itemSystem.entries[CONTENTS].quantity, 3, "the piece joined the stack in the barrel");
+  const view = project(f.profiles, result.state, { kind: "player", characterId: PLAYER, principalId: PRINCIPAL, seatId: SEAT, sessionVersion: 1 },
+    { channel: "realtime", committedRange: { receiptId: result.receipt.receiptId, actorCharacterId: PLAYER, priorState: prior, events: result.events } });
+  assert.equal(view.kind, "projected", JSON.stringify(view));
+  const told = view.renderableClaims.claims.filter(claim => claim.kind === "inventoryOutcome");
+  assert.equal(told.length, 1, JSON.stringify(told));
+  assert.deepEqual(told[0].narrationFacts.filter(fact => fact.includes("放入")), [`${told[0].displayNames[PLAYER] ?? "行动角色"}将 1 件布条放入木桶`]);
+  assert.ok([taken, CONTENTS].every(ref => told[0].basisRefs.includes(ref)), "the told move rests on both stacks");
+});
+
 // SPEC 0001 §16 (ADR 0136): whoever an item reaches remembers how -- out of a
 // container, up from the ground, handed over -- while it holds it loose.
 // Pieces that join one stack keep each source; putting one back where it came
