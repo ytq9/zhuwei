@@ -5,6 +5,7 @@ import {
   completeJsonObjectSyntaxEvidence,
   parseJsonObjectIgnoringTrailingClosers,
   parseJsonWithUniqueMembers,
+  parseProposalArgumentsJson,
 } from "../../../app/_runtime/lib/kp/vnext/canonical-json.ts";
 
 function rejectsAt(source, reason, path, offset, line = 1, column = offset + 1, parse = parseJsonWithUniqueMembers) {
@@ -178,4 +179,19 @@ test("a complete root object before trailing closing delimiters decodes to that 
   for (const source of ['{"field":true} false', '{"field":true}} x', '{"a":[1]]}', '[1]]', '{"field":true', '{"a":1,"a":2}}']) {
     assert.throws(() => parseJsonObjectIgnoringTrailingClosers(source), JsonSyntaxError, source);
   }
+});
+
+// SPEC 0016 §7.2 (ADR 0139): a KP proposal tool's member written twice with
+// the same value -- at any depth, an object or a list alike -- is read once;
+// two values are refused at the second, and every other reader stays strict.
+test("proposal arguments read a member repeated with its value once and refuse one repeated with two values", () => {
+  const same = '{"result":{"outcomeCode":"put-back","entries":[{"a":1}],"outcomeCode":"put-back","entries":[{"a":1.0}]},"x":[]} ]';
+  assert.deepEqual(JSON.parse(JSON.stringify(parseProposalArgumentsJson(same))), { result: { outcomeCode: "put-back", entries: [{ a: 1 }] }, x: [] });
+  const two = '{"result":{"outcomeCode":"put-back","outcomeCode":"returned"}}';
+  rejectsAt(two, "json:duplicate-object-member", ["result", "outcomeCode"], two.lastIndexOf('"outcomeCode"'), 1, two.lastIndexOf('"outcomeCode"') + 1, parseProposalArgumentsJson);
+  const nested = '{"a":{"b":1},"a":{"b":1,"c":2}}';
+  rejectsAt(nested, "json:duplicate-object-member", ["a"], nested.lastIndexOf('"a"'), 1, nested.lastIndexOf('"a"') + 1, parseProposalArgumentsJson);
+  const plain = '{"field":1,"field":1}';
+  rejectsAt(plain, "json:duplicate-object-member", ["field"], plain.lastIndexOf('"field"'));
+  rejectsAt(plain, "json:duplicate-object-member", ["field"], plain.lastIndexOf('"field"'), 1, plain.lastIndexOf('"field"') + 1, parseJsonObjectIgnoringTrailingClosers);
 });

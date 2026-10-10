@@ -100,14 +100,38 @@ export function parseJsonWithUniqueMembers(source: string): unknown {
  * after a closed root, so those bytes decode to that object. Any other
  * trailing content, and every error inside the value, still throws. */
 export function parseJsonObjectIgnoringTrailingClosers(source: string): unknown {
-  try { return parseJsonWithUniqueMembers(source); }
+  return parseObjectIgnoringTrailingClosers(source, false);
+}
+
+/** SPEC 0016 §7.2 (ADR 0139): the arguments of a KP proposal tool -- the
+ * selection, the filling, the revision and the draft inside it -- read like
+ * any model argument object, except that a member written twice with the same
+ * value is read once. Two values for one member are still refused: the
+ * server does not choose between them, and the model writes the draft again. */
+export function parseProposalArgumentsJson(source: string): unknown {
+  return parseObjectIgnoringTrailingClosers(source, true);
+}
+
+function parseObjectIgnoringTrailingClosers(source: string, repeatedSameValue: boolean): unknown {
+  const parse = (text: string) => parseUniqueJson(text, false, false, repeatedSameValue).value;
+  try { return parse(source); }
   catch (error) {
     if (!(error instanceof JsonSyntaxError) || error.reason !== "json:trailing-content"
       || !/^[}\]\u0020\u0009\u000a\u000d]+$/u.test(source.slice(error.offset))) throw error;
-    const value = parseJsonWithUniqueMembers(source.slice(0, error.offset));
+    const value = parse(source.slice(0, error.offset));
     if (!isPlainRecord(value)) throw error;
     return value;
   }
+}
+
+/** Whether two parsed JSON values are the same value. */
+function sameJsonValue(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (Array.isArray(left) || Array.isArray(right)) return Array.isArray(left) && Array.isArray(right)
+    && left.length === right.length && left.every((member, index) => sameJsonValue(member, right[index]));
+  if (!isPlainRecord(left) || !isPlainRecord(right)) return false;
+  const keys = Object.keys(left);
+  return keys.length === Object.keys(right).length && keys.every(key => Object.hasOwn(right, key) && sameJsonValue(left[key], right[key]));
 }
 
 export type JsonNumberToken = Readonly<{
@@ -144,7 +168,7 @@ export function completeJsonObjectSyntaxEvidence(source: string): Readonly<{
   return deepFreeze({ value: result.value, issue: result.issue, diagnostic: result.diagnostic, numberTokens: result.numberTokens });
 }
 
-function parseUniqueJson(source: string, collectRootEvidence: boolean, collectNumberTokens = false): {
+function parseUniqueJson(source: string, collectRootEvidence: boolean, collectNumberTokens = false, repeatedSameValue = false): {
   value: unknown;
   numberTokens: readonly JsonNumberToken[];
   issue?: RootSyntaxIssue;
@@ -224,12 +248,17 @@ function parseUniqueJson(source: string, collectRootEvidence: boolean, collectNu
         const keyStart = cursor;
         const key = parseString(path);
         const memberPath = [...path, key];
-        if (keys.has(key)) return invalid("json:duplicate-object-member", memberPath, keyStart);
+        const repeated = keys.has(key);
+        if (repeated && !repeatedSameValue) return invalid("json:duplicate-object-member", memberPath, keyStart);
         keys.add(key);
         skipWhitespace();
         if (source[cursor] !== ":") return invalid("json:colon-expected", memberPath);
         cursor += 1;
-        record[key] = parseValue(depth + 1, memberPath);
+        const tokens = numberTokens.length;
+        const value = parseValue(depth + 1, memberPath);
+        if (!repeated) record[key] = value;
+        else if (!sameJsonValue(value, record[key])) return invalid("json:duplicate-object-member", memberPath, keyStart);
+        else numberTokens.length = tokens;
         skipWhitespace();
         if (collectRootEvidence && depth === 0 && cursor === source.length) {
           issue = "json:root-close-missing";

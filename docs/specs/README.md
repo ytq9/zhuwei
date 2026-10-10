@@ -40,6 +40,7 @@ npm run spec:trace
 | 2026-10-10 | [ADR 0136：持有者记得手上每叠物品是怎么到手的](../adr/0136-a-holder-remembers-how-each-loose-stack-came-to-hand.md) | [SPEC 0001 §16](./0001-llm-kp-responsibility-contract.md)，条款不变；取代 ADR 0134 的记录形状；运行版本升为 stage3-v10 |
 | 2026-10-10 | [ADR 0137：上下文把最近到手的物品列在一处](../adr/0137-the-context-lists-what-recently-came-to-hand.md) | [SPEC 0016 §4.3](./0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md)，条款不变；模型上下文升为 vnext-20，运行版本不变 |
 | 2026-10-10 | [ADR 0138：本地被拒的填写，其余部分在同一轮预检](../adr/0138-a-refused-fillings-rest-is-preflighted-in-the-same-round.md) | 修订 [SPEC 0016 §7.2](./0016-part-c-compound-actions-and-claims.md)：首稿有本地被拒步骤时，Room 对其余部分预检，两类错误列在同一张工单；解析合同升为 v93 |
+| 2026-10-10 | [ADR 0139：重复字段按一次读取，或退回模型重写](../adr/0139-a-repeated-member-is-read-once-or-written-again.md) | 修订 [SPEC 0016 §7.2](./0016-part-c-compound-actions-and-claims.md)：提案工具参数中重复字段值相同时按一次读取，值不同时退回模型重写一次；取代 `74e713d3` 的重复成员边界；解析合同升为 v94 |
 | 2026-10-07 | [ADR 0131：冻结短引用与声明式容器取放](../adr/0131-frozen-wire-references-and-declared-container-transfer.md) | [SPEC 0016 §§4.3、7](./0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md)，仅调整传输、组装与修订表单，不改权限或调用额度 |
 | 2026-10-06 | [ADR 0130：容器查看记录与原有内容来源](../adr/0130-container-inspection-and-original-content-provenance.md) | [SPEC 0001 §16](./0001-llm-kp-responsibility-contract.md) |
 | 2026-10-06 | [ADR 0128：已有对象按需补全并保持实物连续性](../adr/0128-existing-objects-complete-without-recreation.md) | [SPEC 0016 §7.2](./0016-part-c-compound-actions-and-claims.md)、[SPEC 0001 §§3.3、7、16](./0001-llm-kp-responsibility-contract.md) |

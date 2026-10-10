@@ -30,7 +30,7 @@ import {
   compareCodeUnits,
   deepFreeze,
   isPlainRecord,
-  parseJsonObjectIgnoringTrailingClosers,
+  parseProposalArgumentsJson,
   JsonSyntaxError,
   type JsonRecord,
   sameCanonical,
@@ -114,7 +114,7 @@ function vnextProposalNamedPossessions(context: VNextRequiredContext, response: 
   try {
     const call = extractProposalToolCall(response);
     if (call.name === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME) return [];
-    return draftNamedPossessions(context, typeof call.arguments === "string" ? parseJsonObjectIgnoringTrailingClosers(call.arguments) : call.arguments);
+    return draftNamedPossessions(context, typeof call.arguments === "string" ? parseProposalArgumentsJson(call.arguments) : call.arguments);
   } catch { return []; }
 }
 
@@ -136,7 +136,10 @@ async function contextForNamedPossessions(context: VNextRequiredContext, respons
 export const VNEXT_PROPOSAL_CORRECTION_ROUNDS = 3;
 
 export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
-  version: "kp-vnext2-proposal-parser-v93",
+  version: "kp-vnext2-proposal-parser-v94",
+  // SPEC 0016 §7.2 (ADR 0139): a member written twice with one value is read
+  // once; with two values the draft is written again, as unparsed bytes are.
+  repeatedMembers: "same-value-read-once-two-values-re-emitted-v1",
   // SPEC 0016 §7.2 (ADR 0138): a locally refused filling's ticket also tells
   // what lowering and Rules find in the rest of it, proved by Room.
   standInPreflight: "rest-of-a-locally-refused-filling-less-related-rows-preflighted-by-room-and-appended-to-its-ticket-v1",
@@ -241,7 +244,7 @@ export function parseVNextProposalOfferResponse(response: unknown, context?: VNe
   let call: ReturnType<typeof extractSingleToolCall>, raw: unknown;
   try {
     call = extractProposalToolCall(response);
-    raw = typeof call.arguments === "string" ? parseJsonObjectIgnoringTrailingClosers(call.arguments) : call.arguments;
+    raw = typeof call.arguments === "string" ? parseProposalArgumentsJson(call.arguments) : call.arguments;
     if (context) raw = bindProposalWire(raw, context);
   } catch (error) { return invalidOutput(error); }
   if (call.name !== OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME) return wrongTool(call.name, OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME);
@@ -455,7 +458,7 @@ export function parseVNextProposalOfferStageResponse(response: unknown, context:
   try { call = extractProposalToolCall(response); } catch (error) { return invalidOutput(error); }
   if (targets.length === 0 || call.name !== RETRY_QUESTION_TOOL_NAME) return parseVNextProposalOfferResponse(response, context);
   let raw: unknown;
-  try { raw = typeof call.arguments === "string" ? parseJsonObjectIgnoringTrailingClosers(call.arguments) : call.arguments; }
+  try { raw = typeof call.arguments === "string" ? parseProposalArgumentsJson(call.arguments) : call.arguments; }
   catch (error) { return invalidOutput(error); }
   raw = bindProposalWire(raw, context);
   if (!isPlainRecord(raw)) return fieldOutput("TYPE_MISMATCH", "retry-question:object-required", [], "object", raw);
@@ -753,7 +756,7 @@ function withAppendedDiagnostics(ticket: VNextProposalBundleRepairTicket, append
 
 function readProposalArguments(value: unknown, _toolName: string): { raw: unknown } {
   if (typeof value !== "string") return { raw: value };
-  try { return { raw: parseJsonObjectIgnoringTrailingClosers(value) }; } catch (error) { return invalidOutput(error); }
+  try { return { raw: parseProposalArgumentsJson(value) }; } catch (error) { return invalidOutput(error); }
 }
 
 const SELECTION_ARGUMENT_KEYS = ["requestedCapabilities", "requestedNpcRefs", "requestedKnowledgeRefs", "requestedItemRefs"] as const;
@@ -845,8 +848,9 @@ export type VNextProposalUnparsedArguments = Readonly<{
   diagnostic: ProposalDiagnostic;
 }>;
 
-/** Unparseable saved bytes permit replacement only. A truncated response or
- * duplicate-member policy failure keeps its existing technical failure path. */
+/** Unparseable saved bytes permit replacement only, and so does a member
+ * written twice with two values (ADR 0139): the server does not choose
+ * between them. A truncated response keeps its technical failure path. */
 export function vnextProposalUnparsedArguments(response: unknown): VNextProposalUnparsedArguments | undefined {
   let call: ReturnType<typeof extractSingleToolCall>;
   try { call = extractProposalToolCall(response); } catch { return undefined; }
@@ -854,10 +858,10 @@ export function vnextProposalUnparsedArguments(response: unknown): VNextProposal
   const choice = isPlainRecord(response) && Array.isArray(response.choices) ? response.choices[0] : undefined;
   const finished = isPlainRecord(choice) ? choice.finish_reason : undefined;
   if (typeof finished !== "string" || finished === "length") return undefined;
-  try { parseJsonObjectIgnoringTrailingClosers(call.arguments); return undefined; }
+  try { parseProposalArgumentsJson(call.arguments); return undefined; }
   catch (error) {
     if (!(error instanceof JsonSyntaxError)) return undefined;
-    try { JSON.parse(call.arguments); return undefined; } catch { /* invalid syntax */ }
+    if (error.reason !== "json:duplicate-object-member") try { JSON.parse(call.arguments); return undefined; } catch { /* invalid syntax */ }
     return deepFreeze({ toolName: SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
       originalArguments: call.arguments, diagnostic: syntaxDiagnostic(error) });
   }
@@ -1108,7 +1112,7 @@ export function vnextProposalRevisionCandidate(response: unknown, capabilities: 
     const call = extractProposalToolCall(response);
     if (call.name !== SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) throw error;
     let raw: unknown;
-    try { raw = typeof call.arguments === "string" ? parseJsonObjectIgnoringTrailingClosers(call.arguments) : call.arguments; }
+    try { raw = typeof call.arguments === "string" ? parseProposalArgumentsJson(call.arguments) : call.arguments; }
     catch { throw error; }
     if (!isPlainRecord(raw) || SELECTION_ARGUMENT_KEYS.some(key => Object.hasOwn(raw, key))) throw error;
     let draft: JsonRecord;
@@ -1450,7 +1454,7 @@ export function createRepairTicket(candidate: Omit<Extract<VNextProposalBundleCa
   knowledgeRefs: readonly string[] = [], round = 1): VNextProposalBundleRepairTicket {
   if (!Number.isInteger(round) || round < 1) throw new TypeError("VNEXT_PROPOSAL_REPAIR_ROUND_INVALID");
   const sourceDraft = candidate.validationCode === "PROPOSAL_JSON_INVALID" ? null
-    : parseJsonObjectIgnoringTrailingClosers(candidate.originalArguments) as JsonRecord;
+    : parseProposalArgumentsJson(candidate.originalArguments) as JsonRecord;
   const loadedNpcRefs = [...new Set(npcRefs)].sort(compareCodeUnits), readKnowledgeRefs = [...new Set(knowledgeRefs)].sort(compareCodeUnits);
   // A same-bundle handle nothing produces names a type the selection did not
   // load; the one correction is sent with that type's form as well, so the
@@ -1502,10 +1506,10 @@ export function assertRepairTicket(ticket: unknown, contextHash: string, require
           repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } }])) return invalid();
       return;
     }
-    if (!sameCanonical(ticket.sourceDraft, parseJsonObjectIgnoringTrailingClosers(ticket.originalArguments))) return invalid();
+    if (!sameCanonical(ticket.sourceDraft, parseProposalArgumentsJson(ticket.originalArguments))) return invalid();
     const proven = vnextProposalRevisionCandidate({ choices: [{ message: { tool_calls: [{ type: "function", function: {
       name: SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, arguments: ticket.argumentSource === "rawString"
-        ? ticket.originalArguments : parseJsonObjectIgnoringTrailingClosers(ticket.originalArguments),
+        ? ticket.originalArguments : parseProposalArgumentsJson(ticket.originalArguments),
     } }] } }] }, ticket.capabilities as VNextProposalCapabilityId[], ticket.terminalKinds as string[], requiredContext,
       ticket.knowledgeRefs as string[]);
     if (ticket.validationCode === "PROPOSAL_RULES_DIAGNOSTIC") {

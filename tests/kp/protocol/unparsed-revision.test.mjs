@@ -3,7 +3,7 @@ import test from 'node:test';
 import { VNEXT_ALWAYS_OFFERED_TERMINAL_KINDS as OFFERED } from '../../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext } from '../../../tools/lib/vnext-authored-probe-fixture.mjs';
 import { vnextProposalUnparsedArguments, createVNextUnparsedRevisionTicket, createVNextProposalRevisionModelInput,
-  invokeSubmitKpProposalBundleFirstPass } from '../../../app/_runtime/lib/kp/vnext/proposal-provider.ts';
+  invokeSubmitKpProposalBundleFirstPass, vnextProposalRevisionCandidate } from '../../../app/_runtime/lib/kp/vnext/proposal-provider.ts';
 import { assertVNextInvocationTransition } from '../../../app/_runtime/lib/room/vnext-proposal-invocation.ts';
 import { sentContextBody, withContextBody } from '../../support/fixtures/vnext-request-layout.mjs';
 import { DEFAULT_KP_MODEL } from '../../../app/_runtime/lib/kp/models.ts';
@@ -31,11 +31,33 @@ test('Room admits replacement from saved invalid bytes and rejects edited source
   }
 });
 
-test('truncation and duplicate-member policy failures do not gain a replacement call', () => {
+test('truncation does not gain a replacement call', () => {
   assert.equal(vnextProposalUnparsedArguments(response(raw, 'length')), undefined);
-  assert.equal(vnextProposalUnparsedArguments(response('{"decision":{},"decision":{}}')), undefined);
   const noReason = response(raw); delete noReason.choices[0].finish_reason;
   assert.equal(vnextProposalUnparsedArguments(noReason), undefined);
+});
+
+// SPEC 0016 §7.2 (ADR 0139): a member written twice with one value is read
+// once; with two values the server does not choose, and the draft is written
+// again once, as bytes that are not JSON are, with Room proving that round.
+test('a member repeated with its value is read once; repeated with two values, the draft is written again', () => {
+  const same = '{"decision":{"risk":"无"},"decision":{"risk":"无"}}';
+  assert.equal(vnextProposalUnparsedArguments(response(same)), undefined);
+  const read = vnextProposalRevisionCandidate(response(same), ['observe'], OFFERED, context);
+  assert.ok(!read.diagnostics?.some(detail => detail.constraint === 'json:duplicate-object-member'), 'it is read as a draft');
+  const twoValues = '{"decision":{"risk":"无"},"decision":{"risk":"有"}}';
+  assert.throws(() => vnextProposalRevisionCandidate(response(twoValues), ['observe'], OFFERED, context),
+    error => error.diagnostics?.some(detail => detail.constraint === 'json:duplicate-object-member'));
+  const repeated = vnextProposalUnparsedArguments(response(twoValues));
+  assert.deepEqual([repeated.diagnostic.constraint, repeated.diagnostic.path], ['json:duplicate-object-member', ['decision']]);
+  const ticket = createVNextUnparsedRevisionTicket(repeated, context, ['observe'], OFFERED);
+  assert.equal(ticket.sourceDraft, null, 'only a replacement is allowed');
+  const request = kpRequestBody(DEFAULT_KP_MODEL, createVNextProposalRevisionModelInput(ticket, context));
+  const prior = ordinal => ({ status: 'completed', context_hash: context.binding.contextHash, binding_hash: 'binding:test',
+    response_json: JSON.stringify(ordinal === 1 ? { choices: [{ message: { tool_calls: [{ type: 'function', function: {
+      name: 'offer_kp_proposal_bundle', arguments: '{"requestedCapabilities":["observe"]}' } }] } }] } : response(twoValues)) });
+  const input = { ordinal: 3, contextHash: context.binding.contextHash, bindingHash: 'binding:test', requestHash: 'hash:test', request, repairTicket: ticket };
+  assert.doesNotThrow(() => assertVNextInvocationTransition(input, prior, context));
 });
 
 test('a parseable empty object receives the same durable revision ticket, with missing-field diagnostics', async () => {

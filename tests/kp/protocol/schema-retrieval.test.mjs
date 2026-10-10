@@ -201,7 +201,7 @@ test("Item and Hazard queries close distinct typed dependencies without changing
   assert.throws(() => closeVNextProposalCapabilities(["invented-schema"]), /CAPABILITY_UNKNOWN/);
 });
 
-test("pure query rejects unknown, repeated, empty, mixed draft, or duplicate JSON members", () => {
+test("pure query rejects unknown, repeated, empty, mixed draft, or a JSON member repeated with two values", () => {
   for (const request of [
     query(["made-up"]), query([]), query(["authorItem", "authorItem"]),
     query(["authorItem"], { steps: [{ kind: "inventoryOperation" }] }),
@@ -211,10 +211,15 @@ test("pure query rejects unknown, repeated, empty, mixed draft, or duplicate JSO
   duplicate.choices[0].message.tool_calls[0].function.arguments = JSON.stringify(query(["authorItem"]))
     .replace('"requestedCapabilities":["authorItem"]', '"requestedCapabilities":["authorItem"],"requestedCapabilities":["authorHazard"]');
   assert.throws(() => parseVNextProposalOfferResponse(duplicate), VNextProposalBundleOutputError);
-  const repeatedKind = response(argumentsFor(itemBundle()), SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
-  repeatedKind.choices[0].message.tool_calls[0].function.arguments = repeatedKind.choices[0].message.tool_calls[0].function.arguments
-    .replace('"outcomeBinding":"always"', '"outcomeBinding":"always","outcomeBinding":"always"');
-  assert.throws(() => parseSubmitKpProposalBundleCandidateResponse(repeatedKind), VNextProposalBundleOutputError);
+  // SPEC 0016 §7.2 (ADR 0139): a member repeated with its value is read once;
+  // with two values the server does not choose between them.
+  const repeated = value => { const reply = response(argumentsFor(itemBundle()), SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
+    reply.choices[0].message.tool_calls[0].function.arguments = reply.choices[0].message.tool_calls[0].function.arguments
+      .replace('"outcomeBinding":"always"', `"outcomeBinding":"always","outcomeBinding":"${value}"`);
+    return reply; };
+  assert.deepEqual(parseSubmitKpProposalBundleCandidateResponse(repeated("always")), parseSubmitKpProposalBundleCandidateResponse(response(argumentsFor(itemBundle()), SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME)));
+  assert.throws(() => parseSubmitKpProposalBundleCandidateResponse(repeated("onSuccess")),
+    error => error instanceof VNextProposalBundleOutputError && error.diagnostics.some(detail => detail.constraint === "json:duplicate-object-member"));
   const mixedProposal = argumentsFor(itemBundle());
   mixedProposal.decision.requestedCapabilities = ["authorItem"];
   assert.throws(() => parseVNextProposalOfferResponse(response(mixedProposal)), VNextProposalBundleOutputError);

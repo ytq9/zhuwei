@@ -176,7 +176,7 @@ V5 私有 Form 提案路径已按 [ADR 0034](../adr/0034-remove-the-v5-private-f
 1. `offer_kp_proposal_bundle`：模型只填扁平 `requestedCapabilities`，选类型不填内容。
 2. `submit_kp_proposal_bundle`：服务器按所选能力从同一领域 schema 派生小表单，模型只填 `decision`；外壳、根依据并集、producer、静态模板 hash 与类型化依赖由服务器生成。
 3. 校验失败时服务器先证明有界修复计划，`correct_kp_proposal_bundle` 只让模型确认并填获准摘要，最多一次。
-   完全没解析出草稿时改走一次重发：同一工具面、同一冻结上下文，服务器只说明字节在哪里不再是 JSON，不提供任何内容，Room 从保存响应自行证明这一次调用合法。合法 JSON 的策略拒绝（重复成员）和根边界可恢复的错误都不走这条路，见[回执](./receipts/vnext-unparsed-reemit-validation.md)。
+   完全没解析出草稿时改走一次重发：同一工具面、同一冻结上下文，服务器只说明字节在哪里不再是 JSON，不提供任何内容，Room 从保存响应自行证明这一次调用合法。根边界可恢复的错误不走这条路，见[回执](./receipts/vnext-unparsed-reemit-validation.md)。提案工具参数由 `parseProposalArgumentsJson` 读取：同一字段重复且值相同时按一次读取，值不同时同样走这次重发（[ADR 0139](../adr/0139-a-repeated-member-is-read-once-or-written-again.md)）。
 4. [vnext-proposal-invocation.ts](../../app/_runtime/lib/room/vnext-proposal-invocation.ts)† 用保存的响应证明后继调用合法，两轮正文绑定同一冻结 contextHash。
 
 **补全表单按已选机械加载。**[proposal-capabilities.ts](../../app/_runtime/lib/kp/vnext/proposal-capabilities.ts) 提供描写／开关、物品、NPC 战斗、地形和耐久五种选择；[proposal-schema.ts](../../app/_runtime/lib/kp/vnext/proposal-schema.ts) 仅组合所选机械片段，填写仍共用 `steps.completeObject` 并保留顺序。修订和 Room 恢复按相同选择重建表单，未增加模型阶段（[ADR 0129](../adr/0129-completion-schemas-follow-selected-mechanics.md)）。
