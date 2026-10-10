@@ -24,6 +24,23 @@ export const STORY_ROOM_PROBE_CASES = Object.freeze([
   Object.freeze({ caseId: "dynamic-container-vague-put-back", implemented: true, dailyGroup: "containerPutBack", withdrawBeforeSample: true,
     text: CONTAINER_VAGUE_RETURN_INTENT,
     initialFixture: `${CONTAINER_WITHDRAWN_HISTORY} Only put-back is a real-model sample; the sentence names neither the cloth nor the box.` }),
+  // ADR 0136 matrix: each sentence was written before the run and was not
+  // used while developing; each names its item only by how it came to hand.
+  ...[
+    ["carried-box-take", "boxTake", "我把刚从盒里摸出来的那块布塞回去，然后把盒子盖好。",
+      "the actor opened its box, took one cloth out and closed it; the stack left inside and the barrel's cloths share its name"],
+    ["carried-barrel-take", "barrelTake", "刚才从木桶里拿的那条布，我还是放回木桶里吧。",
+      "the actor took one cloth from the open barrel; the boxed and barrelled cloths share its name"],
+    ["carried-two-sources", "twoSources", "我手上有两块布，把从木桶里拿出来的那块放回木桶，另一块先留着。",
+      "the actor took one cloth from the box and one from the barrel, which joined one loose stack of two"],
+    ["carried-pick-up", "pickUp", "我把刚从地上捡起来的那把钥匙收进布袋里。",
+      "the actor picked a key up from the floor while already holding a key of the same name"],
+    ["carried-handed-over", "handedOver", "同桌见证人刚才递给我的那捆麻绳，我把它收进布袋。",
+      "the other player handed the actor a rope while the actor already held a rope of the same name"],
+    ["carried-after-other-acts", "afterOtherActs", "我把之前从木盒里拿出来的那块布放回木盒，再把盒盖合上。",
+      "the actor took one cloth out of its box, then put a key into its pouch and picked another key up"],
+  ].map(([caseId, scenario, text, history]) => Object.freeze({ caseId, implemented: true, dailyGroup: "carriedReference", scenario, text,
+    initialFixture: `Declared native-Rules prehistory: three cloths went into the actor's box, which was closed, and two into an open barrel; then ${history}. Setup is not a real-model sample; only the one sentence is.` })),
   Object.freeze({ caseId: "dynamic-container-atomic", implemented: true, dailyGroup: "containerContinuity",
     text: CONTAINER_INTENT, initialFixture: CONTAINER_HISTORY }),
   Object.freeze({ caseId: "dynamic-container-continuity", implemented: true, dailyGroup: "containerContinuity",

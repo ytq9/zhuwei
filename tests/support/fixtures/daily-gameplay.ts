@@ -7,7 +7,7 @@ import type { historyHttpAuthority, historyHttpSource, HttpRecord } from "./stor
 import { nextTo } from "../../../app/_runtime/lib/rules/v2/scene-approach";
 import { authorityGeometryFeatureComposite } from "../../../app/_runtime/lib/rules/v2/authority-bindings";
 import { rectangularFeatureEntity } from "../../../app/_runtime/lib/rules/profiles/combat-geometry";
-import { assertContainerLiveStep } from "./dynamic-object-live";
+import { assertCarriedReferenceStep, assertContainerLiveStep, type CarriedScenario } from "./dynamic-object-live";
 
 export const dailyClericDraft = { ...historyHttpDraft, classId: "cleric", subclassId: "life", backgroundId: "acolyte",
   scores: { str: 12, dex: 10, con: 13, int: 8, wis: 15, cha: 14 },
@@ -47,6 +47,8 @@ type Selection = { caseId: string; dailyGroup: string; text: string; nextText?: 
   startsInCombat?: { opponentRef: string; besideOpponent?: boolean; spared?: boolean; stillFightingRef?: string;
     opponent?: { hitPointsMaximum?: number; hitPoints?: number; deathSaves?: boolean } };
   customAction?: boolean; witnessAssertions?: { observerRef: string }; approachTo?: string; jumpOver?: string;
+  /** ADR 0136: how the item the sentence means came to hand. */
+  scenario?: string;
   contest?: { opponentRef: string; carryTo: string; putDown?: boolean }; shove?: { opponentRef: string }; terrain?: { featureRef: string };
   /** The locked door the last step opens; picking it adds this modifier to the d20. */
   lock?: { featureRef: string; modifier?: number };
@@ -236,6 +238,8 @@ export async function acceptDailyGameplay<S extends Snapshot>(options: {
       const inventory = httpRecord(httpRecord(httpRecord(table.state).authoritative).controlledCharacter).inventory as HttpRecord;
       const memory = after.state.vNextItemAuthority!.containerMemories![actor]["item-entry:live-object:box"];
       expect(inventory.containerMemories, "the authenticated inventory exposes the saved inspection record").toContainEqual(memory);
+    } else if (selected.dailyGroup === "carriedReference") {
+      assertCarriedReferenceStep(selected.scenario as CarriedScenario, beforeDenial, after, actor);
     } else if (selected.dailyGroup === "storyContinuity") {
       // SPEC 0009 §§1、8: actual model choice, no forced capability or ending.
       const questions = Object.values(after.state.campaignRuntime.sceneQuestions);

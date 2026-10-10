@@ -11,7 +11,7 @@ import { historyHttpAccount, historyHttpDb, historyHttpPost, historyHttpSource, 
 import { selectStoryProbeCase } from "../../support/fixtures/story-live-room-cases.mjs";
 import { acceptDailyGameplay, dailyClericDraft, dailyRogueDraft } from "../../support/fixtures/daily-gameplay";
 import { CURRENT_AUTHORITATIVE_MODULE_VERSION } from "../../../app/_runtime/lib/module/authoritative";
-import { prepareContainerLiveHistory } from "../../support/fixtures/dynamic-object-live";
+import { prepareCarriedReferenceHistory, prepareContainerLiveHistory, type CarriedScenario } from "../../support/fixtures/dynamic-object-live";
 
 declare module "vitest" {
   export interface ProvidedContext {
@@ -265,15 +265,17 @@ it("one real HTTP action: admission, narration, optional fault recovery and exac
       }
     }
     const freshOwner = selected.resumeFromEvidence ? undefined : await historyHttpAccount("真实功能链路验收");
-    const peer = ["multiplayer", "help", "containerContinuity", "containerPutBack"].includes(String(selected.dailyGroup)) ? await historyHttpAccount("真实同桌验收") : undefined;
+    const peer = ["multiplayer", "help", "containerContinuity", "containerPutBack", "carriedReference"].includes(String(selected.dailyGroup)) ? await historyHttpAccount("真实同桌验收") : undefined;
     // A probe plays the module version a new room gets (ADR 0087 opening places).
     const resumed = selected.resumeFromEvidence ? await bridge("/resume-evidence") : undefined;
     const source = resumed ? await historyHttpRestoredContainerSource(resumed, selected.resumeCapturedStep ?? 1)
       : await historyHttpSource(freshOwner!, peer, { moduleVersion: CURRENT_AUTHORITATIVE_MODULE_VERSION,
-      ...(["containerContinuity", "containerPutBack"].includes(String(selected.dailyGroup)) ? { containerProbe: true } : selected.dailyGroup === "items" ? { injured: true, groundHealingPotion: true } : selected.dailyGroup === "spell"
+      ...(["containerContinuity", "containerPutBack"].includes(String(selected.dailyGroup)) ? { containerProbe: true }
+        : selected.dailyGroup === "carriedReference" ? { carriedProbe: true } : selected.dailyGroup === "items" ? { injured: true, groundHealingPotion: true } : selected.dailyGroup === "spell"
         ? { injured: true, draft: dailyClericDraft } : selected.caseId === "pick-cellar-lock" ? { draft: dailyRogueDraft } : {}) });
     const owner = source.owner;
     if (["containerContinuity", "containerPutBack"].includes(String(selected.dailyGroup))) await prepareContainerLiveHistory(source, selected.withdrawBeforeSample === true);
+    if (selected.dailyGroup === "carriedReference") await prepareCarriedReferenceHistory(source, selected.scenario as CarriedScenario);
     const initialTable = await historyHttpPost("fetchTable", source.code, owner);
     const initial = await authoritySnapshot(source);
     await evidence("initial", { roomId: source.roomId, characterId: source.characters[0].characterId,

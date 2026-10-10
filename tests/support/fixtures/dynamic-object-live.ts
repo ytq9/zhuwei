@@ -128,3 +128,110 @@ export function assertContainerLiveStep(initial: Data, before: Data, after: Data
   }
   if (index > 0) expect(Object.keys(system.entries).sort()).toEqual(Object.keys(before.state.campaignRuntime.itemSystem.entries).sort());
 }
+
+// ---- Carried-item references (ADR 0136): how an item came to hand ----------
+
+export const CARRIED = Object.freeze({ box: "item-entry:carried:box", barrel: "item-entry:carried:barrel", pouch: "item-entry:carried:pouch",
+  cloth: "item-entry:carried:cloth", keyHeld: "item-entry:carried:key-held", keyFloor: "item-entry:carried:key-floor",
+  ropeOwn: "item-entry:carried:rope-own", ropeGift: "item-entry:carried:rope-gift" });
+const CARRIED_CLOTH = "item-definition:carried:cloth";
+export type CarriedScenario = "boxTake" | "barrelTake" | "twoSources" | "pickUp" | "handedOver" | "afterOtherActs";
+
+/** Declared initial objects for the carried-reference probes: the actor holds
+ * an open box, an open pouch, five cloths, a key and a rope; an open barrel
+ * and a second key lie in the hall; the other player holds a second rope.
+ * Every alike pair shares its name, so only how an item came to hand tells
+ * which one a sentence means. */
+export function carriedReferenceSeed(actor: string, peer: string) {
+  const definition = (id: string, label: string, stackable: boolean) => { const value = healingPotionItemDefinition();
+    value.definitionId = `item-definition:carried:${id}`;
+    Object.assign(value.content, { label, description: `一件${label}。`, category: "object", aliases: [label], tags: [], stackable, use: null });
+    return value; };
+  const definitions = { cloth: definition("cloth", "干净布条", true), box: definition("box", "随身木盒", false),
+    barrel: definition("barrel", "敞口木桶", false), pouch: definition("pouch", "布袋", false), key: definition("key", "铜钥匙", false),
+    rope: definition("rope", "麻绳", false) };
+  const held = (entryId: string, definitionRef: string, holderRef: string, extra: Data = {}) => ({ definitionRef, entry: { entryId, quantity: 1, ...extra,
+    placement: { kind: "held", holderRef, equippedSlot: null }, ownership: { kind: "character", ownerRef: holderRef }, visibilityPolicyRef: "visibility:public" } });
+  const ground = (entryId: string, definitionRef: string, extra: Data = {}) => ({ definitionRef, entry: { entryId, quantity: 1, ...extra,
+    placement: { kind: "scene", sceneRef: "wake" }, ownership: { kind: "unowned", ownerRef: null }, visibilityPolicyRef: "visibility:public" } });
+  return { semanticDefinitions: [], entityDefinitionBindings: [], itemDefinitions: Object.values(definitions), itemEntries: [
+    held(CARRIED.box, definitions.box.definitionId, actor, { initialState: "open" }), held(CARRIED.pouch, definitions.pouch.definitionId, actor, { initialState: "absent" }),
+    held(CARRIED.cloth, definitions.cloth.definitionId, actor, { quantity: 5 }), held(CARRIED.keyHeld, definitions.key.definitionId, actor),
+    held(CARRIED.ropeOwn, definitions.rope.definitionId, actor), held(CARRIED.ropeGift, definitions.rope.definitionId, peer),
+    ground(CARRIED.barrel, definitions.barrel.definitionId, { initialState: "absent" }), ground(CARRIED.keyFloor, definitions.key.definitionId)] };
+}
+
+/** Disclosed native-Rules prehistory, no model sample: three cloths go into
+ * the box, which is closed, and two into the barrel. Each scenario then plays
+ * how the item the sentence means came to hand. */
+export async function prepareCarriedReferenceHistory(source: Awaited<ReturnType<typeof historyHttpSource>>, scenario: CarriedScenario) {
+  const actor = source.characters[0].characterId, peer = source.characters[1]?.characterId;
+  if (!peer) throw new Error("CARRIED_REFERENCE_PEER_REQUIRED");
+  await runInDurableObject(source.stub, instance => {
+    const target = instance as unknown as Data, original = target.authoritativeReplay();
+    let state = original.state, ordinal = 0;
+    const events: Data[] = [];
+    const inventory = (who: string, operation: Data): string => {
+      const refs = [...new Set([who, "wake", operation.entryRef, operation.containerRef, operation.targetCharacterRef].filter(Boolean))].sort();
+      const result = target.rulesRuntime.step(original.profiles, state, { kind: "inventoryOperation",
+        rootActionId: `root:carried-prehistory:${++ordinal}`, actorCharacterId: who,
+        plan: { schema: "zhuwei.inventory-operation-plan/vnext-1", contextHash: canonicalHash({ purpose: "declared-fixture-prehistory" }),
+          readSet: refs.map(ref => ({ ref, revisionOrHash: authorityRevisionOrHash(state, ref) })),
+          basisRefs: ["wake"], summary: "预置公开说明的物品前史。", operation } });
+      expect(result.kind, JSON.stringify(result.rejection)).toBe("committed");
+      state = result.state; events.push(...result.events);
+      return result.events.find((event: Data) => event.eventType === "InventoryOperationApplied").payload.targetEntryId;
+    };
+    const lid = (fromState: string, toState: string) => {
+      const changed = createEventTransition(state, original.profiles, { rootActionId: `root:carried-prehistory:${++ordinal}`,
+        eventType: "ItemStateTransitioned", payload: { actorCharacterId: actor, sceneId: "wake", entryRef: CARRIED.box,
+          fromState, toState, intent: toState === "open" ? "open" : "close" } as never, visibilityPolicyId: "visibility:room-authority-only", secrecy: "internal" });
+      state = changed.state; events.push(changed.event);
+    };
+    const boxStack = inventory(actor, { kind: "store", entryRef: CARRIED.cloth, quantity: 3, containerRef: CARRIED.box });
+    inventory(actor, { kind: "store", entryRef: CARRIED.cloth, quantity: 2, containerRef: CARRIED.barrel });
+    lid("open", "closed");
+    const fromBox = () => { lid("closed", "open"); inventory(actor, { kind: "acquire", entryRef: boxStack, quantity: 1 }); lid("open", "closed"); };
+    const fromBarrel = () => inventory(actor, { kind: "acquire", entryRef: CARRIED.cloth, quantity: 1 });
+    if (scenario === "boxTake") fromBox();
+    else if (scenario === "barrelTake") fromBarrel();
+    else if (scenario === "twoSources") { fromBox(); fromBarrel(); }
+    else if (scenario === "pickUp") inventory(actor, { kind: "acquire", entryRef: CARRIED.keyFloor, quantity: 1 });
+    else if (scenario === "handedOver") inventory(peer, { kind: "transfer", entryRef: CARRIED.ropeGift, quantity: 1, targetCharacterRef: actor,
+      ownershipDisposition: "transferToRecipient" });
+    else { fromBox(); inventory(actor, { kind: "store", entryRef: CARRIED.keyHeld, quantity: 1, containerRef: CARRIED.pouch });
+      inventory(actor, { kind: "acquire", entryRef: CARRIED.keyFloor, quantity: 1 }); }
+    const replayed = target.rulesRuntime.replay(original.genesis, [...target.authorityStore.events(), ...events]);
+    expect(replayed.kind).toBe("replayed"); expect(replayed.state).toEqual(state);
+    target.authorityStore.appendEvents(events); target.authorityStore.updateState(state); target.authorityStore.syncAuthorityIndex(state);
+  });
+}
+
+/** SPEC 0001 §16, SPEC 0016 §4.3: what the sentence meant moved, and nothing
+ * else did; no item was created. */
+export function assertCarriedReferenceStep(scenario: CarriedScenario, before: Data, after: Data, actor: string) {
+  const entries = (snapshot: Data) => Object.values(snapshot.state.campaignRuntime.itemSystem.entries) as Data[];
+  const inside = (snapshot: Data, containerRef: string) => entries(snapshot).filter(entry => entry.containerRef === containerRef && entry.definitionRef === CARRIED_CLOTH)
+    .reduce((sum, entry) => sum + entry.quantity, 0);
+  const loose = (snapshot: Data) => entries(snapshot).filter(entry => entry.definitionRef === CARRIED_CLOTH && entry.holderRef === actor
+    && entry.disposition === "held" && entry.containerRef === undefined).reduce((sum, entry) => sum + entry.quantity, 0);
+  const at = (snapshot: Data, ref: string) => snapshot.state.campaignRuntime.itemSystem.entries[ref];
+  expect(after.events.slice(before.events.length).filter((event: Data) => event.eventType === "ItemMaterialized"), "no item is created").toHaveLength(0);
+  expect(entries(after).filter(entry => entry.definitionRef === CARRIED_CLOTH).reduce((sum, entry) => sum + entry.quantity, 0)).toBe(5);
+  expect(at(after, CARRIED.box).stateMachine.state, "the box ends closed").toBe("closed");
+  if (scenario === "boxTake" || scenario === "afterOtherActs") {
+    expect([inside(after, CARRIED.box), inside(after, CARRIED.barrel), loose(after)], "the piece goes back into the box").toEqual([3, 2, 0]);
+  } else if (scenario === "barrelTake") {
+    expect([inside(after, CARRIED.box), inside(after, CARRIED.barrel), loose(after)], "the piece goes back into the barrel").toEqual([3, 2, 0]);
+  } else if (scenario === "twoSources") {
+    expect([inside(after, CARRIED.box), inside(after, CARRIED.barrel), loose(after)], "one piece goes back into the barrel, one stays").toEqual([2, 2, 1]);
+  } else if (scenario === "pickUp") {
+    expect(at(after, CARRIED.keyFloor), "the key just picked up goes into the pouch").toMatchObject({ holderRef: actor, containerRef: CARRIED.pouch });
+    expect(at(after, CARRIED.keyHeld), "the other key stays in hand").toMatchObject({ holderRef: actor, disposition: "held" });
+    expect(at(after, CARRIED.keyHeld).containerRef).toBeUndefined();
+  } else {
+    expect(at(after, CARRIED.ropeGift), "the rope just handed over goes into the pouch").toMatchObject({ holderRef: actor, containerRef: CARRIED.pouch });
+    expect(at(after, CARRIED.ropeOwn), "the actor's own rope stays in hand").toMatchObject({ holderRef: actor, disposition: "held" });
+    expect(at(after, CARRIED.ropeOwn).containerRef).toBeUndefined();
+  }
+}

@@ -14,7 +14,7 @@ import { VNEXT_KP_PROFILE, VNEXT_KP_WORKFLOW_MANIFEST_JSON, VNEXT_RULES_RUNTIME 
 import { DISABLED_CONTEXT_PLANNER_PROFILE_REF } from "../../../app/_runtime/lib/kp/model-registry";
 import { AUTHORITATIVE_RULESET_VERSION } from "../../../app/_runtime/lib/rules/ruleset";
 import { healingPotionItemDefinition } from "../../../app/_runtime/lib/rules/v2/items";
-import { assertContainerLiveStep, containerLiveSeed } from "./dynamic-object-live";
+import { assertContainerLiveStep, carriedReferenceSeed, containerLiveSeed } from "./dynamic-object-live";
 import { archiveSha256, buildAuthoritativeArchive, roomServiceCapabilities } from "../../../app/_runtime/lib/room/archive";
 import { buildStoryArchive } from "../../../app/_runtime/lib/room/story-archive";
 import { exportStoryArchiveHostBindings } from "../../../app/_runtime/lib/room/story-archive-host";
@@ -63,7 +63,7 @@ export async function historyHttpAccount(name: string): Promise<HttpAccount> {
 /** Explicit initial Room and directory fixture. The tested operation begins
  * at the authenticated player-facing history routes, not at room creation. */
 export async function historyHttpSource(owner: HttpAccount, peer?: HttpAccount,
-  options: { draft?: DraftSheet; injured?: boolean; groundHealingPotion?: boolean; moduleVersion?: string; containerProbe?: boolean } = {}) {
+  options: { draft?: DraftSheet; injured?: boolean; groundHealingPotion?: boolean; moduleVersion?: string; containerProbe?: boolean; carriedProbe?: boolean } = {}) {
   const roomId = `room:history-http:${crypto.randomUUID()}`, code = crypto.randomUUID().replaceAll("-", "").slice(0, 8).toUpperCase();
   const people = peer ? [owner, peer] : [owner], stub = env.ROOMS.getByName(roomId);
   const members = people.map((person, index) => ({ principalId: person.userId, role: index === 0 ? "host" as const : "player" as const }));
@@ -87,7 +87,8 @@ export async function historyHttpSource(owner: HttpAccount, peer?: HttpAccount,
   }));
   const initialized = httpRecord(await stub.initializeAuthoritative({ roomId, moduleId: "black-oak-will", moduleVersion: options.moduleVersion ?? "social-resolution-v1",
     runtimeProfiles: VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST, members, characters,
-    ...(options.containerProbe ? { vNextSeed: containerLiveSeed(characters[0].characterId) } : options.groundHealingPotion ? { vNextSeed: { semanticDefinitions: [], entityDefinitionBindings: [],
+    ...(options.containerProbe ? { vNextSeed: containerLiveSeed(characters[0].characterId) }
+      : options.carriedProbe && characters[1] !== undefined ? { vNextSeed: carriedReferenceSeed(characters[0].characterId, characters[1].characterId) } : options.groundHealingPotion ? { vNextSeed: { semanticDefinitions: [], entityDefinitionBindings: [],
       itemDefinitions: [healingPotionItemDefinition()], itemEntries: [{ definitionRef: healingPotionItemDefinition().definitionId,
         entry: { entryId: "item-entry:daily:healing-potion", quantity: 1, placement: { kind: "scene", sceneRef: "wake" },
           ownership: { kind: "unowned", ownerRef: null }, visibilityPolicyRef: "visibility:public" } }] } } : {}),

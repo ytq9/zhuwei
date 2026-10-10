@@ -18,6 +18,8 @@ test("default is configuration-only dry-run; unimplemented cases cannot enable l
     ["dynamic-container-return-continuity", true],
     ["dynamic-container-put-back", true],
     ["dynamic-container-vague-put-back", true],
+    ["carried-box-take", true], ["carried-barrel-take", true], ["carried-two-sources", true], ["carried-pick-up", true],
+    ["carried-handed-over", true], ["carried-after-other-acts", true],
     ["dynamic-container-atomic", true],
     ["dynamic-container-continuity", true],
     ["sandbox-story-conclusion", true],
