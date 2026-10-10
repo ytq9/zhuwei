@@ -320,6 +320,40 @@ test("a carried piece taken out of a container shows the actor which container, 
   assert.equal(value(SPARE).acquiredFrom, undefined);
 });
 
+// SPEC 0016 §4.3 (ADR 0137): what came to the actor's hands is listed
+// together, newest first, from the records of frozen items and of directory
+// rows alike, at most six; another holder's record and a context with none
+// add nothing.
+test("what recently came to the actor's hands is listed newest first beside the items", () => {
+  const ROPE = "item-entry:recent:rope", SPARE = "item-entry:recent:spare", KEY = "item-entry:recent:key", CLOTH = "item-entry:recent:cloth";
+  const BAG = "item-entry:recent:bag", OTHER = "character:recent:other", HALL = "scene:recent:hall";
+  const definition = (id, label, extra = {}) => { const value = healingPotionItemDefinition(); value.definitionId = id;
+    Object.assign(value.content, { label, description: `一件${label}。`, category: "object", use: null, ...extra }); return value; };
+  const rope = definition("item-definition:recent:rope", "麻绳", { stackable: false }), key = definition("item-definition:recent:key", "钥匙", { stackable: false });
+  const cloth = definition("item-definition:recent:cloth", "布条"), bag = definition("item-definition:recent:bag", "皮袋", { stackable: false });
+  const held = (entryId, definitionRef, quantity = 1) => ({ definitionRef, entry: { entryId, quantity,
+    placement: { kind: "held", holderRef: PROBE_ACTOR, equippedSlot: null }, ownership: { kind: "character", ownerRef: PROBE_ACTOR } } });
+  const f = createAuthoredProbeFixture("recently-in-hand", { itemDefinitions: [rope, key, cloth, bag],
+    itemEntries: [held(ROPE, rope.definitionId), held(SPARE, rope.definitionId), held(KEY, key.definitionId), held(CLOTH, cloth.definitionId, 8),
+      held(BAG, bag.definitionId)] });
+  const state = structuredClone(f.state);
+  assert.equal(proposalModelContext(freezeAuthoredProbeContext(f, state, { focusRefs: [PROBE_ACTOR], intentText: "把麻绳收好。" }).context)
+    .references.recentlyInHand, undefined, "nothing came to hand, nothing is listed");
+  const part = (from, ref, eventSeq) => ({ from, ref, quantity: 1, eventSeq });
+  state.vNextItemAuthority = { schema: "zhuwei.vnext-item-authority/v1", uniqueItems: {}, identifications: {}, acquiredFrom: {
+    [PROBE_ACTOR]: { [ROPE]: [part("container", BAG, "17")], [SPARE]: [part("character", OTHER, "19")], [KEY]: [part("ground", HALL, "3")] },
+    [OTHER]: { [KEY]: [part("container", BAG, "30")] } } };
+  const context = freezeAuthoredProbeContext(f, state, { focusRefs: [PROBE_ACTOR, SPARE], intentText: "把他刚给我的那捆麻绳收进皮袋。" }).context;
+  assert.ok(context.entries.some(entry => entry.entryRef === SPARE), "one piece is frozen, the rest are directory rows");
+  const recent = proposalModelContext(context).references.recentlyInHand;
+  assert.deepEqual(recent.map(row => [row.ref, row.label, row.from, row.fromRef, row.quantity, row.eventSeq]), [
+    [SPARE, "麻绳", "character", OTHER, 1, "19"], [ROPE, "麻绳", "container", BAG, 1, "17"], [KEY, "钥匙", "ground", HALL, 1, "3"]]);
+  // A stack of eight pieces from eight takings: the newest six are listed.
+  state.vNextItemAuthority.acquiredFrom[PROBE_ACTOR][CLOTH] = Array.from({ length: 8 }, (_, index) => part("container", BAG, String(20 + index)));
+  const many = proposalModelContext(freezeAuthoredProbeContext(f, state, { focusRefs: [PROBE_ACTOR], intentText: "把布条放回皮袋。" }).context).references.recentlyInHand;
+  assert.deepEqual(many.map(row => [row.ref, row.eventSeq]), [27, 26, 25, 24, 23, 22].map(seq => [CLOTH, String(seq)]));
+});
+
 // ADR 0132: the directory stays bounded by what differs, not by how much is
 // carried. Ninety identical tubes are one row read through one instance;
 // past the row limit the rest are counted, equipped and loose items first.

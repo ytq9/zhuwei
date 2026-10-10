@@ -135,6 +135,11 @@ it('a vague put-back reads the listed carried item when a revision or the select
     const sentRows = JSON.parse(revised[0].messages[0].content.match(/\{"requiredContext":.*$/m)[0]).requiredContext.references.possessionRecall.requestable;
     expect(sentRows.filter((row: Data) => row.acquiredFrom !== undefined)).toHaveLength(1);
     expect(sentRows.find((row: Data) => row.acquiredFrom !== undefined)).toMatchObject({ label: '布条', acquiredFrom: [{ from: 'container', quantity: 1 }] });
+    // ADR 0137: and the same arrival is listed beside the items, by the same handles.
+    const sentReferences = JSON.parse(revised[0].messages[0].content.match(/\{"requiredContext":.*$/m)[0]).requiredContext.references;
+    const takenRow = sentRows.find((row: Data) => row.acquiredFrom !== undefined);
+    expect(sentReferences.recentlyInHand).toEqual([{ ref: takenRow.ref, label: '布条', from: 'container', fromRef: takenRow.acquiredFrom[0].ref,
+      quantity: 1, eventSeq: takenRow.acquiredFrom[0].eventSeq }]);
     expect(JSON.stringify(revised[2].messages)).toContain('container-transfer:put-in-needs-loose-held-source');
     // What the model was sent is unchanged by the read: the same context body.
     expect(revised[2].messages[0].content).toBe(revised[1].messages[0].content);

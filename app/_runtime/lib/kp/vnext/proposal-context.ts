@@ -30,7 +30,8 @@ import { isRetryHistoryEntryRef } from "./retry-history";
 // groups depends on what the selection asked for and is sent last (ADR 0111).
 // v15 separates inventory planning after opening from current visible evidence.
 // v17 lists the actor's carried items not read as a directory a stage names from (ADR 0132).
-export const VNEXT_PROPOSAL_CONTEXT_SCHEMA = "zhuwei.proposal-context/vnext-19" as const;
+// v20 lists what recently came to the actor's hands, newest first (ADR 0137).
+export const VNEXT_PROPOSAL_CONTEXT_SCHEMA = "zhuwei.proposal-context/vnext-20" as const;
 
 export type ProposalNpcRecall = Readonly<{ defaultRefs: readonly string[]; requestableRefs: readonly string[] }>;
 
@@ -118,6 +119,37 @@ export function proposalKnowledgeRecallPending(context: VNextRequiredContext, re
  * Requests travel with the memory requests, as entry refs. */
 export function proposalPossessionRecall(context: VNextRequiredContext, requested: readonly string[] = []): readonly RequiredContextPossessionRecall[] {
   return Object.freeze((context.references.possessionRecall ?? []).filter(row => !requested.includes(row.entryRef)));
+}
+
+/** At most this many arrivals are listed; older ones stay on their items. */
+export const RECENTLY_IN_HAND_LIMIT = 6;
+
+/** SPEC 0016 §4.3 (ADR 0137): the arrivals in the actor's hands a stage is
+ * sent, newest first -- each part of how a frozen carried item or a listed
+ * row came to hand -- with the item's name. The same records sit deep in each
+ * item; listed together, a live A/B raised first picks among same-named items
+ * from 52% to 89%. Nothing here is new: only what the items already carry. */
+export function proposalRecentlyInHand(view: VNextRequiredContext, rows: readonly RequiredContextPossessionRecall[]) {
+  const labels = new Map(view.entries.flatMap(entry => entry.kind === "known" && isPlainRecord(entry.value) && entry.value.schema === ITEM_DEFINITION_SCHEMA && typeof entry.value.definitionId === "string"
+    && isPlainRecord(entry.value.content) && typeof entry.value.content.label === "string" ? [[entry.value.definitionId, entry.value.content.label] as const] : []));
+  const arrivals = [
+    ...view.entries.flatMap(entry => {
+      if (entry.kind !== "known" || !isPlainRecord(entry.value) || entry.value.schema !== ITEM_ENTRY_SCHEMA
+        || entry.value.entryId !== entry.entryRef || !Array.isArray(entry.value.acquiredFrom)) return [];
+      const label = labels.get(String(entry.value.definitionRef));
+      return entry.value.acquiredFrom.flatMap(part => isPlainRecord(part) && part.observerRef === view.intent.actorRef
+        ? [{ ref: entry.entryRef, ...(label === undefined ? {} : { label }), from: String(part.from), fromRef: String(part.ref),
+          quantity: Number(part.quantity), eventSeq: String(part.eventSeq) }] : []);
+    }),
+    ...rows.flatMap(row => (row.acquiredFrom ?? []).map(part => ({ ref: row.entryRef, label: row.label, from: part.from, fromRef: part.ref,
+      quantity: part.quantity, eventSeq: part.eventSeq }))),
+  ];
+  const seen = new Set<string>();
+  return arrivals.filter(arrival => { const key = `${arrival.ref}\u0000${arrival.from}\u0000${arrival.fromRef}\u0000${arrival.eventSeq}`;
+    return seen.has(key) ? false : (seen.add(key), true); })
+    .sort((left, right) => BigInt(right.eventSeq) > BigInt(left.eventSeq) ? 1 : BigInt(right.eventSeq) < BigInt(left.eventSeq) ? -1
+      : compareCodeUnits(left.ref, right.ref))
+    .slice(0, RECENTLY_IN_HAND_LIMIT).map(arrival => Object.freeze(arrival));
 }
 
 /** The recalled records of carried items a stage did not ask for. Room keeps
@@ -882,7 +914,10 @@ export function proposalModelContext(context: VNextRequiredContext, requestedNpc
   const { domains: _domains, possessionRecall: _possessions, possessionRecallOmitted: omittedPossessions, ...directory } = view.references;
   // ADR 0132: what a vague reference can be matched against; versions stay
   // on the server.
-  const carried = proposalPossessionRecall(context, requestedKnowledgeRefs).map(row => Object.freeze({ ref: row.entryRef, label: row.label,
+  const listed = proposalPossessionRecall(context, requestedKnowledgeRefs);
+  // ADR 0137: what came to the actor's hands, newest first, beside the items.
+  const recentlyInHand = proposalRecentlyInHand(view, listed);
+  const carried = listed.map(row => Object.freeze({ ref: row.entryRef, label: row.label,
     quantity: row.quantity, ...(row.count === undefined ? {} : { alikeCount: row.count }), ...(row.equippedSlot === null ? {} : { equippedSlot: row.equippedSlot }),
     ...(row.containerRef === null ? {} : { containerRef: row.containerRef }),
     // ADR 0136: how the stack came to the actor's hands, and when.
@@ -920,7 +955,8 @@ export function proposalModelContext(context: VNextRequiredContext, requestedNpc
       ...(deferredInventoryEntryRefs.length ? { deferredInventoryEntryRefs: Object.freeze(deferredInventoryEntryRefs) } : {}),
       itemDefinitionRefs: proposalItemDefinitionRefs(view),
       ...(carried.length === 0 ? {} : { possessionRecall: Object.freeze({ requestable: Object.freeze(carried),
-        ...(omittedPossessions === undefined ? {} : { notListed: omittedPossessions }) }) }) }),
+        ...(omittedPossessions === undefined ? {} : { notListed: omittedPossessions }) }) }),
+      ...(recentlyInHand.length === 0 ? {} : { recentlyInHand: Object.freeze(recentlyInHand) }) }),
     // SPEC 0016 §7.2: changing action metadata must not cut off the
     // definition prefix. These are still the exact same frozen values.
     intent: view.intent,

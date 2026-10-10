@@ -7,6 +7,11 @@ import { containerTransferWireSchemas } from "./container-transfer-wire";
  * instance. The original context, read bindings and saved reply stay intact. */
 export function proposalReferenceDialect(context: VNextRequiredContext) {
   const refs = new Set(context.entries.map(entry => entry.entryRef));
+  // ADR 0137: where an item came from is named by the same handle as itself.
+  for (const entry of context.entries) {
+    const parts = entry.kind === "known" && isPlainRecord(entry.value) && Array.isArray(entry.value.acquiredFrom) ? entry.value.acquiredFrom : [];
+    for (const part of parts) if (isPlainRecord(part) && typeof part.ref === "string") refs.add(part.ref);
+  }
   const citations = context.references.citations;
   for (const ref of [...citations.viewerEvidenceRefs, ...citations.authorityBasisRefs,
     ...(citations.npcKnowledge ?? []).flatMap(row => row.refs),
