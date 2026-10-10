@@ -269,7 +269,15 @@ const TRANSITION_FIELDS: Readonly<Record<string, Readonly<{ field: string; messa
   invalidOwnershipDisposition: { field: "ownershipDisposition", message: "Choose whether ownership stays or passes to the recipient." },
   invalidTransferParticipants: { field: "targetCharacterRef", message: "The giver and the recipient must be two present characters." },
 };
-function transitionRefusal(error: string): { error: string; diagnostics?: RuleDiagnostic[] } {
+function transitionRefusal(error: string, operation?: object, stack?: { quantity: number }): { error: string; diagnostics?: RuleDiagnostic[] } {
+  const quantity = operation !== undefined && "quantity" in operation ? operation.quantity : undefined;
+  // More than the stack holds is a quantity to change, whatever transition
+  // reported it: a live revision chose the right piece but kept quantity 2
+  // for a stack of 1, was told the piece was misplaced, and took another item.
+  if (stack !== undefined && typeof quantity === "number" && quantity > stack.quantity) {
+    return refusal(error, "quantity", "inventory:quantity-exceeds-the-stack", `This stack holds ${stack.quantity}; the quantity cannot be more.`,
+      { maximum: stack.quantity });
+  }
   const known = TRANSITION_FIELDS[error];
   return known === undefined ? { error } : refusal(error, known.field, `inventory:${error}`, known.message,
     known.field === "entryRef" ? { referenceKind: "itemEntry" } : {});
@@ -397,7 +405,7 @@ export function planInventoryTransition(
       result = changeItemLifecycle(itemSystem, { entryId: entry.entryId, action: operation.action, ...(operation.containerStateAfter === undefined ? {} : { containerStateAfter: operation.containerStateAfter }), ...(entry.disposition === "held" ? { holderRef: actor.id } : {}) });
       break;
   }
-  if ("error" in result) return transitionRefusal(result.error);
+  if ("error" in result) return transitionRefusal(result.error, operation, entry);
   return { itemSystem: result.itemSystem, targetEntryId: result.targetEntryId ?? entry.entryId, affectedHolderRefs: [...affected].sort() };
 }
 

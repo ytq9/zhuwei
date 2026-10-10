@@ -226,6 +226,7 @@ const FAULTS = [
   { id: "put-in-with-kind-dropped", ops: s => [(({ kind: _kind, ...rest }) => rest)(transfer("putIn", E.box, s.loose))], field: "kind", fix: () => "containerTransfer" },
   { id: "store-an-item-never-seen", ops: () => [{ kind: "store", entryRef: "item-entry:audit:never-seen", quantity: 1, containerRef: E.pouch }],
     field: "entryRef", fix: () => E.keyA },
+  { id: "put-back-more-than-the-stack", ops: s => [transfer("putIn", E.box, s.loose, { quantity: 2 })], field: "quantity", fix: () => 1 },
   { id: "store-a-zero-quantity", ops: s => [{ kind: "store", entryRef: s.loose, quantity: 0, containerRef: E.pouch }], field: "quantity", fix: () => 1 },
   { id: "store-into-closed-box", ops: s => [{ kind: "store", entryRef: s.loose, quantity: 1, containerRef: E.box }], field: "containerRef", fix: () => E.pouch },
   { id: "store-into-other-holders-satchel", ops: s => [{ kind: "store", entryRef: s.loose, quantity: 1, containerRef: E.satchel }], field: "containerRef", fix: () => E.pouch },
