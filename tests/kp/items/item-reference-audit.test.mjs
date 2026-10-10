@@ -7,7 +7,9 @@ import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as 
   PROBE_SCENE as SCENE } from "../../../tools/lib/vnext-authored-probe-fixture.mjs";
 import { proposalModelContext, recallKnowledge, withRecalledKnowledge } from "../../../app/_runtime/lib/kp/vnext/proposal-context.ts";
 import { encodeVNextStrictToolBundle, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME } from "../../../app/_runtime/lib/kp/vnext/proposal-schema.ts";
-import { vnextProposalRevisionCandidate } from "../../../app/_runtime/lib/kp/vnext/proposal-provider.ts";
+import { vnextProposalRevisionCandidate, createRepairTicket, createVNextAuthorityRevisionTicket,
+  vnextProposalCorrectionPrompt } from "../../../app/_runtime/lib/kp/vnext/proposal-provider.ts";
+import { bindProposalWire } from "../../../app/_runtime/lib/kp/vnext/proposal-reference-dialect.ts";
 import { authorityProposalDiagnostics } from "../../../app/_runtime/lib/kp/vnext/proposal-diagnostics.ts";
 import { VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE } from "../../../app/_runtime/lib/kp/vnext/room-bridge.ts";
 import { vnextRulesRevisionDiagnostics } from "../../../app/_runtime/lib/room/vnext-proposal-invocation.ts";
@@ -19,32 +21,23 @@ import { vnextRulesRevisionDiagnostics } from "../../../app/_runtime/lib/room/vn
 // What it finds today is listed in KNOWN_GAPS, and the test fails when a gap
 // appears that is not listed or a listed one no longer reproduces.
 
-/** What the audit finds on 2026-10-10 at 36e6a76d, each a piece of later
- * work. Close one and remove it here; a new one fails the test. */
+/** What the audit still finds, each a piece of later work. Close one and
+ * remove it here; a new one fails the test. Found 2026-10-10 at 36e6a76d;
+ * the location, candidate and Rules one-round gaps closed the same day. */
 const KNOWN_GAPS = new Map([
   // Context: nothing the KP is sent tells the referent apart.
   ["context:taken-from-two-containers:merged-with-alternative", "two alike pieces taken out join one stack; the earlier one's source is overwritten"],
   ["context:picked-up-from-floor:no-fact-for-recent", "picking an item up records nothing, so 'the key I just picked up' matches every key"],
   ["context:handed-over-by-other:no-fact-for-giver", "an item handed over records no giver, so 'the rope he just gave me' matches every rope"],
-  // Location: the diagnostic does not point at the field that is wrong.
-  ["location:put-in-closed-box-declared-open:points-at-operation", "an undeclared opening is reported at the declaration, not at access"],
-  ["location:take-out-of-the-wrong-container:points-at-operation", "a source in another container is reported at the declaration, not at entryRef"],
-  ["location:store-into-other-holders-satchel:points-at-", "storing into another character's bag is refused with a bare code, no path or requirement"],
-  ["location:store-what-another-holds:points-at-", "storing another character's item is refused with a message, no path"],
-  ["location:take-what-another-holds:points-at-", "taking another character's item is refused with a message, no path"],
-  ["location:give-what-lies-on-the-floor:points-at-", "giving an item on the floor is refused as the recipient being unavailable, no path"],
-  // Candidates: a wrong reference is not answered with the ones that would do.
-  ["candidates:store-what-another-holds:none-offered", "no list of items the actor could store"],
-  ["candidates:take-out-of-the-wrong-container:none-offered", "no list of what is in that container"],
-  ["candidates:give-what-lies-on-the-floor:none-offered", "no list of items the actor holds"],
-  // One round: Rules stops at the first refused step, and a refused
-  // declaration stops every other step from being checked.
-  ["one-round:put-back-the-stack-left-inside+store-what-another-holds:missing-A verified shared check is required to take another holder's item.",
-    "a refused containerTransfer declaration keeps the plain store from being checked"],
-  ["one-round:store-into-other-holders-satchel+take-what-another-holds:missing-A verified shared check is required to take another holder's item.",
-    "Rules reports only the first refused step"],
-  ["one-round:store-into-closed-box+drop-what-is-in-the-box:missing-inventory:open-container-before-accessing-known-entry",
-    "Rules reports only the first refused step"],
+  // One round across stages: a filling with a refused declaration is never
+  // lowered or preflighted, so a fault only lowering or Rules finds in
+  // another step waits for the next round. Rules refusals reach the KP only
+  // through a commit attempt; telling them in the same ticket needs Room to
+  // preflight before the ticket is made.
+  ["one-round:put-back-the-stack-left-inside+store-what-another-holds:missing-inventory:another-holders-item-needs-a-shared-check",
+    "a Rules fault behind a refused declaration waits a round"],
+  ["one-round:put-back-the-stack-left-inside+store-an-item-never-seen:missing-proposal:dependency-not-read-bound",
+    "a lowering fault behind a refused declaration waits a round"],
 ]);
 function assertGaps(found, kinds) {
   const known = [...KNOWN_GAPS.keys()].filter(gap => kinds.some(kind => gap.startsWith(`${kind}:`)));
@@ -200,19 +193,24 @@ const reply = value => ({ choices: [{ finish_reason: "tool_calls", message: { to
 
 /** The production path a filling takes: Room reads a listed carried item the
  * filling names (ADR 0133), the form is checked, and an accepted plan is
- * lowered and preflighted by Rules exactly as Room does before any dice. */
+ * lowered and preflighted by Rules exactly as Room does before any dice. What
+ * comes back is what the revision is told: the diagnostics of its ticket,
+ * as the correction prompt sends them, in full references. */
 function checkFilling(w, frozen, document) {
   const rows = new Set((frozen.references.possessionRecall ?? []).map(row => row.entryRef));
-  const named = [...new Set(JSON.stringify(document).match(/item-entry:[^"]+/g) ?? [])].filter(ref => rows.has(ref));
+  const bound = bindProposalWire(structuredClone(document), frozen);
+  const named = [...new Set(JSON.stringify(bound).match(/item-entry:[^"]+/g) ?? [])].filter(ref => rows.has(ref));
   const context = named.length === 0 ? frozen : withRecalledKnowledge(frozen, recallKnowledge(frozen, named, w.state));
+  const told = ticket => bindProposalWire(JSON.parse(vnextProposalCorrectionPrompt(ticket, context)).diagnostics, context);
   const candidate = vnextProposalRevisionCandidate(reply(document), ["inventoryOperation"], [], context, []);
-  if (candidate.kind !== "accepted") return candidate.diagnostics;
+  if (candidate.kind !== "accepted") return told(createRepairTicket(candidate, context, ["inventoryOperation"], []));
   const rootActionId = context.binding.rootActionId;
   const lowered = VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE.lowerProposal({ proposal: candidate.bundle, preparedActionId: `prepared:${rootActionId}`,
     rootActionId, actorCharacterId: ACTOR, principalId: "principal:probe-actor", requiredContext: context, profiles: w.f.profiles, state: w.state });
-  if (lowered.kind === "rejected") return authorityProposalDiagnostics(lowered.diagnostics ?? []);
-  const outcome = w.f.runtime.step(w.f.profiles, w.state, lowered.input);
-  return outcome.kind === "committed" ? [] : vnextRulesRevisionDiagnostics(outcome, { bundle: candidate.bundle, rulesInput: lowered.input });
+  const refused = lowered.kind === "rejected" ? authorityProposalDiagnostics(lowered.diagnostics ?? [])
+    : (outcome => outcome.kind === "committed" ? [] : vnextRulesRevisionDiagnostics(outcome, { bundle: candidate.bundle, rulesInput: lowered.input }))(
+      w.f.runtime.step(w.f.profiles, w.state, lowered.input));
+  return refused.length === 0 ? [] : told(createVNextAuthorityRevisionTicket(reply(document), context, ["inventoryOperation"], [], refused));
 }
 const at = (document, path) => path.reduce((value, key) => value?.[key], document);
 const put = (document, path, value) => { const copy = structuredClone(document); at(copy, path.slice(0, -1))[path.at(-1)] = value; return copy; };
@@ -228,6 +226,9 @@ const FAULTS = [
   { id: "put-the-box-into-itself", ops: () => [transfer("putIn", E.box, E.box)], field: "entryRef", fix: s => s.loose, offers: true },
   { id: "put-in-closed-box-declared-open", ops: s => [transfer("putIn", E.box, s.loose, { access: "alreadyOpen" })], field: "access", fix: () => "openNormally" },
   { id: "put-in-with-kind-dropped", ops: s => [(({ kind: _kind, ...rest }) => rest)(transfer("putIn", E.box, s.loose))], field: "kind", fix: () => "containerTransfer" },
+  { id: "store-an-item-never-seen", ops: () => [{ kind: "store", entryRef: "item-entry:audit:never-seen", quantity: 1, containerRef: E.pouch }],
+    field: "entryRef", fix: () => E.keyA },
+  { id: "store-a-zero-quantity", ops: s => [{ kind: "store", entryRef: s.loose, quantity: 0, containerRef: E.pouch }], field: "quantity", fix: () => 1 },
   { id: "store-into-closed-box", ops: s => [{ kind: "store", entryRef: s.loose, quantity: 1, containerRef: E.box }], field: "containerRef", fix: () => E.pouch },
   { id: "store-into-other-holders-satchel", ops: s => [{ kind: "store", entryRef: s.loose, quantity: 1, containerRef: E.satchel }], field: "containerRef", fix: () => E.pouch },
   { id: "store-what-another-holds", ops: () => [{ kind: "store", entryRef: E.ropeGift, quantity: 1, containerRef: E.pouch }], field: "entryRef", fix: () => E.keyA, offers: true },
@@ -239,7 +240,7 @@ const FAULTS = [
     field: "entryRef", fix: () => E.keyA },
 ];
 /** Faults on different things, filled together. */
-const COMBINED = [["put-back-the-stack-left-inside", "store-what-another-holds"], ["put-the-box-into-itself", "take-out-of-the-wrong-container"],
+const COMBINED = [["put-back-the-stack-left-inside", "store-what-another-holds"], ["put-back-the-stack-left-inside", "store-an-item-never-seen"], ["put-back-the-stack-left-inside", "store-a-zero-quantity"], ["put-the-box-into-itself", "take-out-of-the-wrong-container"],
   ["store-into-other-holders-satchel", "take-what-another-holds"], ["store-into-closed-box", "drop-what-is-in-the-box"]];
 
 function formGaps() {

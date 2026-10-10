@@ -249,8 +249,9 @@ test('typed repair retains the filling prefix and raw draft; errors point to the
   assert.equal(correction.messages[2].tool_calls[0].function.arguments, original);
   const prompt = JSON.parse(vnextProposalCorrectionPrompt(ticket, context));
   assert.deepEqual(prompt.allowedModes, ['replaceDraft']);
-  assert.deepEqual(prompt.diagnostics[0].path, ['steps', 'inventoryOperation', 0, 'operation']);
-  assert.equal(prompt.diagnostics[0].actual.value.containerRef, short(BOX));
+  // SPEC 0016 §7.2: reported at the declaration's own field to change.
+  assert.deepEqual(prompt.diagnostics[0].path, ['steps', 'inventoryOperation', 0, 'operation', 'access']);
+  assert.deepEqual(prompt.diagnostics[0].actual, { type: 'string', value: 'alreadyOpen' });
   const result = evaluateVNextProposalRevisionResponse(reply(wire(context)), ticket, context);
   assert.equal(result.result.kind, 'locallyAccepted');
   const patch = evaluateVNextProposalRevisionResponse(reply({ sourceDraftVersion: ticket.sourceDraftVersion,

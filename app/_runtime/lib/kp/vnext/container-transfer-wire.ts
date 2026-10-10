@@ -1,9 +1,10 @@
-import { compareCodeUnits, isPlainRecord, sameCanonical } from "./canonical-json";
+import { isPlainRecord, sameCanonical } from "./canonical-json";
 import { proposalDiagnostic, diagnosticActual, type ProposalDiagnostic } from "./proposal-diagnostics";
 import type { VNextRequiredContext } from "./required-context";
 import { proposalFillingSteps } from "./proposal-filling-interface";
 import { proposalInventoryEntryRefs } from "./proposal-context";
 import { authoritySceneContainerState } from "../../rules/authority-read";
+import { carriedLooseItemRefs, containedItemRefs, holdingChain, type FrozenRecords } from "./inventory-reference-candidates";
 
 function transferSources(context: VNextRequiredContext) {
   const authorized = new Set(proposalInventoryEntryRefs(context));
@@ -14,21 +15,14 @@ function transferSources(context: VNextRequiredContext) {
       && entry.value.containerRef === undefined && (entry.value.equippedSlot === null || entry.value.equippedSlot === undefined)).map(entry => entry.ref) };
 }
 
-/** What a revision may name as the source for this container: the read
- * sources, and the carried items the freeze only listed, which a draft that
- * names one reads (ADR 0133). Nothing goes into itself or into a container
- * inside it, so the container and whatever holds it are not put-in sources. */
-function transferCandidates(context: VNextRequiredContext, records: ReadonlyMap<string, Record<string, unknown>>, containerRef: string) {
-  const holding = new Set([containerRef]);
-  for (let ref = records.get(containerRef)?.containerRef; typeof ref === "string" && !holding.has(ref); ref = records.get(ref)?.containerRef) holding.add(ref);
-  const listed = (context.references.possessionRecall ?? []).filter(row => !records.has(row.entryRef));
-  const sources = transferSources(context);
-  const sorted = (refs: readonly string[]) => [...new Set(refs)].sort(compareCodeUnits);
-  return {
-    takeOut: sorted([...sources.takeOut, ...listed.filter(row => row.containerRef !== null).map(row => row.entryRef)]),
-    putIn: sorted([...sources.putIn, ...listed.filter(row => row.containerRef === null && row.equippedSlot === null).map(row => row.entryRef)])
-      .filter(ref => !holding.has(ref)),
-  };
+/** What a revision may name as the source for this container: what is in
+ * it, to take out; what the actor carries loose, less the container and
+ * whatever holds it, to put in. Read items and the carried items the freeze
+ * only listed alike (ADR 0133). */
+function transferCandidates(context: VNextRequiredContext, records: FrozenRecords, containerRef: string) {
+  const holding = holdingChain(records, containerRef);
+  return { takeOut: containedItemRefs(context, containerRef, records),
+    putIn: carriedLooseItemRefs(context, records).filter(ref => !holding.has(ref)) };
 }
 
 /** The name a read item goes by: its frozen definition's, or else the name
@@ -85,7 +79,10 @@ export function containerTransferWireSchemas(variants: readonly Record<string, a
 }
 
 export class ContainerTransferWireError extends TypeError {
-  constructor(readonly diagnostics: readonly ProposalDiagnostic[]) { super("CONTAINER_TRANSFER_WIRE_INVALID"); }
+  /** `refused` locates each refused declaration in the filling. */
+  constructor(readonly diagnostics: readonly ProposalDiagnostic[], readonly refused: readonly (readonly (string | number)[])[] = []) {
+    super("CONTAINER_TRANSFER_WIRE_INVALID");
+  }
 }
 
 /** SPEC 0001 §16, SPEC 0016 §7.3: a registered, finite declaration expands
@@ -103,11 +100,14 @@ export function expandContainerTransferWire(value: unknown, context: VNextRequir
   // SPEC 0016 §7.2 (ADR 0095): one revision is told every problem of every
   // declaration, so a wrong source and an undeclared opening arrive together.
   const problems: ProposalDiagnostic[] = [];
+  const refused: (string | number)[][] = [];
   const repair = { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" } as const;
-  function conflict(path: readonly (string | number)[], operation: unknown, reason: string) {
+  // Each problem is reported at the field to change (SPEC 0016 §7.2); the
+  // audit found an undeclared opening reported at the whole declaration.
+  function conflict(at: readonly (string | number)[], operation: Record<string, unknown>, reason: string, field: string) {
     problems.push(proposalDiagnostic("CONSTRAINT_CONFLICT", `container-transfer:${reason}`,
-      { path, pathBase: "arguments", expected: { requirement: "Declare ordinary access to the exact existing source/container. Locked, foreign-held or undecided mechanisms require their own adjudication/completion; no damage or unlock is implicit." },
-        actual: diagnosticActual(operation), repair }));
+      { path: [...at, field], pathBase: "arguments", expected: { requirement: "Declare ordinary access to the exact existing source/container. Locked, foreign-held or undecided mechanisms require their own adjudication/completion; no damage or unlock is implicit." },
+        actual: diagnosticActual(operation[field]), repair }));
   }
   const walk = (document: unknown, path: readonly (string | number)[] = []) => {
     if (!isPlainRecord(document)) return;
@@ -135,7 +135,9 @@ export function expandContainerTransferWire(value: unknown, context: VNextRequir
           || !["takeOut", "putIn"].includes(String(op.direction)) || !["alreadyOpen", "openNormally"].includes(String(op.access))
           || !["leaveAsIs", "close"].includes(String(op.after)) || typeof op.containerRef !== "string" || typeof op.entryRef !== "string"
           || !Number.isSafeInteger(op.quantity) || Number(op.quantity) < 1 || Number(op.quantity) > 1_000_000 || typeof scene !== "string") {
-          conflict(at, op, "invalid-declaration");
+          problems.push(proposalDiagnostic("CONSTRAINT_CONFLICT", "container-transfer:invalid-declaration", { path: at, pathBase: "arguments",
+            expected: { fields: ["access", "after", "containerRef", "direction", "entryRef", "kind", "quantity"] }, actual: diagnosticActual(op), repair }));
+          refused.push(at);
           continue;
         }
         const containerRef = op.containerRef, entryRef = op.entryRef;
@@ -148,7 +150,11 @@ export function expandContainerTransferWire(value: unknown, context: VNextRequir
           expected: { enum: candidates[op.direction === "putIn" ? "putIn" : "takeOut"],
             requirement: "Name an item this stage has read, or a carried item listed in references.possessionRecall, which is read when a draft names it." },
           repair }));
-        else if (op.direction === "takeOut" && (item.containerRef !== containerRef || !transferSources(context).takeOut.includes(entryRef))) conflict(at, op, "source-container-mismatch");
+        else if (op.direction === "takeOut" && (item.containerRef !== containerRef || !transferSources(context).takeOut.includes(entryRef))) {
+          problems.push(proposalDiagnostic("REFERENCE_UNAVAILABLE", "container-transfer:source-container-mismatch", {
+            path: [...at, "entryRef"], pathBase: "arguments", actual: diagnosticActual(entryRef),
+            expected: { enum: candidates.takeOut, requirement: "Name an item inside this container." }, repair }));
+        }
         else if (op.direction === "putIn" && !candidates.putIn.includes(entryRef)) {
           const named = itemLabel(records, entryRef);
           const sameName = named === undefined ? [] : candidates.putIn.filter(ref => (itemLabel(records, ref) ?? listedLabel(context, ref)) === named);
@@ -159,21 +165,22 @@ export function expandContainerTransferWire(value: unknown, context: VNextRequir
             repair }));
         }
         // The container and the access the declaration chose for it.
-        if (!container || !context.references.citations.viewerEvidenceRefs.includes(containerRef)) conflict(at, op, "frozen-visible-container-required");
-        else if (container.holderRef && container.holderRef !== context.intent.actorRef) conflict(at, op, "foreign-held-container");
+        if (!container || !context.references.citations.viewerEvidenceRefs.includes(containerRef)) { conflict(at, op, "frozen-visible-container-required", "containerRef"); refused.push(at); }
+        else if (container.holderRef && container.holderRef !== context.intent.actorRef) { conflict(at, op, "foreign-held-container", "containerRef"); refused.push(at); }
         else {
           const state = isPlainRecord(container.stateMachine) ? container.stateMachine.state
             : authoritySceneContainerState(container.feature, container.content);
           const unrestricted = container.stateMachine === null;
-          if (state === "locked") conflict(at, op, "locked-container");
-          else if (!unrestricted && !["open", "closed", "destroyed"].includes(String(state))) conflict(at, op, "mechanism-not-defined");
+          if (state === "locked") conflict(at, op, "locked-container", "containerRef");
+          else if (!unrestricted && !["open", "closed", "destroyed"].includes(String(state))) conflict(at, op, "mechanism-not-defined", "containerRef");
           else {
-            if (op.access === "alreadyOpen" && state === "closed") conflict(at, op, "opening-not-declared");
-            if (op.after === "close" && (unrestricted || state === "destroyed")) conflict(at, op, "cannot-close-without-working-mechanism");
+            if (op.access === "alreadyOpen" && state === "closed") conflict(at, op, "opening-not-declared", "access");
+            if (op.after === "close" && (unrestricted || state === "destroyed")) conflict(at, op, "cannot-close-without-working-mechanism", "after");
             const interval = intervals.get(containerRef);
-            if (interval && (interval.access !== op.access || interval.after !== op.after)) conflict(at, op, "conflicting-access-declarations");
+            if (interval && (interval.access !== op.access || interval.after !== op.after))
+              conflict(at, op, "conflicting-access-declarations", interval.access !== op.access ? "access" : "after");
           }
-          if (problems.length > before) continue;
+          if (problems.length > before) { refused.push(at); continue; }
           const interval = intervals.get(containerRef);
           intervals.set(containerRef, { access: op.access, after: op.after });
           const world = (action: "open" | "close") => {
@@ -203,7 +210,7 @@ export function expandContainerTransferWire(value: unknown, context: VNextRequir
     });
   };
   walk(value);
-  if (problems.length > 0) throw new ContainerTransferWireError(problems);
+  if (problems.length > 0) throw new ContainerTransferWireError(problems, refused);
   const generatedDomainPaths = new Set<string>();
   const locate = (document: unknown, domainPath: readonly (string | number)[] = []) => {
     if (!isPlainRecord(document)) return;

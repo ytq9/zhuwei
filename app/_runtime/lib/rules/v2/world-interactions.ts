@@ -2199,16 +2199,32 @@ function preflightAtomicWorldInteractionPlan(
         representativeRolls(checkPlan, branch) !== undefined);
   for (const branch of branches) {
     const rolls = checkPlan === undefined ? undefined : representativeRolls(checkPlan, branch);
+    // SPEC 0016 §7.2 (ADR 0095): planning reports every refused step, so one
+    // revision is told them all; a step that depends on a refused one is
+    // left out rather than refused again.
+    const refusals: AtomicStepRefusal[] = [];
     const executed = executeAtomicWorldInteractionBranch(
       profiles,
       transactionAccumulator(state, true),
       plan,
       branch,
-      rolls, undefined, specs, undefined, checkBinding,
+      rolls, undefined, specs, undefined, checkBinding, refusals,
     );
     if (executed.kind === "rejected") return executed.result;
   }
   return undefined;
+}
+
+type AtomicStepRefusal = Readonly<{ stepIndex: number; result: Extract<StepResult, { kind: "rejected" }> }>;
+
+/** One refusal as it always was; several as one rejection carrying each
+ * step's diagnostics, a step without its own being located at the step. */
+function atomicRefusal(refusals: readonly AtomicStepRefusal[]): Extract<StepResult, { kind: "rejected" }> {
+  if (refusals.length === 1) return refusals[0]!.result;
+  const first = refusals[0]!.result.rejection;
+  return rejected(first.code, first.message, refusals.flatMap(({ stepIndex, result }) => result.rejection.diagnostics?.length
+    ? result.rejection.diagnostics : [{ code: "CONSTRAINT_CONFLICT", message: result.rejection.message, path: `/steps/${stepIndex}/rulesInput`,
+      source: "SPEC 0016" as const, visibility: "public" as const }]));
 }
 
 function executeAtomicWorldInteractionBranch(
@@ -2221,6 +2237,8 @@ function executeAtomicWorldInteractionBranch(
   collected?: Map<string,WorldInteractionDiceSpec>,
   cursor?: { stepIndex: number; phase: number; result: StepResult; ledger: AtomicLedgerEntry[]; tapes: AtomicTape[] },
   checkBinding?: { check?: FrozenCheck | null },
+  /** Planning only: refused steps are collected here and the rest go on. */
+  refusals?: AtomicStepRefusal[],
 ): AtomicExecutionResult {
   const ledger: AtomicLedgerEntry[] = cursor?.ledger ?? [];
   const tapes = cursor?.tapes ?? (randomRequest === undefined ? [] : [{ request: randomRequest, rolls: [...(rolls ?? [])] }]);
@@ -2249,9 +2267,11 @@ function executeAtomicWorldInteractionBranch(
     const paid = applyAttemptCosts(accumulator, profiles, plan.rootActionId, plan.actorCharacterId, costs, ATOMIC_ACCEPTED_COST_PURPOSE);
     if (!Array.isArray(paid)) return { kind: "rejected", result: paid };
   }
+  const unsettled = new Set<string>();
   for (let stepIndex = cursor?.stepIndex ?? 0; stepIndex < plan.steps.length; stepIndex++) {
     const originalStep = plan.steps[stepIndex];
     const step = structuredClone(originalStep);
+    if (refusals !== undefined && step.dependsOn.some(ref => unsettled.has(ref))) { unsettled.add(step.proposalRef); continue; }
     if (step.rulesInput.kind === "formNpcActorPlan") {
       const issue = frozenNpcActorPlanFormationIssue(accumulator.source ?? accumulator.state, plan.actorCharacterId, step.rulesInput.plan);
       if (issue) return { kind: "rejected", result: rejected("privateOrUnknownReference", issue) };
@@ -2373,6 +2393,7 @@ function executeAtomicWorldInteractionBranch(
           })),
         } };
       }
+      if (refusals !== undefined && result.kind === "rejected") { refusals.push({ stepIndex, result }); unsettled.add(step.proposalRef); continue; }
       return { kind: "rejected", result };
     }
     ledger.push({
@@ -2381,6 +2402,7 @@ function executeAtomicWorldInteractionBranch(
       status: "applied",
     });
   }
+  if (refusals !== undefined && refusals.length > 0) return { kind: "rejected", result: atomicRefusal(refusals) };
   if ((plan.narrativeMaterializationRefs ?? []).some(ref => narrativeMaterializedRef(accumulator.state, ref) === undefined)) {
     return { kind: "rejected", result: rejected("privateOrUnknownReference", "narrative:materialization-obligation-unfulfilled") };
   }

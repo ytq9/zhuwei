@@ -72,6 +72,7 @@ import { closeVNextProposalCapabilities, VNEXT_PROPOSAL_CAPABILITIES, VNEXT_PROP
 import { draftCommonActionDiagnostics } from "./common-actions";
 import { bindProposalWire, proposalWireReferences, proposalWireDiagnosticReferences, proposalUsesTypedReplacement } from "./proposal-reference-dialect";
 import { expandContainerTransferWire, ContainerTransferWireError, containerTransferDiagnostics } from "./container-transfer-wire";
+import { frozenRecords, inventoryEntryCandidates } from "./inventory-reference-candidates";
 
 // Ephemeral proof derived solely from the original wire and frozen context.
 // Re-parsing by Room derives it again; no model field can claim this exemption.
@@ -134,14 +135,17 @@ async function contextForNamedPossessions(context: VNextRequiredContext, respons
 export const VNEXT_PROPOSAL_CORRECTION_ROUNDS = 3;
 
 export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
-  version: "kp-vnext2-proposal-parser-v90",
+  version: "kp-vnext2-proposal-parser-v91",
   // ADR 0132, ADR 0133: a selection may name carried items the freeze only
   // listed; so may a filling or correction, read before that reply is checked.
   possessionRecall: "requested-item-refs-ride-the-recall-request-and-read-at-the-listed-version-an-item-already-held-by-the-forms-reads-as-not-requested-v2",
   draftNamedPossessions: "a-reply-naming-a-listed-carried-item-has-it-read-first-and-each-round-is-checked-with-its-own-named-items-v1",
   // SPEC 0016 §7.2: every declaration problem in one revision; a kindless
   // declaration is named; its own container is no put-in source.
-  containerTransferDiagnostics: "all-declaration-problems-one-revision-kindless-declaration-named-container-and-holders-excluded-listed-sources-offered-v1",
+  containerTransferDiagnostics: "all-declaration-problems-one-revision-at-their-fields-kindless-declaration-named-container-and-holders-excluded-listed-sources-offered-rest-of-filling-checked-v2",
+  // ADR 0135: a Rules refusal of an item reference offers the items the
+  // revision may name instead, from what the stage was sent.
+  rulesRefusalCandidates: "inventory-entry-refusals-offer-carried-loose-items-read-or-listed-v1",
   containerState: "frozen-item-mechanism-and-shared-geometry-before-semantic-state-v1",
   // ADR 0096: a selection asking for an NPC view already loaded is read without it.
   loadedNpcSelection: "a-requested-view-already-loaded-reads-as-not-requested-v1",
@@ -560,7 +564,46 @@ export function parseSubmitKpProposalBundleCandidateArguments(
     const candidate = candidateForArguments(expanded.value, value);
     scriptedCandidatePaths.set(candidate, expanded.generatedDomainPaths);
     return candidate;
-  } catch (error) { return invalidOutput(error); }
+  } catch (error) {
+    if (error instanceof ContainerTransferWireError) return invalidOutput(new VNextProposalBundleOutputError([
+      ...error.diagnostics.map(detail => ({ ...detail, pathBase: "arguments" as const })),
+      ...beyondRefusedDeclarations(parsed.raw, context, error.refused)]));
+    return invalidOutput(error);
+  }
+}
+
+/** SPEC 0016 §7.2 (ADR 0095): a refused containerTransfer declaration does not
+ * hide what is wrong with the rest of the filling. The rest is checked with
+ * each refused declaration standing as the plain operation it would expand
+ * to, so no step moves; whatever that check says of those steps themselves
+ * is dropped, their own diagnostics already stand. A declaration inside a
+ * clarification choice keeps the old reading: nothing beyond it is checked. */
+function beyondRefusedDeclarations(raw: unknown, context: VNextRequiredContext,
+  refused: readonly (readonly (string | number)[])[]): readonly ProposalDiagnostic[] {
+  if (refused.length === 0 || !refused.every(path => path.length === 4 && path[0] === "steps" && path[1] === "inventoryOperation"
+    && typeof path[2] === "number" && path[3] === "operation")) return [];
+  const rest = bindProposalWire(structuredClone(raw), context) as Record<string, unknown>;
+  const rows = isPlainRecord(rest.steps) && Array.isArray(rest.steps.inventoryOperation) ? rest.steps.inventoryOperation : undefined;
+  if (rows === undefined) return [];
+  const indices = new Set(refused.map(path => Number(path[2])));
+  for (const index of indices) {
+    const row = rows[index], operation = isPlainRecord(row) ? row.operation : undefined;
+    if (!isPlainRecord(row) || !isPlainRecord(operation)) return [];
+    row.operation = operation.direction === "takeOut" ? { kind: "acquire", entryRef: operation.entryRef, quantity: operation.quantity }
+      : { kind: "store", entryRef: operation.entryRef, quantity: operation.quantity, containerRef: operation.containerRef };
+  }
+  let expanded: ReturnType<typeof expandContainerTransferWire>, diagnostics: readonly ProposalDiagnostic[], draft: unknown;
+  try {
+    expanded = expandContainerTransferWire(rest, context);
+    const candidate = candidateForArguments(expanded.value, JSON.stringify(rest));
+    if (candidate.kind === "accepted") return [];
+    diagnostics = candidate.diagnostics; draft = candidate.draft;
+  } catch (error) {
+    if (!(error instanceof VNextProposalBundleOutputError)) return [];
+    diagnostics = error.diagnostics; draft = rest; expanded = { value: rest, origins: new Map(), generatedDomainPaths: new Set() };
+  }
+  return containerTransferDiagnostics(proposalFillingDiagnostics(draft, diagnostics, expanded.value), expanded.origins)
+    .filter(detail => !(detail.path?.[0] === "steps" && detail.path[1] === "inventoryOperation" && indices.has(Number(detail.path[2]))));
 }
 
 function readProposalArguments(value: unknown, _toolName: string): { raw: unknown } {
@@ -1218,6 +1261,27 @@ export async function invokeSubmitKpProposalBundleWithOneCorrection(
   }
 }
 
+/** SPEC 0016 §7.2: a Rules refusal of an item an inventory step names is
+ * answered with the items the revision may name instead. Rules carries no
+ * candidate refs; they come from what the stage was sent, read and listed
+ * alike, so the live round and Room's proof of it list the same. A refusal
+ * whose fix is opening a container first offers none. */
+function withInventoryEntryCandidates(diagnostics: readonly ProposalDiagnostic[], bundle: VNextProposalBundle,
+  context: VNextRequiredContext): readonly ProposalDiagnostic[] {
+  const records = frozenRecords(context);
+  return diagnostics.map(diagnostic => {
+    const path = diagnostic.path ?? [];
+    const expected = diagnostic.expected;
+    if (diagnostic.pathBase !== "draft" || path.length !== 4 || path[0] !== "proposals" || path[2] !== "operation" || path[3] !== "entryRef"
+      || !isPlainRecord(expected) || expected.referenceKind !== "itemEntry" || expected.precedingContainerOperation !== undefined) return diagnostic;
+    const step: unknown = bundle.proposals[Number(path[1])];
+    if (!isPlainRecord(step) || step.kind !== "inventoryOperation" || !isPlainRecord(step.operation)) return diagnostic;
+    const named = step.operation.entryRef;
+    const candidates = inventoryEntryCandidates(context, step.operation, records)?.filter(ref => ref !== named);
+    return candidates === undefined || candidates.length === 0 ? diagnostic : { ...diagnostic, expected: { ...expected, enum: candidates } };
+  });
+}
+
 /** The source passed local validation. Only Room can prove the later Rules
  * rejection and admit this ticket before any confirmation, dice or execution. */
 export function createVNextAuthorityRevisionTicket(response: unknown, requiredContext: VNextRequiredContext,
@@ -1226,9 +1290,10 @@ export function createVNextAuthorityRevisionTicket(response: unknown, requiredCo
   const candidate = vnextProposalRevisionCandidate(response, capabilities, terminalKinds, requiredContext, knowledgeRefs);
   if (candidate.kind !== "accepted" || diagnostics.length === 0) throw new TypeError("VNEXT_PROPOSAL_REPAIR_TICKET_INVALID");
   const call = extractProposalToolCall(response);
+  const offered = withInventoryEntryCandidates(diagnostics, candidate.bundle, requiredContext);
   return createRepairTicket({ kind: "locallyRejected", draft: candidate.bundle as unknown as JsonRecord,
     bundleHash: candidate.bundleHash, validationCode: "PROPOSAL_RULES_DIAGNOSTIC",
-    diagnostics, issues: diagnostics.map(detail => detail.constraint),
+    diagnostics: offered, issues: offered.map(detail => detail.constraint),
     originalArguments: typeof call.arguments === "string" ? call.arguments : JSON.stringify(call.arguments),
     argumentSource: typeof call.arguments === "string" ? "rawString" : "decodedObject" }, requiredContext, capabilities, terminalKinds, npcRefs, knowledgeRefs, round);
 }

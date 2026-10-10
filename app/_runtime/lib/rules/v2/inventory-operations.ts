@@ -236,6 +236,45 @@ function shutStoreContainer(): { error: string; diagnostics: RuleDiagnostic[] } 
   }] };
 }
 
+/** SPEC 0016 §7.2: a refusal names the field of the operation to change,
+ * what it must be instead, and why; the error code stays what callers read.
+ * The audit (tests/kp/items/item-reference-audit.test.mjs) found refusals
+ * that carried a bare code, or blamed the recipient for an item on the floor. */
+function refusal(error: string, field: string | undefined, constraint: string, message: string,
+  expected: Readonly<Record<string, unknown>> = {}, code = "CONSTRAINT_CONFLICT"): { error: string; diagnostics: RuleDiagnostic[] } {
+  return { error, diagnostics: [{ code, ...(field === undefined ? {} : { path: `/plan/operation/${field}` }), constraint,
+    ...(Object.keys(expected).length === 0 ? {} : { expected }), message, source: "SPEC 0016", visibility: "public" }] };
+}
+const HELD_BY_ACTOR = { referenceKind: "itemEntry", holder: "actor" } as const;
+/** An item another character holds is taken only through a shared check. */
+export function anotherHoldersItemRefusal(error: string) {
+  return refusal(error, "entryRef", "inventory:another-holders-item-needs-a-shared-check",
+    "Another character holds this item. Name an item the actor holds or can reach, or rule the shared check that lets the actor take this one.",
+    { ...HELD_BY_ACTOR, alternative: "a shared check whose success transfers the item to the actor" });
+}
+/** Errors of the item transitions, by the operation field each concerns. */
+const TRANSITION_FIELDS: Readonly<Record<string, Readonly<{ field: string; message: string }>>> = {
+  invalidQuantity: { field: "quantity", message: "The quantity must be a whole number no larger than the stack." },
+  nonStackableQuantity: { field: "quantity", message: "A non-stackable item moves one at a time." },
+  invalidItemPlacement: { field: "entryRef", message: "This item cannot go there: an item never goes into itself or into a container it holds, and the quantity must not exceed the stack." },
+  itemUnavailable: { field: "entryRef", message: "This item is not where the operation needs it." },
+  itemHolderMismatch: { field: "entryRef", message: "The actor does not hold this item." },
+  itemNotUsable: { field: "entryRef", message: "This item is broken or otherwise unusable for this operation." },
+  itemComponentOccupied: { field: "entryRef", message: "This item is part of an assembly; take the assembly apart first." },
+  itemContainerClosed: { field: "entryRef", message: "This item is in a closed container; open it first." },
+  invalidEquipmentSlot: { field: "slot", message: "This item cannot be worn in that slot." },
+  twoHandedSlotConflict: { field: "slot", message: "A two-handed item needs both hands free." },
+  unchangedGear: { field: "slot", message: "The item is already in that state." },
+  unchangedItemState: { field: "entryRef", message: "The item is already where the operation would put it." },
+  invalidOwnershipDisposition: { field: "ownershipDisposition", message: "Choose whether ownership stays or passes to the recipient." },
+  invalidTransferParticipants: { field: "targetCharacterRef", message: "The giver and the recipient must be two present characters." },
+};
+function transitionRefusal(error: string): { error: string; diagnostics?: RuleDiagnostic[] } {
+  const known = TRANSITION_FIELDS[error];
+  return known === undefined ? { error } : refusal(error, known.field, `inventory:${error}`, known.message,
+    known.field === "entryRef" ? { referenceKind: "itemEntry" } : {});
+}
+
 /** SPEC 0001 §16: a remembered real item behind a closed lid is not a
  * nonexistent reference. Reveal no new identity through a rejection. */
 function knownClosedInventoryEntry(state: AuthoritativeWorldState, actor: CharacterRecord, entry: ItemSystemStateV1["entries"][string]):
@@ -269,7 +308,7 @@ export function planInventoryTransition(
   const actor = state.entities[actorCharacterId];
   const itemSystem = state.campaignRuntime.itemSystem;
   const entry = itemSystem.entries[operation.entryRef];
-  if (entry?.assemblyRef !== undefined) return { error: "itemComponentOccupied" };
+  if (entry?.assemblyRef !== undefined) return transitionRefusal("itemComponentOccupied");
   if (actor?.tenureStatus !== "active" || (actor.loadout === undefined && (actor.kind !== "npc" || operation.kind === "equip"))
     || state.scenes[actor.sceneId] === undefined) return { error: "inventoryReferenceUnavailable" };
   // Missing and unavailable ground entries expose the same contract metadata.
@@ -279,25 +318,26 @@ export function planInventoryTransition(
     return entry === undefined ? unavailableInventoryEntry() : knownClosedInventoryEntry(state, actor, entry) ?? unavailableInventoryEntry();
   }
   if(!conditionActionPermission(state,actor.id,{kind:"action"}).allowed) {
-    return {error:"inventoryActorCannotAct"};
+    return refusal("inventoryActorCannotAct", undefined, "inventory:actor-cannot-act", "The actor cannot act now; no item operation is possible this turn.");
   }
   const holder = entry.holderRef === null ? undefined : state.entities[entry.holderRef];
   const entryScene = entry.disposition === "scene" ? entry.sceneRef : holder?.sceneId;
   if (entryScene !== actor.sceneId || (holder !== undefined && holder.tenureStatus !== "active")) {
-    return { error: "inventorySceneMismatch" };
+    return refusal("inventorySceneMismatch", "entryRef", "inventory:item-not-within-reach", "This item is not in the actor's scene.", { referenceKind: "itemEntry" });
   }
   const foreignHeld = entry.disposition === "held" && entry.holderRef !== actor.id;
   if (foreignHeld && (authority.kind !== "sharedCheckSuccess"
     || !validSharedCheckAuthority(state, authority, rootActionId, actor.id, contextHash, entry.entryId)
     || operation.kind !== "transfer"
-    || (operation.targetCharacterRef !== actor.id && !authority.sourcePayload.directTargetRefs.includes(operation.targetCharacterRef)))) return { error: "inventoryAdjudicationRequired" };
+    || (operation.targetCharacterRef !== actor.id && !authority.sourcePayload.directTargetRefs.includes(operation.targetCharacterRef)))) return anotherHoldersItemRefusal("inventoryAdjudicationRequired");
   if (!foreignHeld && authority.kind !== "actor") return { error: "inventoryAuthorityMismatch" };
   if (operation.kind === "equip" && Object.values(state.combatRuntime.encounters).some((encounter) =>
     encounter.status !== "concluded" && Array.isArray(encounter.participantEntityIds) && encounter.participantEntityIds.includes(actor.id))) {
-    return { error: "inventoryEquipmentDuringEncounter" };
+    return refusal("inventoryEquipmentDuringEncounter", "kind", "inventory:no-equipment-change-in-an-encounter",
+      "Equipment does not change during an encounter; use the item as it is, or after the fighting.");
   }
   if (Object.values(state.campaignRuntime.activities).some((activity) => activity.status === "active"
-    && activity.characterId === actor.id)) return { error: "inventoryActorBusy" };
+    && activity.characterId === actor.id)) return refusal("inventoryActorBusy", undefined, "inventory:actor-busy", "The actor is busy with an activity that has not ended.");
   const affected = new Set<string>(holder === undefined ? [] : [holder.id]);
   let result: { itemSystem: ItemSystemStateV1; targetEntryId?: string } | { error: string };
   const move = (execute: (id?: string) => typeof result) => {
@@ -319,27 +359,37 @@ export function planInventoryTransition(
     case "store": {
       const container = authorityItemContainer(state, operation.containerRef, actor.sceneId, actor.id);
       if (!container) return authorityItemContainerShut(state, operation.containerRef, actor.sceneId, actor.id)
-        ? shutStoreContainer() : unavailableInventoryEntry();
-      if (container.holderRef !== null && container.holderRef !== actor.id) return { error: "inventoryAdjudicationRequired" };
+        ? shutStoreContainer() : refusal("inventoryReferenceUnavailable", "containerRef", "inventory:container-ref-must-be-a-reachable-open-container",
+          "Name a container in the actor's hands or in this scene that is open.", { referenceKind: "container" }, "REFERENCE_UNAVAILABLE");
+      if (container.holderRef !== null && container.holderRef !== actor.id) return refusal("inventoryAdjudicationRequired", "containerRef",
+        "inventory:container-held-by-another", "Another character holds this container. Store into one the actor holds or one in the scene, or hand the item over instead.",
+        { referenceKind: "container", holder: "actor or scene" });
       result = move(id => storeItemQuantity(itemSystem, { entryId: entry.entryId, quantity: operation.quantity,
         containerRef: operation.containerRef, ...container, ...(id === undefined ? {} : { targetEntryId: id }) }));
       if (container.holderRef !== null) affected.add(container.holderRef);
       break;
     }
     case "release":
-      if (operation.sceneRef !== actor.sceneId) return { error: "inventorySceneMismatch" };
+      if (operation.sceneRef !== actor.sceneId) return refusal("inventorySceneMismatch", "sceneRef", "inventory:release-in-the-actors-scene",
+        "An item is put down where the actor is.", { sceneRef: actor.sceneId });
       result = move((id) => releaseItemQuantity(itemSystem, { entryId: entry.entryId, holderRef: actor.id, sceneRef: operation.sceneRef, quantity: operation.quantity, ...(operation.position === undefined ? {} : { position: operation.position }), ...(id === undefined ? {} : { targetEntryId: id }) }));
       break;
     case "transfer": {
       const recipient = state.entities[operation.targetCharacterRef];
+      // The item comes first: one on the floor was reported as the recipient
+      // being unavailable. The error code stays as callers read it.
+      if (entry.holderRef === null) return refusal("inventoryRecipientUnavailable", "entryRef", "inventory:give-needs-an-item-the-giver-holds",
+        "The giver does not hold this item; it lies in the scene. Take it first, or name an item the giver holds.", HELD_BY_ACTOR);
       if (recipient?.tenureStatus !== "active" || recipient.sceneId !== actor.sceneId
-        || (recipient.loadout === undefined && recipient.kind !== "npc") || entry.holderRef === null) return { error: "inventoryRecipientUnavailable" };
+        || (recipient.loadout === undefined && recipient.kind !== "npc")) return refusal("inventoryRecipientUnavailable", "targetCharacterRef",
+          "inventory:recipient-unavailable", "The recipient must be an active character in the actor's scene.");
       affected.add(recipient.id);
       result = move((id) => transferItemQuantity(itemSystem, { entryId: entry.entryId, fromHolderRef: entry.holderRef!, toHolderRef: recipient.id, quantity: operation.quantity, ownershipDisposition: operation.ownershipDisposition, ...(id === undefined ? {} : { targetEntryId: id }) }));
       break;
     }
     case "equip":
-      if (operation.action === "stow" && entry.equippedSlot !== operation.slot) return { error: "inventoryEquipmentMismatch" };
+      if (operation.action === "stow" && entry.equippedSlot !== operation.slot) return refusal("inventoryEquipmentMismatch", "slot",
+        "inventory:stow-from-the-slot-the-item-is-in", "Stow the item from the slot it is equipped in.", { slot: entry.equippedSlot });
       result = changeItemEquipment(itemSystem, itemLoadoutBasis(actor), operation.action === "wear"
         ? { action: "wear", entryId: entry.entryId, slot: operation.slot } : { action: "stow", slot: operation.slot });
       break;
@@ -347,7 +397,7 @@ export function planInventoryTransition(
       result = changeItemLifecycle(itemSystem, { entryId: entry.entryId, action: operation.action, ...(operation.containerStateAfter === undefined ? {} : { containerStateAfter: operation.containerStateAfter }), ...(entry.disposition === "held" ? { holderRef: actor.id } : {}) });
       break;
   }
-  if ("error" in result) return result;
+  if ("error" in result) return transitionRefusal(result.error);
   return { itemSystem: result.itemSystem, targetEntryId: result.targetEntryId ?? entry.entryId, affectedHolderRefs: [...affected].sort() };
 }
 
@@ -416,7 +466,8 @@ export function stepInventoryOperation(
   if (entry?.disposition === "held" && entry.holderRef !== input.actorCharacterId) {
     const grant = options.adjudicationGrant?.[INVENTORY_ADJUDICATION_GRANT];
     if (grant?.rootActionId !== input.rootActionId || grant.actorCharacterId !== input.actorCharacterId || grant.contextHash !== plan.contextHash) {
-      return rejected("invalidRulesInput", "A verified shared check is required to take another holder's item.");
+      return rejected("invalidRulesInput", "A verified shared check is required to take another holder's item.",
+        anotherHoldersItemRefusal("inventoryAdjudicationRequired").diagnostics);
     }
     authority = grant.authority;
   }

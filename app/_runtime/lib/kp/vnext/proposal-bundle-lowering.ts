@@ -425,7 +425,7 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
       // This is private compilation, not a state write: read sets still bind
       // the original RequiredContext and Rules revalidates every completion.
       const lowered = lowerExecutableEntry({ ...input, state: completedObjectState }, sourceEntry, derivedEntry, plan, ruling, storyMaterials, completionBindings);
-      if (lowered.kind === "rejected") { failures.push(lowered); continue; }
+      if (lowered.kind === "rejected") { failures.push(locateUnreadReferences(lowered, sourceEntry, derivedEntry.ordinal)); continue; }
       if (sourceEntry.kind === "worldInteraction" && sourceEntry.commonAction?.kind === "operateObject")
         completedObjectState = previewObjectOperation(completedObjectState, input.actorCharacterId, sourceEntry.commonAction);
       // SPEC 0015 §11.1: the act's later steps open, close or unlock the
@@ -1157,6 +1157,30 @@ function lowerObjectMechanicsCompletion(input: VNext2ProposalBundleLoweringInput
       state: entry.observableState, opensPassage: mechanics!.opensPassage,
       armorClass: mechanics!.armorClass === null ? null : String(mechanics!.armorClass),
       hitPoints: mechanics!.hitPoints === null ? null : String(mechanics!.hitPoints) } } };
+}
+
+const UNREAD_REFERENCE = "proposal:dependency-not-read-bound:";
+/** SPEC 0016 §7.2: a reference this stage was not sent is reported where the
+ * step names it, under one constraint with the reference as its value. The
+ * audit found an invented item reported nowhere, its name in the constraint. */
+function locateUnreadReferences(result: Extract<VNext2EntryLoweringResult, { kind: "rejected" }>, source: unknown,
+  ordinal: number): Extract<VNext2EntryLoweringResult, { kind: "rejected" }> {
+  if (result.diagnostics !== undefined || !result.issues.some(issue => issue.startsWith(UNREAD_REFERENCE))) return result;
+  const located = (ref: string) => {
+    const paths: (string | number)[][] = [];
+    const visit = (value: unknown, path: (string | number)[]): void => {
+      if (value === ref) paths.push(path);
+      else if (Array.isArray(value)) value.forEach((item, index) => visit(item, [...path, index]));
+      else if (isPlainRecord(value)) for (const [key, item] of Object.entries(value)) visit(item, [...path, key]);
+    };
+    visit(source, []);
+    return (paths.length === 0 ? [[]] : paths).map(path => proposalDiagnostic("REFERENCE_UNAVAILABLE", "proposal:dependency-not-read-bound", {
+      path: ["proposals", ordinal, ...path], actual: diagnosticActual(ref), repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" },
+      expected: { ...(path.at(-1) === "entryRef" ? { referenceKind: "itemEntry" } : {}),
+        requirement: "Name a reference this stage was sent; a carried item listed in references.possessionRecall is read when a draft names it." } }));
+  };
+  return { ...result, diagnostics: result.issues.flatMap(issue => issue.startsWith(UNREAD_REFERENCE)
+    ? located(issue.slice(UNREAD_REFERENCE.length)) : diagnosticsFromIssues(result.code, [issue])) };
 }
 
 /** Map only the exact reference slots created by the lowering above back to
