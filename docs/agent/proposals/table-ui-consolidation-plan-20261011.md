@@ -215,5 +215,5 @@
 - 删除服务端、客户端与路由的 `joinCombat`、`extraAttack`、`leaveFight`、`resolveReact`、`castSpell`、`useFeature`、`useHitDie`、`approveSquadQueue`；桌面快照不再带 `combat`、`restVote`、`restHold`、`squadQueue`；页面删除旧战斗条、小队排队条、休息投票与保持提示、"队员发言先给队长看"的提示和排队回执分支。
 - 表格按钮命令只剩 `endTurn`、`restNow`、`cancelRest`，其他命令抛错拒绝。
 - 删除无调用者的 `app/_runtime/lib/kp/combat.ts`，并从 `tools/check-modules.mjs` 的第二权威允许名单移除。
-- 掷骰按钮里非权威掷骰的加值分支不再读旧遭遇；该分支与 `lib/dnd/boosts.ts` 在现役版本都不执行，删除另行处理。
+- 掷骰按钮里给非权威掷骰算加值的旧逻辑（加值列表、勾选框、"已有神导专注"提示）与 `lib/dnd/boosts.ts` 一并删除：现役掷骰都是权威掷骰，这段从不执行。掷骰只发 `rollId`；服务端仍拒绝客户端带来的 `boostIds`。
 - 验收门：SPEC 0004 的 `authoritative-table`、SPEC 0011 的 `interaction-contract` 与模块检查改为检查现役入口；路由结构测试与夹具同步。

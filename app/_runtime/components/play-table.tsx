@@ -45,7 +45,6 @@ import type { PendingRoll } from "@/lib/kp/pending-roll";
 import type { KpModelId } from "@/lib/kp/models";
 import type { ViewerNarrationRecovery } from "@/lib/room/authority-types";
 import { narrationFailureCanRetry } from "@/lib/kp/public-failure-codes";
-import { eligibleBoosts } from "@/lib/dnd/boosts";
 import { ensureResources, left, listStocks, type StockItem } from "@/lib/dnd/resources";
 import { toast } from "sonner";
 import {
@@ -345,7 +344,6 @@ export type TableSnap = {
           requiredSeconds: number;
           status: "resting" | "interrupted" | "completed";
         };
-        availableRollBoosts: Array<"guidance" | "inspiration" | "lucky">;
       };
       visibleEntities: Array<{
         id: string;
@@ -1279,10 +1277,6 @@ export function PlayTable({
                   key={r.id}
                   code={code}
                   roll={r}
-                  party={snap.characters}
-                  where={snap.state.places ?? {}}
-                  sceneId={snap.state.sceneId ?? "wake"}
-                  ruleBoosts={snap.state.ruleProjection?.viewer.availableRollBoosts}
                 />
               ))}
             </div>
@@ -2319,59 +2313,16 @@ function LocationHistoryBar({
   );
 }
 
+/** SPEC 0003, SPEC 0011: the player's gesture for a roll the authority
+ * froze; the dice and any bonus are the authority's, never the page's. */
 function RollButton({
   code,
   roll,
-  party,
-  where,
-  sceneId,
-  ruleBoosts,
 }: {
   code: string;
   roll: PendingRoll;
-  party: TableSnap["characters"];
-  where: Record<string, string>;
-  sceneId: string;
-  ruleBoosts?: Array<"guidance" | "inspiration" | "lucky">;
 }) {
   const qc = useQueryClient();
-  const boosts = roll.authoritative
-    ? []
-    : ruleBoosts
-    ? ruleBoosts.map((id) => ({
-        id,
-        fromUserId: roll.userId,
-        label:
-          id === "guidance"
-            ? "已有神导术 +1d4"
-            : id === "inspiration"
-              ? "激励（优势）"
-              : "半身人幸运",
-        detail:
-          id === "guidance"
-            ? "使用已生效的神导术并结束这项专注。"
-            : id === "inspiration"
-              ? "花费激励；优势与劣势按 2014 规则相消。"
-              : "若 d20 出 1，重掷一次并采用新结果。",
-        defaultOn: id === "lucky",
-        blocked: undefined,
-      }))
-    : eligibleBoosts(
-        party.map((p) => ({ userId: p.userId, sheet: p.sheet })),
-        roll,
-        {
-          where,
-          sceneId,
-          // Only rolls outside the authority reach here; the table no longer
-          // carries a legacy encounter for them (ADR 0147).
-          inCombat: false,
-          activeId: null,
-          spendAction: {},
-        },
-      );
-  const [on, setOn] = useState<Record<string, boolean>>(() =>
-    Object.fromEntries(boosts.map((b) => [b.id, Boolean(b.defaultOn)])),
-  );
   const [busy, setBusy] = useState(false);
   const label =
     roll.kind === "init"
@@ -2389,63 +2340,19 @@ function RollButton({
             : (SKILLS.find((s) => s.id === roll.skill)?.label ??
               ABILITY_LABEL[roll.ability as keyof typeof ABILITY_LABEL] ??
               roll.ability);
-  const alreadyGuide =
-    !roll.authoritative &&
-    (roll.kind === "check" || roll.kind === "init" || !roll.kind) &&
-    (ruleBoosts
-      ? ruleBoosts.includes("guidance")
-      : party.find((p) => p.userId === roll.userId)?.sheet.resources?.conc?.id ===
-        "guidance");
   return (
     <div className="rounded-panel border border-border bg-elevated px-3 py-3">
       <p className="text-xs text-muted">{roll.reason}</p>
       {roll.authoritative ? (
         <p className="mt-1 text-xs text-subtle">{roll.dice}{roll.advantage ? " · 优势" : roll.disadvantage ? " · 劣势" : ""}</p>
       ) : null}
-      {alreadyGuide && (
-        <p className="mt-2 text-[11px] text-brass">
-          已有神导专注：掷出自动 +1d4，然后结束。
-        </p>
-      )}
-      {boosts.length > 0 && (
-        <ul className="mt-2 space-y-1.5">
-          {boosts.map((b) => (
-            <li key={`${b.id}-${b.fromUserId}`}>
-              <label
-                className={`flex items-start gap-2 text-xs ${b.blocked ? "opacity-50" : ""}`}
-              >
-                <input
-                  type="checkbox"
-                  className="mt-0.5"
-                  disabled={Boolean(b.blocked)}
-                  checked={Boolean(on[b.id]) && !b.blocked}
-                  onChange={(e) =>
-                    setOn((prev) => ({ ...prev, [b.id]: e.target.checked }))
-                  }
-                />
-                <span>
-                  <span className="text-fg">{b.label}</span>
-                  <span className="mt-0.5 block text-[11px] text-subtle">
-                    {b.blocked ?? b.detail}
-                  </span>
-                </span>
-              </label>
-            </li>
-          ))}
-        </ul>
-      )}
       <Button
         className="mt-3"
         disabled={busy}
         onClick={async () => {
           setBusy(true);
           try {
-            const boostIds = Object.entries(on)
-              .filter(([, v]) => v)
-              .map(([k]) => k);
-            const res = await resolveRoll({
-              data: { code, rollId: roll.id, boostIds },
-            });
+            const res = await resolveRoll({ data: { code, rollId: roll.id } });
             if (!tableActionAccepted(res)) toast.error(String(res.error ?? "没有完成这次掷骰"));
             else void qc.invalidateQueries({ queryKey: ["table", code] });
           } catch (err) {
