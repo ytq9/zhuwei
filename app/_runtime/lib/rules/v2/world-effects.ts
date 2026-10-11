@@ -24,6 +24,11 @@ export type WorldEffectLifecycle = {
   /** The target repeats the Ability's saving throw at the end of each of its turns. */
   repeatSave?: { edge: "turnEnd" };
   endsWhen?: WorldEffectEnding[];
+  /** Damage the target takes at the start of each of its turns (SRD Ensnaring Strike). */
+  turnStartDamage?: { formula: string; type: string };
+  /** An action's ability check that frees the target, by it or a creature
+   * that can touch it (SRD Ensnaring Strike). */
+  escape?: { ability: string };
 };
 export type WorldEffectDefinition = {
   kind: "grantEffect";
@@ -32,9 +37,11 @@ export type WorldEffectDefinition = {
   level?: number;
   lifecycle?: WorldEffectLifecycle;
 };
-/** The record keeps the save it repeats, frozen when the effect began. */
-export type WorldEffectRecordLifecycle = Omit<WorldEffectLifecycle, "repeatSave"> & {
+/** The record keeps the save it repeats and the check that frees it, frozen
+ * when the effect began. */
+export type WorldEffectRecordLifecycle = Omit<WorldEffectLifecycle, "repeatSave" | "escape"> & {
   repeatSave?: { edge: "turnEnd"; ability: string; dc: number };
+  escape?: { ability: string; dc: number };
 };
 export type WorldEffectEndDefinition = {
   kind: "endEffect";
@@ -81,7 +88,8 @@ export type EffectModifier =
   | { kind: "advantageOnNextAttackAgainst" }
   | { kind: "hitPointMaximumBonus"; amount: number }
   | { kind: "d20BonusDie"; sides: number; rolls: ("attack" | "check" | "save")[] }
-  | { kind: "weaponDamageDieFromSource"; sides: number };
+  | { kind: "weaponDamageDieFromSource"; sides: number }
+  | { kind: "weaponHitRider"; save: string; largerSaveAdvantage: boolean };
 export type ModifierEffectDefinition = {
   kind: "grantModifier";
   modifier: EffectModifier;
@@ -182,8 +190,13 @@ export function isWorldEffectDuration(value: unknown): value is WorldEffectDurat
 const SAVE_ABILITIES = ["cha", "con", "dex", "int", "str", "wis"] as const;
 
 function isWorldEffectLifecycle(value: unknown): value is WorldEffectLifecycle {
-  return isRecord(value) && hasOnlyKeys(value, [], ["concentration", "endsWhen", "repeatSave"])
+  return isRecord(value) && hasOnlyKeys(value, [], ["concentration", "endsWhen", "escape", "repeatSave", "turnStartDamage"])
     && Object.keys(value).length > 0
+    && (value.turnStartDamage === undefined || (isRecord(value.turnStartDamage) && hasExactKeys(value.turnStartDamage, ["formula", "type"])
+      && typeof value.turnStartDamage.formula === "string" && /^[1-9][0-9]?d(4|6|8|10|12)$/.test(value.turnStartDamage.formula)
+      && isNonEmptyString(value.turnStartDamage.type)))
+    && (value.escape === undefined || (isRecord(value.escape) && hasExactKeys(value.escape, ["ability"])
+      && (SAVE_ABILITIES as readonly unknown[]).includes(value.escape.ability)))
     && (value.concentration === undefined || value.concentration === true)
     && (value.repeatSave === undefined
       || (isRecord(value.repeatSave) && hasExactKeys(value.repeatSave, ["edge"]) && value.repeatSave.edge === "turnEnd"))
@@ -194,24 +207,27 @@ function isWorldEffectLifecycle(value: unknown): value is WorldEffectLifecycle {
 
 function isWorldEffectRecordLifecycle(value: unknown): value is WorldEffectRecordLifecycle {
   if (!isRecord(value)) return false;
-  const repeatSave = value.repeatSave;
+  const frozenDc = (dc: unknown) => Number.isSafeInteger(dc) && Number(dc) >= 0 && Number(dc) <= 30;
+  const repeatSave = value.repeatSave, escape = value.escape;
   if (repeatSave !== undefined && (!isRecord(repeatSave) || !hasExactKeys(repeatSave, ["ability", "dc", "edge"])
-    || !(SAVE_ABILITIES as readonly unknown[]).includes(repeatSave.ability)
-    || !Number.isSafeInteger(repeatSave.dc) || Number(repeatSave.dc) < 0 || Number(repeatSave.dc) > 30)) return false;
+    || !(SAVE_ABILITIES as readonly unknown[]).includes(repeatSave.ability) || !frozenDc(repeatSave.dc))) return false;
+  if (escape !== undefined && (!isRecord(escape) || !hasExactKeys(escape, ["ability", "dc"]) || !frozenDc(escape.dc))) return false;
   return isWorldEffectLifecycle(definitionLifecycle(value as WorldEffectRecordLifecycle));
 }
 
 /** The frozen definition a record's lifecycle came from. */
 function definitionLifecycle(lifecycle: WorldEffectRecordLifecycle): WorldEffectLifecycle {
-  const { repeatSave, ...rest } = lifecycle;
-  return { ...rest, ...(repeatSave === undefined ? {} : { repeatSave: { edge: repeatSave.edge } }) };
+  const { repeatSave, escape, ...rest } = lifecycle;
+  return { ...rest, ...(repeatSave === undefined ? {} : { repeatSave: { edge: repeatSave.edge } }),
+    ...(escape === undefined ? {} : { escape: { ability: escape.ability } }) };
 }
 
 /** The Ability Effect family owns this shape; a hazard only references it.
  * A spell's effect also carries its catalog tag and label for narration;
  * the frozen mechanic leaves them out. */
 export function worldEffectDefinition(value: unknown): WorldEffectDefinition | undefined {
-  if (!isRecord(value) || !hasOnlyKeys(value, ["condition", "duration", "kind"], ["label", "level", "lifecycle", "tag"])
+  if (!isRecord(value) || !hasOnlyKeys(value, ["condition", "duration", "kind"], ["label", "level", "lifecycle", "on", "tag"])
+    || !(value.on === undefined || value.on === "weaponHit")
     || value.kind !== "grantEffect" || !conditionId(value.condition)
     || !isWorldEffectDuration(value.duration)
     || !(value.tag === undefined || isNonEmptyString(value.tag))
@@ -220,7 +236,9 @@ export function worldEffectDefinition(value: unknown): WorldEffectDefinition | u
   if (value.condition === "exhaustion"
     ? !Number.isSafeInteger(value.level) || Number(value.level) < 1 || Number(value.level) > 6
     : value.level !== undefined) return undefined;
-  const { tag: _tag, label: _label, ...mechanic } = structuredClone(value);
+  // `on` says when the Ability applies it (SRD Ensnaring Strike: on a later
+  // weapon hit), not what it is.
+  const { tag: _tag, label: _label, on: _on, ...mechanic } = structuredClone(value);
   return mechanic as WorldEffectDefinition;
 }
 
@@ -259,6 +277,8 @@ export function isEffectModifier(value: unknown): value is EffectModifier {
       && value.rolls.every((roll, index, all) => (D20_BONUS_ROLLS as readonly unknown[]).includes(roll)
         && (index === 0 || String(all[index - 1]) < String(roll)));
     case "weaponDamageDieFromSource": return hasExactKeys(value, ["kind", "sides"]) && [4, 6, 8, 10, 12].includes(Number(value.sides));
+    case "weaponHitRider": return hasExactKeys(value, ["kind", "largerSaveAdvantage", "save"])
+      && (SAVE_ABILITIES as readonly unknown[]).includes(value.save) && typeof value.largerSaveAdvantage === "boolean";
     default: return false;
   }
 }
@@ -441,6 +461,23 @@ export function isLastingEffectRecord(value: unknown): value is LastingEffectRec
   return isWorldEffectRecord(value) || isModifierEffectRecord(value) || isZoneEffectRecord(value);
 }
 
+/** SRD Ensnaring Strike: the conditions on a creature that hurt it as each
+ * of its turns starts, in a stable order. */
+export function turnStartDamageEffects(state: AuthoritativeWorldState, targetEntityId: string): WorldEffectRecord[] {
+  return Object.values(state.combatRuntime.effects)
+    .filter((effect): effect is WorldEffectRecord => isWorldEffectRecord(effect)
+      && effect.targetEntityId === targetEntityId && effect.lifecycle?.turnStartDamage !== undefined)
+    .sort((left, right) => left.effectId.localeCompare(right.effectId));
+}
+
+/** SRD Ensnaring Strike: the conditions on a creature an action's check can end. */
+export function escapableEffects(state: AuthoritativeWorldState, targetEntityId: string): WorldEffectRecord[] {
+  return Object.values(state.combatRuntime.effects)
+    .filter((effect): effect is WorldEffectRecord => isWorldEffectRecord(effect)
+      && effect.targetEntityId === targetEntityId && effect.lifecycle?.escape !== undefined)
+    .sort((left, right) => left.effectId.localeCompare(right.effectId));
+}
+
 /** SRD Spiritual Weapon: the abilities a creature may use because an effect
  * it made still lasts, in a stable order. */
 export function grantedAbilityRefs(state: AuthoritativeWorldState, entityId: string): string[] {
@@ -551,6 +588,8 @@ export function planWorldEffect(state: AuthoritativeWorldState, input: {
   visibilityFactId?: string;
   /** The saving throw a `repeatSave` effect repeats, as the Ability froze it. */
   repeatSave?: { ability: string; dc: number };
+  /** The DC of the check that frees the target of an `escape` effect. */
+  escapeDc?: number;
 }): { kind: "applied"; effectRecord: WorldEffectRecord }
   | { kind: "immune"; condition: ConditionId }
   | { kind: "rejected"; message: string } {
@@ -573,11 +612,15 @@ export function planWorldEffect(state: AuthoritativeWorldState, input: {
   if ((definition.lifecycle?.repeatSave === undefined) !== (input.repeatSave === undefined)) {
     return { kind: "rejected", message: "A repeated saving throw needs the save its Ability froze." };
   }
-  const { repeatSave: repeated, ...ending } = definition.lifecycle ?? {};
+  if ((definition.lifecycle?.escape === undefined) !== (input.escapeDc === undefined)) {
+    return { kind: "rejected", message: "A check that frees the target needs its DC." };
+  }
+  const { repeatSave: repeated, escape, ...ending } = definition.lifecycle ?? {};
   const lifecycle: WorldEffectRecordLifecycle | undefined = definition.lifecycle === undefined ? undefined : {
     ...ending,
     ...(repeated === undefined || input.repeatSave === undefined ? {}
       : { repeatSave: { edge: repeated.edge, ability: input.repeatSave.ability, dc: input.repeatSave.dc } }),
+    ...(escape === undefined || input.escapeDc === undefined ? {} : { escape: { ability: escape.ability, dc: input.escapeDc } }),
   };
   const effectRecord: WorldEffectRecord = {
     schema: WORLD_EFFECT_SCHEMA,

@@ -37,7 +37,7 @@ import {
   conditionMovementPermission,
   conditionMovementCost,
 } from "./condition-mechanics";
-import { effectiveConditions, grantedAbilityRefs, isWorldEffectRecord, modifierEffectDefinition, ownZoneOf, planModifierEffect, planWorldEffect, planZoneEffect, zoneEffectDefinition, planWorldEffectEnd, repeatSaveEffects, worldEffectDefinition, worldEffectEndDefinition, worldEffectEndDrafts, worldEffectsEndingWhen } from "./world-effects";
+import { effectiveConditions, escapableEffects, grantedAbilityRefs, isWorldEffectRecord, modifierEffectDefinition, modifierEffectsOn, ownZoneOf, turnStartDamageEffects, planModifierEffect, planWorldEffect, planZoneEffect, zoneEffectDefinition, planWorldEffectEnd, repeatSaveEffects, worldEffectDefinition, worldEffectEndDefinition, worldEffectEndDrafts, worldEffectsEndingWhen } from "./world-effects";
 import { castingSilenced, zoneBlocksSight } from "./zone-effects";
 import { attacksAgainstHaveAdvantage, d20BonusDie, effectiveArmorClass as modifiedArmorClass, reactionsBlocked, weaponDamageDieFrom, wearsBodyArmor } from "./effect-modifiers";
 import { combatPhaseExpiryAnchor, initiativePhaseOrder, phaseSlotForEntity } from "./effect-phase";
@@ -2495,7 +2495,7 @@ function appendAbilityWorldEffects(
       visibilityPolicyId: "visibility:room-authority-only", secrecy: "internal" }]);
   }
   for (const [index, effect] of abilityWorldEffects(definition).entries()) {
-    if (effect.kind === "createZone" || effect.kind === "moveZone") continue;
+    if (effect.kind === "createZone" || effect.kind === "moveZone" || effect.on === "weaponHit") continue;
     for (const targetEntityId of targetIds) {
       const attack = isRecord(mechanicalResult.attacks)
         ? mechanicalResult.attacks[targetEntityId] : mechanicalResult.attack;
@@ -2533,6 +2533,23 @@ function appendAbilityWorldEffects(
       if (drafts.length > 0) result = appendTransitions(result,
         sequence("committed", profiles, result.state, rootActionId, drafts, { mechanicalResult }));
     }
+  }
+  // SRD Ensnaring Strike: on a failed save the rider's own condition takes
+  // hold, held by the same concentration, before the rider itself ends.
+  const rider = isRecord(mechanicalResult.rider) ? mechanicalResult.rider : undefined;
+  if (rider !== undefined && typeof rider.success === "boolean" && result.kind === "committed"
+    && result.state.combatRuntime.effects[String(rider.effectId)] !== undefined) {
+    const riderDefinition = result.state.combatRuntime.definitions[String(rider.sourceDefinitionRef)];
+    const riderEffects = isRecord(riderDefinition) && Array.isArray(riderDefinition.effects) ? riderDefinition.effects : [];
+    if (rider.success !== true) for (const [index, effect] of riderEffects.entries()) {
+      if (!isRecord(effect) || effect.on !== "weaponHit" || result.kind !== "committed") continue;
+      const planned = planWorldEffect(result.state, { rootActionId, sourceRef, sourceDefinitionRef: String(rider.sourceDefinitionRef),
+        targetEntityId: String(rider.targetEntityId), effect, index, escapeDc: Number(rider.dc) });
+      if (planned.kind === "rejected") return rejected("invalidRulesInput", planned.message);
+      if (planned.kind === "applied") append([{ eventType: "EffectApplied", payload: { effect: planned.effectRecord },
+        visibilityPolicyId: "visibility:room-authority-only", secrecy: "internal" }]);
+    }
+    if (result.kind === "committed") append(worldEffectEndDrafts(result.state, [String(rider.effectId)], "riderTriggered"));
   }
   if (heldByConcentration && concentration !== undefined) {
     append([{ eventType: "ConcentrationStarted", payload: { entityId: sourceRef, concentration: {
@@ -3223,6 +3240,12 @@ function areaTargets(
 }
 
 function builtinSpecialMeleeDefinition(abilityRef: string): JsonRecord | undefined {
+  // SPEC 0012 §10.1 (SRD Ensnaring Strike): an action's check that frees the
+  // creature itself or one it can touch.
+  if (abilityRef === "action:break-free") {
+    return { definitionId: abilityRef, revision: "1", rulesBasis: "srd5.1-2014", mechanicalKey: "break-free",
+      activation: { kind: "action" }, target: { kind: "creature", count: "1", reachInches: "60" } };
+  }
   if (abilityRef === "action:stabilize") {
     return {
       definitionId: abilityRef,
@@ -3697,11 +3720,13 @@ function helpEnemies(state: AuthoritativeWorldState, source: JsonRecord): string
 export function combatBasicActionOffers(state: AuthoritativeWorldState, characterId: string): {
   hide: boolean; search: boolean; help: { allyRefs: string[]; enemyRefs: string[] } | null;
   ready: { triggerRefs: string[] } | null; stabilize: { targetRefs: string[] } | null;
+  breakFree: { targetRefs: string[] } | null;
 } {
   const source = state.combatRuntime.entities[characterId];
   if (source === undefined || activeEncounter(state, characterId) === undefined) {
-    return { hide: false, search: false, help: null, ready: null, stabilize: null };
+    return { hide: false, search: false, help: null, ready: null, stabilize: null, breakFree: null };
   }
+  const freeRefs = breakFreeTargets(state, source);
   const stabilizeRefs = stabilizeTargets(state, source);
   const allyRefs = helpAllies(state, source);
   const readied = Object.values(state.combatRuntime.effects).some((effect) =>
@@ -3720,6 +3745,7 @@ export function combatBasicActionOffers(state: AuthoritativeWorldState, characte
     help: allyRefs.length === 0 ? null : { allyRefs, enemyRefs: helpEnemies(state, source) },
     ready: readied || triggerRefs.length === 0 ? null : { triggerRefs },
     stabilize: stabilizeRefs.length === 0 ? null : { targetRefs: stabilizeRefs },
+    breakFree: freeRefs.length === 0 ? null : { targetRefs: freeRefs },
   };
 }
 
@@ -3742,6 +3768,67 @@ function stabilizeTargets(state: AuthoritativeWorldState, source: JsonRecord): s
     const target = state.combatRuntime.entities[candidateId];
     return candidateId !== entityId(source) && target !== undefined && medicineCanStabilize(target);
   }).sort();
+}
+
+/** SPEC 0012 §10.1: the creatures a combatant can try to free now -- itself
+ * or one within its reach -- held by an effect an action's check ends. */
+function breakFreeTargets(state: AuthoritativeWorldState, source: JsonRecord): string[] {
+  return legalCreatureCandidates(state, source, builtinSpecialMeleeDefinition("action:break-free")!)
+    .filter((candidateId) => escapableEffects(state, candidateId).length > 0).sort();
+}
+
+function beginBreakFree(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  rootActionId: string,
+  source: JsonRecord,
+  target: JsonRecord,
+  definition: JsonRecord,
+  sourcePatch: JsonRecord,
+  spent: SpentCost[],
+): StepResult {
+  const [effect] = escapableEffects(state, entityId(target));
+  if (effect === undefined || !breakFreeTargets(state, source).includes(entityId(target))) {
+    return rejected("invalidRulesInput", "Nothing an action can break holds that creature within reach.");
+  }
+  const { ability, dc } = effect.lifecycle!.escape!;
+  const conditionCheck = combatConditionCheck(state, source, "normal", true, ability);
+  if (conditionCheck.requiredContext.length > 0) return rejected("privateOrUnknownReference", "The ability check requires its condition source's line of sight.");
+  spendCheckHelp(sourcePatch, conditionCheck);
+  const purposeKey = `check:break-free:${entityId(source)}`;
+  const modifier = abilityModifier(source, ability);
+  return awaitRandomness(profiles, state, rootActionId, {
+    kind: "resolveBreakFree", sourceEntityId: entityId(source), targetEntityId: entityId(target), effectId: effect.effectId,
+    abilityRef: "action:break-free", definition, sourcePatch, spent, purposeKey, ability, dc, modifier, checkMode: conditionCheck.mode,
+  }, [{ purposeKey, dice: attackDice(conditionCheck.mode),
+    frozenParameters: { sourceEntityId: entityId(source), targetEntityId: entityId(target), ability, dc, modifier, mode: conditionCheck.mode } },
+  ...bonusDieSpecs(state, purposeKey, entityId(source), "check")]);
+}
+
+function resolveBreakFree(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  resolution: JsonRecord,
+  faces: AuthorityFaces,
+): StepResult {
+  const operation = resolution.operation;
+  if (!isRecord(operation) || operation.kind !== "resolveBreakFree"
+    || ![operation.sourceEntityId, operation.targetEntityId, operation.effectId, operation.purposeKey, operation.ability].every(isNonEmptyString)
+    || !isRecord(operation.definition) || !isRecord(operation.sourcePatch) || !Array.isArray(operation.spent)
+    || !Number.isSafeInteger(operation.dc) || !Number.isSafeInteger(operation.modifier)) {
+    return rejected("invalidRulesInput", "Break-free continuation is malformed.");
+  }
+  const roll = selectedD20(faces.get(String(operation.purposeKey)) ?? [], String(operation.checkMode));
+  const total = roll + Number(operation.modifier) + bonusDieTotal(faces, String(operation.purposeKey));
+  const succeeded = total >= Number(operation.dc);
+  const mechanicalResult = { breakFree: { targetEntityId: operation.targetEntityId, ability: operation.ability, dc: operation.dc,
+    modifier: operation.modifier, roll, total, succeeded } };
+  const drafts = resourceAndInvocationDrafts(state, operation, mechanicalResult);
+  if (succeeded && state.combatRuntime.effects[String(operation.effectId)] !== undefined) {
+    drafts.push(...worldEffectEndDrafts(state, [String(operation.effectId)], "brokenFree"));
+  }
+  return sequence("committed", profiles, state, String(resolution.rootActionId),
+    drafts.map((draft) => ({ ...draft, resolutionId: String(resolution.resolutionId) })), { mechanicalResult });
 }
 
 function beginMedicineStabilization(
@@ -3938,6 +4025,9 @@ function abilityEffectsExecutable(definition: JsonRecord, specCount: number): bo
     ? target.kind !== "creature"
     : !(target.kind === "area" && isRecord(target.shape) && isNonEmptyString(target.shape.radiusInches))))) return false;
   if (worldEffects.some((effect) => effect.kind === "moveZone" && (target.fromZoneOf !== effect.zoneOf || target.kind !== "creature"))) return false;
+  // SRD Ensnaring Strike: a condition applied on a weapon hit needs the rider that sets it off.
+  if (worldEffects.some((effect) => effect.on === "weaponHit") && !worldEffects.some((effect) => effect.kind === "grantModifier"
+    && isRecord(effect.modifier) && effect.modifier.kind === "weaponHitRider")) return false;
   // SPEC 0012 §10: a condition held by concentration needs the spell's
   // concentration, and a repeated save needs the save it repeats.
   if (worldEffects.some((effect) => isRecord(effect.lifecycle)
@@ -4484,6 +4574,26 @@ function prepareAbilityExecution(
       }
     }
     if (manyAttacks) mechanical.attacks = attacks;
+    // SRD Ensnaring Strike: a weapon attack by a creature carrying a rider
+    // reserves the save its target makes if the attack hits; a Large or
+    // larger target saves with advantage.
+    const rider = isRecord(definition.attack) && definition.attack.kind !== "spellAttack" && !manyAttacks && targetIds.length === 1
+      ? modifierEffectsOn(state, entityId(source)).find((effect) => effect.modifier.kind === "weaponHitRider" && effect.sourceRef === entityId(source))
+      : undefined;
+    if (rider !== undefined && rider.modifier.kind === "weaponHitRider") {
+      const targetId = targetIds[0]!;
+      const larger = rider.modifier.largerSaveAdvantage && (footprintSizeRank(combatEntity(state, targetId)) ?? 0) >= 2;
+      const ability = rider.modifier.save;
+      const savingThrow = conditionSavingThrow(state, targetId, ability, larger ? { advantageReasons: ["largerCreature2014"] } : {});
+      const purposeKey = `save:rider:${targetId}`;
+      const modifier = combatSavingThrowModifier(profiles, state.combatRuntime.entities[targetId]!, ability);
+      const dc = Number(isRecord(source.spellcasting) ? source.spellcasting.spellSaveDc : 10);
+      mechanical.rider = { effectId: rider.effectId, sourceDefinitionRef: rider.sourceDefinitionRef, targetEntityId: targetId,
+        ability, dc, mode: savingThrow.mode, automaticFailure: savingThrow.automaticFailure, modifier, purposeKey };
+      if (!savingThrow.automaticFailure) specs.push({ purposeKey, dice: attackDice(savingThrow.mode),
+        frozenParameters: { targetEntityId: targetId, ability, dc, modifier, mode: savingThrow.mode } },
+      ...bonusDieSpecs(state, purposeKey, targetId, "save"));
+    }
     if (selection.aimedPoint !== undefined && targetIds.length === 0 && isRecord(definition.attack)) {
       // SPEC 0012 §6.3 (ADR 0097 decision 4): nobody the attack can reach
       // stands at the guessed point. It is rolled as an attack at an unseen
@@ -4728,6 +4838,12 @@ function invokeAbility(
       sourcePatch,
       spent,
     );
+  }
+  if (abilityRef === "action:break-free") {
+    const target = combatEntity(state, parameters.targetEntityId);
+    return target === undefined
+      ? rejected("privateOrUnknownReference", "The creature to free is unavailable.")
+      : beginBreakFree(profiles, state, root, source, target, definition, sourcePatch, spent);
   }
   if (abilityRef === "action:stabilize") {
     const target = combatEntity(state, parameters.targetEntityId);
@@ -7295,6 +7411,15 @@ function resolveCombatAbilityRandomnessOnce(
       openShieldWindow(profiles, nextState, ownerFrame, targetId, shieldRefs, continuation));
   }
 
+  // SRD Ensnaring Strike: a hit sets off the attacker's rider; its target
+  // makes the save reserved for it.
+  const rider = isRecord(mechanicalResult.rider) ? mechanicalResult.rider : undefined;
+  if (rider !== undefined && rider.success === undefined && isRecord(mechanicalResult.attack) && mechanicalResult.attack.hit === true) {
+    const roll = rider.automaticFailure === true ? null : selectedD20(faces.get(String(rider.purposeKey)) ?? [], String(rider.mode));
+    const bonusDie = roll === null ? 0 : bonusDieTotal(faces, String(rider.purposeKey));
+    const total = roll === null ? null : roll + Number(rider.modifier) + bonusDie;
+    mechanicalResult.rider = { ...rider, roll, total, ...(bonusDie === 0 ? {} : { bonusDie }), success: total !== null && total >= Number(rider.dc) };
+  }
   const damageResults: Array<{ targetId: string; resolution: ReturnType<typeof resolveCombatDamage> }> = [];
   const concentrationChecks: JsonRecord[] = [];
   const knockOutPendings: JsonRecord[] = [];
@@ -8424,6 +8549,97 @@ function turnStartFollowups(
     // The preceding round already advanced time; no new turn was taken.
     return finishEncounter(profiles, state, rootActionId, encounter, "noLivingPlayerConflictRemaining", {}, [], "0");
   }
+  return beginTurnStartDamage(profiles, state, rootActionId, activeEntityId, openReady)
+    ?? turnStartAwareness(profiles, state, rootActionId, activeEntityId, openReady);
+}
+
+/** SPEC 0012 §10.1 (SRD Ensnaring Strike): the damage the conditions on the
+ * creature whose turn starts deal it, each with a concentration save reserved
+ * beside it when the creature concentrates (§10.2: one save per source). */
+function beginTurnStartDamage(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  rootActionId: string,
+  activeEntityId: string,
+  openReady: boolean,
+): StepResult | undefined {
+  const target = combatEntity(state, activeEntityId);
+  const effects = target === undefined ? [] : turnStartDamageEffects(state, activeEntityId);
+  if (target === undefined || effects.length === 0) return undefined;
+  const concentrating = isRecord(target.concentration);
+  const mode = conditionSavingThrow(state, activeEntityId, "con").mode;
+  const modifier = combatSavingThrowModifier(profiles, target, "con");
+  const specs: DiceSpec[] = effects.flatMap((effect) => {
+    const { formula, type } = effect.lifecycle!.turnStartDamage!;
+    const [count, sides] = formula.split("d");
+    const save = `save:concentration:turn-start:${effect.effectId}`;
+    return [{ purposeKey: `damage:turn-start:${effect.effectId}`, dice: [{ count: count!, sides: sides! }],
+      frozenParameters: { targetEntityId: activeEntityId, effectId: effect.effectId, components: [{ type, formula }] } },
+    ...(concentrating ? [{ purposeKey: save, dice: attackDice(mode),
+      frozenParameters: { targetEntityId: activeEntityId, ability: "con", modifier, mode } },
+    ...bonusDieSpecs(state, save, activeEntityId, "save")] : [])];
+  });
+  return awaitRandomness(profiles, state, rootActionId, { kind: "resolveTurnStartDamage", entityId: activeEntityId,
+    effectIds: effects.map((effect) => effect.effectId), openReady, concentration: concentrating ? { mode, modifier } : null }, specs);
+}
+
+function resolveTurnStartDamage(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  resolution: JsonRecord,
+  faces: AuthorityFaces,
+): StepResult {
+  const operation = resolution.operation;
+  if (!isRecord(operation) || operation.kind !== "resolveTurnStartDamage" || !isNonEmptyString(operation.entityId)
+    || !Array.isArray(operation.effectIds) || typeof operation.openReady !== "boolean") {
+    return rejected("invalidRulesInput", "Turn-start damage continuation is malformed.");
+  }
+  const root = String(resolution.rootActionId), resolutionId = String(resolution.resolutionId), entityIdValue = operation.entityId;
+  let result: StepResult | undefined;
+  const stateNow = (): AuthoritativeWorldState => result !== undefined && result.kind !== "rejected" && result.kind !== "initialized"
+    ? result.state : state;
+  const commit = (drafts: Draft[]): void => {
+    const next = sequence("committed", profiles, stateNow(), root, drafts.map((draft) => ({ ...draft, resolutionId })));
+    result = result === undefined ? next : appendTransitions(result, next);
+  };
+  // Each source hurts in turn, against what the one before left.
+  for (const effectId of operation.effectIds.filter(isNonEmptyString)) {
+    const current = stateNow();
+    const effect = current.combatRuntime.effects[effectId], body = combatEntity(current, entityIdValue);
+    if (!isWorldEffectRecord(effect) || effect.lifecycle?.turnStartDamage === undefined || body === undefined || body.lifeState === "dead") continue;
+    const { formula, type } = effect.lifecycle.turnStartDamage;
+    const rolled = rolledDamageComponents({ damage: [{ type, formula }] }, faces, `damage:turn-start:${effectId}`, { critical: false, reservedCriticalDice: false });
+    const damage = damageDraft(current, body, rolled, activeEncounter(current, entityIdValue)?.encounterId, effect.sourceDefinitionRef);
+    commit([...(damage.resolution.totalApplied > 0 ? interruptStableRecoveryDrafts(current, entityIdValue,
+      { kind: "damage", sourceDefinitionId: effect.sourceDefinitionRef }) : []), damage.draft,
+    ...(damage.died ? [{ eventType: "CreatureDied", payload: { characterId: entityIdValue, causeId: root } } as Draft] : [])]);
+    const after = stateNow();
+    const left = combatEntity(after, entityIdValue);
+    if (isRecord(operation.concentration) && damage.resolution.totalApplied > 0 && isRecord(left?.concentration)
+      && isRecord(left?.hitPoints) && Number(left.hitPoints.current) > 0) {
+      result = appendTransitions(result!, resolveDamageConcentration(profiles, after, { rootActionId: root, resolutionId, operation: {
+        kind: "resolveDamageConcentration", mechanicalResult: {}, checks: [{ targetEntityId: entityIdValue,
+          purposeKey: `save:concentration:turn-start:${effectId}`, sourceAbilityRef: effect.sourceDefinitionRef,
+          damageTaken: damage.resolution.totalApplied, dc: Math.max(10, Math.floor(damage.resolution.totalApplied / 2)),
+          modifier: operation.concentration.modifier, mode: operation.concentration.mode }] } }, faces));
+    }
+  }
+  if (result === undefined) return rejected("invalidWorldState", "The turn-start damage has no source left.");
+  const committed: StepResult = result;
+  if (committed.kind !== "committed") return committed;
+  const rest = turnStartAwareness(profiles, committed.state, root, entityIdValue, operation.openReady);
+  return rest === undefined ? committed : appendTransitions(committed, rest);
+}
+
+/** After the turn's own start: the Perception rolls against hiders, then the
+ * readied actions its start triggers (ADR 0097, 0099). */
+function turnStartAwareness(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  rootActionId: string,
+  activeEntityId: string,
+  openReady: boolean,
+): StepResult | undefined {
   const specs = encounterPerceptionDiceSpecs(state, activeEntityId);
   if (specs.length > 0) {
     return awaitRandomness(profiles, state, rootActionId, {
@@ -9061,6 +9277,8 @@ function fulfillRandomness(
     case "resolveDamageConcentration": return resolveDamageConcentration(profiles, state, authority.resolution, authority.faces);
     case "resolveDeathSavesAndRound": return resolveDeathSavesAndRound(profiles, state, authority.resolution, authority.faces);
     case "resolveTurnEndRepeatSaves": return resolveTurnEndRepeatSaves(profiles, state, authority.resolution, authority.faces);
+    case "resolveTurnStartDamage": return resolveTurnStartDamage(profiles, state, authority.resolution, authority.faces);
+    case "resolveBreakFree": return resolveBreakFree(profiles, state, authority.resolution, authority.faces);
     case "resolveOpportunityAndMovement": return resolveOpportunityAndMovement(profiles, state, authority.resolution, authority.faces);
     case "resolveHidingAction": return resolveHidingAction(profiles, state, authority.resolution, authority.faces);
     case "resolveHiddenPerception": return resolveHiddenPerception(profiles, state, authority.resolution, authority.faces);

@@ -11,6 +11,8 @@ supersedes:
     scope: "纯战斗机械，以及 B07–B15、B17–B22、B29–B30、B35–B40、B49、B53 的战斗段"
 revisions:
   - date: 2026-10-11
+    scope: "§10.1：诱捕打击的武器命中触发、回合开始伤害与用动作挣脱（ADR 0157）"
+  - date: 2026-10-11
     scope: "§10.1：灵体武器出现在被攻击者身边，持续期间施法者可用附赠动作让它移动 20 尺并攻击 5 尺内的生物；效果授予的动作只在效果持续期间列出（ADR 0156）"
   - date: 2026-10-11
     scope: "§10.1：持续区域（云雾术、沉默术）以冻结的区域原点为球心，重度遮蔽挡住视线，沉默区域内耳聋、免疫雷鸣、不能施放带言语成分的法术（ADR 0154）"
@@ -34,7 +36,7 @@ revisions:
     scope: "§13：遭遇结束时每个活着的 NPC 参战者得到本人对这场战斗的记忆；NPC 在遭遇结束后按本人视角开战建立新遭遇（ADR 0118）"
   - date: 2026-10-05
     scope: "§§1、3.3、13：NPC 一方的投降、接受投降、停战和重新动手由该 NPC 本人决定，主持 KP 只记录玩家角色自己的投降；对手停手而站着时 Rules 也向玩家提议结束（ADR 0117）"
-adr: ["0117", "0118", "0123", "0149", "0150", "0151", "0152", "0153", "0154", "0155", "0156"]
+adr: ["0117", "0118", "0123", "0149", "0150", "0151", "0152", "0153", "0154", "0155", "0156", "0157"]
 parts:
   - "0012-part-b-abilities-damage-and-conclusion.md"
 gates_verified_on: 2026-10-05
@@ -56,6 +58,7 @@ gates:
   - "tests/kp/combat/spell-bonus-dice.test.mjs"
   - "tests/kp/combat/spell-zone-effects.test.mjs"
   - "tests/kp/combat/spell-effect-claims.test.mjs"
+  - "tests/kp/combat/spell-rider-effects.test.mjs"
 ---
 # SPEC 0012：权威战斗机械
 

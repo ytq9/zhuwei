@@ -385,6 +385,8 @@ function compiledSpellEffect(source: SpellDefinition, effect: SpellEffectDefinit
     ...(source.duration.kind !== "instant" && source.duration.concentration === true ? { concentration: true } : {}),
     ...(repeats && source.resolution.save?.repeats === "turnEnd" ? { repeatSave: { edge: "turnEnd" } } : {}),
     ...(effect.endsWhen === undefined || effect.endsWhen.length === 0 ? {} : { endsWhen: [...effect.endsWhen].sort() }),
+    ...(effect.turnStartDamage === undefined ? {} : { turnStartDamage: { ...effect.turnStartDamage } }),
+    ...(effect.escape === undefined ? {} : { escape: { ability: effect.escape } }),
   });
   const value = spellEffectValueAtSlot(effect, source.level, slotLevel);
   const modifier = effect.modifier === undefined ? undefined
@@ -392,6 +394,8 @@ function compiledSpellEffect(source: SpellDefinition, effect: SpellEffectDefinit
       ? value === undefined ? undefined : { kind: effect.modifier.kind, amount: value }
       : effect.modifier.kind === "unarmoredArmorClass" ? value === undefined ? undefined : { kind: effect.modifier.kind, base: value }
         : effect.modifier.kind === "speedBonus" ? value === undefined ? undefined : { kind: effect.modifier.kind, feet: value }
+          : effect.modifier.kind === "weaponHitRider"
+            ? { kind: effect.modifier.kind, save: effect.modifier.save, largerSaveAdvantage: effect.modifier.largerSaveAdvantage }
           : effect.modifier.kind === "d20BonusDie"
             ? { kind: effect.modifier.kind, sides: effect.modifier.sides, rolls: [...effect.modifier.rolls].sort() }
             : effect.modifier.kind === "weaponDamageDieFromSource" ? { kind: effect.modifier.kind, sides: effect.modifier.sides }
@@ -409,6 +413,7 @@ function compiledSpellEffect(source: SpellDefinition, effect: SpellEffectDefinit
   if (effect.kind === "condition" && (CONDITION_IDS as readonly string[]).includes(effect.tag) && duration !== undefined) {
     const kept = lifecycle(true);
     return { kind: "grantEffect", tag: effect.tag, label: effect.label, condition: effect.tag, duration,
+      ...(effect.on === undefined ? {} : { on: effect.on }),
       ...(Object.keys(kept).length === 0 ? {} : { lifecycle: kept }) };
   }
   return {

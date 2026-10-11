@@ -237,7 +237,12 @@ export const SPELL_DEFINITIONS = {
   ensnaring: {
     id: "ensnaring", level: 1, components: ["V"], actionCost: "bonusAction", castingSeconds: 6,
     range: self, targets: targets("self", 1), duration: timed(60, { concentration: true }),
-    resolution: { mode: "automatic", effects: [effect("ensnaring-strike", "下一次武器命中触发力量豁免；失败则束缚并每回合 1d6 穿刺", "special")] },
+    resolution: { mode: "automatic", effects: [
+      { ...effect("ensnaring-strike", "下一次武器命中触发力量豁免；失败则束缚并每回合 1d6 穿刺", "special"),
+        modifier: { kind: "weaponHitRider", save: "str", largerSaveAdvantage: true } },
+      { ...effect("restrained", "被荆棘藤蔓束缚；每回合开始 1d6 穿刺，可用动作做力量检定挣脱", "condition"),
+        on: "weaponHit", turnStartDamage: { formula: "1d6", type: "piercing" }, escape: "str" },
+    ] },
   },
   fog: {
     id: "fog", level: 1, components: ["V", "S"], actionCost: "action", castingSeconds: 6,

@@ -108,3 +108,32 @@ test('the roots of modifier, bonus-die, zone and summon spells are told in full 
   const aided = cast(f, 'aid', 2, { targetEntityIds: [ACTOR] });
   assert.match(summaries(aided.claims), /生命值上限与当前生命值 \+5/u);
 });
+
+test('the roots of a weapon-hit rider, turn-start damage and breaking free are told in full from claims', () => {
+  const ranger = { classId: 'ranger', level: 3, cantripIds: [], preparedSpellIds: ['ensnaring'],
+    resources: { slot1: 3 }, resourceMaximums: { slot1: 3 },
+    characterBuild: { classId: 'ranger', raceId: 'human', cantrips: [], prepared: ['ensnaring'] },
+    loadout: { equipped: { main: 'dagger' }, backpack: [], armorClass: 10, speedFeet: 30 } };
+  const f = createAuthoredProbeFixture('claims-rider', { spawnPoints: [{ x: '100', y: '100', elevation: '0' }, { x: '160', y: '100', elevation: '0' }],
+    characterOverrides: { [ACTOR]: ranger } });
+  f.events = [];
+  f.acts = 0;
+  act(f, { kind: 'startEncounter', proposalAttemptId: 'proposal:claims-rider:encounter',
+    encounterId: ENCOUNTER, sceneId: SCENE, participantEntityIds: [ACTOR, PEER], dynamicEntities: [], battlefieldFactIds: [],
+    initiativeGroups: [ACTOR, PEER].map((id) => ({ entryId: `initiative:${id}`, combatantEntityIds: [id] })),
+    hostilities: [{ fromEntityIds: [ACTOR], toEntityIds: [PEER] }, { fromEntityIds: [PEER], toEntityIds: [ACTOR] }] });
+  const ensnared = act(f, { kind: 'invokeAbility', sourceEntityId: ACTOR,
+    abilityRef: Object.values(f.state.combatRuntime.definitions).find((definition) => definition.sourceSpellId === 'ensnaring').definitionId,
+    parameters: { targetEntityId: ACTOR } });
+  assert.match(summaries(ensnared.claims), /下一次武器命中时让对方进行豁免/u);
+  const dagger = Object.values(f.state.combatRuntime.definitions).find((definition) => definition.weaponUse?.slot === 'main'
+    && definition.weaponUse?.mode === 'melee' && !definition.weaponUse?.bonusAttack).definitionId;
+  const caught = act(f, { kind: 'invokeAbility', sourceEntityId: ACTOR, abilityRef: dagger, parameters: { targetEntityId: PEER } },
+    { 'attack:': 15, 'save:rider:': 2 });
+  assert.match(summaries(caught.claims), /束缚效果已生效/u);
+  const hurt = endTurn(f, ACTOR);
+  assert.ok(hurt.events.some((event) => event.eventType === 'DamagePacketResolved'));
+  const freed = act(f, { kind: 'invokeAbility', sourceEntityId: PEER, abilityRef: 'action:break-free',
+    parameters: { targetEntityId: PEER } }, { 'check:break-free:': 15 });
+  assert.match(summaries(freed.claims), /挣开了束缚/u);
+});

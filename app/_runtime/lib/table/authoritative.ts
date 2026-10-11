@@ -563,6 +563,10 @@ export const BASIC_COMBAT_ACTIONS: readonly CombatControlAbility[] = Object.free
   // creature within 5 feet; offered only when Rules lists one.
   { abilityRef: "action:stabilize", name: "急救", group: "basic", activation: "action",
     target: { kind: "creatures", count: 1, reachFeet: 5, onlyRefs: [] } },
+  // SPEC 0012 §10.1 (ADR 0157): an action's check that frees itself or a
+  // creature within 5 feet; offered only when Rules lists one.
+  { abilityRef: "action:break-free", name: "挣脱", group: "basic", activation: "action",
+    target: { kind: "creatures", count: 1, reachFeet: 5, onlyRefs: [] } },
 ]);
 
 const COMBAT_FEATURE_NAMES: Readonly<Record<string, string>> = {
@@ -787,6 +791,10 @@ function closedCombatControls(input: {
         return offers.stabilize === null ? []
           : [{ ...structuredClone(action), target: { kind: "creatures", count: 1, reachFeet: 5, onlyRefs: [...offers.stabilize.targetRefs] } }];
       }
+      if (action.abilityRef === "action:break-free") {
+        return offers.breakFree === null ? []
+          : [{ ...structuredClone(action), target: { kind: "creatures", count: 1, reachFeet: 5, onlyRefs: [...offers.breakFree.targetRefs] } }];
+      }
       // SPEC 0014 §7 (ADR 0148): a grapple or shove reaches the creatures seen within 5 feet.
       if (action.target.kind === "creatures" && action.target.reachFeet === 5) {
         return [{ ...structuredClone(action), target: { ...action.target, withinRefs: [...withinFiveFeetRefs], longRangeRefs: [] } }];
@@ -891,9 +899,10 @@ function closedRefList(value: unknown): string[] {
  * offers fail closed. */
 function closedCombatOffers(value: unknown): {
   hide: boolean; search: boolean; help: { allyRefs: string[]; enemyRefs: string[] } | null; ready: { triggerRefs: string[] } | null;
-  stabilize: { targetRefs: string[] } | null;
+  stabilize: { targetRefs: string[] } | null; breakFree: { targetRefs: string[] } | null;
 } {
-  if (!isRecord(value) || !hasExactKeys(value, ["help", "hide", "ready", "search", "stabilize"])
+  if (!isRecord(value) || !hasExactKeys(value, ["breakFree", "help", "hide", "ready", "search", "stabilize"])
+    || !(value.breakFree === null || (isRecord(value.breakFree) && hasExactKeys(value.breakFree, ["targetRefs"])))
     || typeof value.hide !== "boolean" || typeof value.search !== "boolean"
     || !(value.help === null || (isRecord(value.help) && hasExactKeys(value.help, ["allyRefs", "enemyRefs"])))
     || !(value.ready === null || (isRecord(value.ready) && hasExactKeys(value.ready, ["triggerRefs"])))
@@ -906,6 +915,7 @@ function closedCombatOffers(value: unknown): {
     help: isRecord(value.help) ? { allyRefs: closedRefList(value.help.allyRefs), enemyRefs: closedRefList(value.help.enemyRefs) } : null,
     ready: isRecord(value.ready) ? { triggerRefs: closedRefList(value.ready.triggerRefs) } : null,
     stabilize: isRecord(value.stabilize) ? { targetRefs: closedRefList(value.stabilize.targetRefs) } : null,
+    breakFree: isRecord(value.breakFree) ? { targetRefs: closedRefList(value.breakFree.targetRefs) } : null,
   };
 }
 

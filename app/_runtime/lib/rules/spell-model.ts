@@ -97,7 +97,8 @@ export type SpellModifier =
   | { kind: "advantageOnNextAttackAgainst" }
   | { kind: "hitPointMaximumBonus" }
   | { kind: "d20BonusDie"; sides: number; rolls: readonly ("attack" | "save" | "check")[] }
-  | { kind: "weaponDamageDieFromSource"; sides: number };
+  | { kind: "weaponDamageDieFromSource"; sides: number }
+  | { kind: "weaponHitRider"; save: Ability; largerSaveAdvantage: boolean };
 
 export type SpellEffectDefinition = {
   tag: string;
@@ -119,6 +120,12 @@ export type SpellEffectDefinition = {
   modifier?: SpellModifier;
   /** The area the effect fills for the spell's duration (SPEC 0012 §10.1). */
   zone?: { kind: "heavilyObscured" | "silence" };
+  /** Applied only when a weapon hit sets off the spell's rider (SRD Ensnaring Strike). */
+  on?: "weaponHit";
+  /** Damage the target takes at the start of each of its turns. */
+  turnStartDamage?: { formula: string; type: "piercing" | "slashing" | "bludgeoning" | "fire" | "cold" | "acid" | "poison" };
+  /** The ability an action's check uses to free the target. */
+  escape?: Ability;
   /** A thing the spell makes that attacks again later (SRD Spiritual Weapon):
    * how far it moves and reaches for each later attack. */
   summon?: { kind: "spectralWeapon"; moveFeet: number; reachFeet: number };

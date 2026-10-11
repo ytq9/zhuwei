@@ -1,3 +1,4 @@
+import { escapableEffects } from "./world-effects";
 import { isCombatWeaponUse, type CombatWeaponUse } from "./combat-weapon-variants";
 import { combatDepartureOptions } from "./places";
 import { abilityMultiattackGrant } from "./multiattack";
@@ -143,6 +144,8 @@ function abilityDefinition(state: AuthoritativeWorldState, abilityRef: string): 
     activation: { kind: "attack", actionGrant: "attack" }, target: { kind: "creature", count: "1", reachInches: "60" } };
   if (abilityRef === "action:stabilize") return { definitionId: abilityRef, revision: "1", rulesBasis: "srd5.1-2014",
     mechanicalKey: "stabilize", activation: { kind: "action" }, target: { kind: "creature", count: "1", reachInches: "60" } };
+  if (abilityRef === "action:break-free") return { definitionId: abilityRef, revision: "1", rulesBasis: "srd5.1-2014",
+    mechanicalKey: "break-free", activation: { kind: "action" }, target: { kind: "creature", count: "1", reachInches: "60" } };
   const stored = state.combatRuntime.definitions[abilityRef];
   if (!isRecord(stored)) return undefined;
   return isRecord(stored.mechanicGraph) ? registeredAbilityDefinition(stored) : stored;
@@ -217,7 +220,7 @@ export function npcCombatTurnOptions(
   const abilities: NpcCombatTurnOptions["abilities"] = [];
   const reactionAbilityRefs: string[] = [];
   const refs = [...new Set([...(Array.isArray(source.abilityRefs) ? source.abilityRefs.filter(isNonEmptyString) : []),
-    ...BUILTIN_ATTACK_REPLACEMENTS, "action:stabilize"])];
+    ...BUILTIN_ATTACK_REPLACEMENTS, "action:stabilize", "action:break-free"])];
   for (const abilityRef of refs) {
     const definition = abilityDefinition(state, abilityRef);
     const activation = isRecord(definition?.activation) && isNonEmptyString(definition.activation.kind) ? definition.activation.kind : undefined;
@@ -227,7 +230,8 @@ export function npcCombatTurnOptions(
     const target = isRecord(definition.target) ? definition.target : undefined;
     const described = describedAbility(state, abilityRef, target);
     if (targetsCreature(definition)) {
-      const healing = isRecord(definition.healing) || isRecord(definition.temporaryHitPoints) || definition.mechanicalKey === "stabilize";
+      const healing = isRecord(definition.healing) || isRecord(definition.temporaryHitPoints)
+        || definition.mechanicalKey === "stabilize" || definition.mechanicalKey === "break-free";
       const candidates = target?.selfOnly === true ? [source]
         : healing ? [source, ...creatures.filter(creature => !hostiles.has(entityId(creature)))]
           : creatures.filter(creature => hostiles.has(entityId(creature)) && creature.lifeState !== "dead");
@@ -235,7 +239,10 @@ export function npcCombatTurnOptions(
       const offered = abilityRef === "action:stabilize" ? candidates.filter(creature =>
         creature.lifeState !== "dead" && creature.deathPolicy === "deathSaves"
         && isRecord(creature.hitPoints) && Number(creature.hitPoints.current) === 0
-        && !(isRecord(creature.conditions) && creature.conditions.stable === true)) : candidates;
+        && !(isRecord(creature.conditions) && creature.conditions.stable === true))
+        // SPEC 0012 §10.1 (ADR 0157): freeing itself or an ally held by vines.
+        : abilityRef === "action:break-free" ? candidates.filter(creature => escapableEffects(state, entityId(creature)).length > 0)
+        : candidates;
       const aim = aimableAttack(definition) && hiddenEnemy;
       if (offered.length === 0 && !aim) continue;
       abilities.push({ abilityRef, ...described, activation, targeting: "creature", aimAtPointAllowed: aim,

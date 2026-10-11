@@ -56,6 +56,8 @@ export const BUILTIN_ACTION_NAMES: Readonly<Record<string, string>> = Object.fre
   "action:long-jump": "跳远", "action:high-jump": "跳高", "action:opportunity-attack": "借机攻击",
   // SPEC 0012 §12.1: a DC 10 Wisdom (Medicine) check to stabilize a creature at 0 HP.
   "action:stabilize": "急救",
+  // SPEC 0012 §10.1: an action's check that frees a creature an effect holds.
+  "action:break-free": "挣脱",
 });
 
 /** What a built-in action looks like to those who see it, for a reply that
@@ -76,6 +78,7 @@ export const BUILTIN_ACTION_EFFECTS: Readonly<Record<string, string>> = Object.f
   "action:long-jump": "跳了过去。",
   "action:high-jump": "跳了上去。",
   "action:stabilize": "俯身为倒下的伤者急救。",
+  "action:break-free": "使劲挣开缠住身体的东西。",
 });
 
 /** SPEC 0012 §6.3 (ADR 0099 decision 1), SRD 5.1 Help: the advantage a helper

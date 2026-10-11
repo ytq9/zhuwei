@@ -945,7 +945,7 @@ export function deriveAuthorityClaimsFromCommittedRange(
           ? longSpellcastingInvestmentClaim(event, payload, eventRange) : abilityEffectClaim(event, payload, eventRange);
         if (claim !== undefined) materials.push(claim);
         materials.push(...attackOutcomeClaims(event, payload, eventRange), ...savingThrowClaims(event, payload),
-          ...medicineStabilizationClaims(event, payload));
+          ...medicineStabilizationClaims(event, payload), ...breakFreeClaims(event, payload));
         break;
       }
       case "ImprovisedCheckResolved": {
@@ -1859,6 +1859,21 @@ function medicineStabilizationClaims(event: EventEnvelope, payload: JsonRecord):
       ...(total === undefined ? {} : { total }), ...(dc === undefined ? {} : { dc }) } }];
 }
 
+/** SPEC 0012 §10.1 (ADR 0157): how an action's check to free a creature held
+ * by an effect came out. That the hold ended is the EffectEnded claim. */
+function breakFreeClaims(event: EventEnvelope, payload: JsonRecord): MechanicalOutcomeClaimMaterial[] {
+  const sourceRef = stringField(payload, "sourceEntityId");
+  const breakFree = recordOrEmpty(recordOrEmpty(payload.mechanicalResult).breakFree);
+  const targetRef = stringField(breakFree, "targetEntityId");
+  if (sourceRef === undefined || targetRef === undefined || typeof breakFree.succeeded !== "boolean") return [];
+  const total = finiteNumber(breakFree.total), dc = finiteNumber(breakFree.dc);
+  return [{ ...eventClaimBase(event, "break-free"), kind: "mechanicalOutcome", actorRef: sourceRef, targetRefs: [targetRef],
+    outcomeCode: breakFree.succeeded ? "brokeFree" : "breakFreeFailed",
+    summary: breakFree.succeeded ? "挣开了束缚。" : "没能挣开束缚。",
+    check: { kind: "abilityCheck", result: breakFree.succeeded ? "success" : "failure",
+      ...(total === undefined ? {} : { total }), ...(dc === undefined ? {} : { dc }) } }];
+}
+
 /** What a blow did to a creature's life, from the event's own frame: it fell
  * unconscious, and a creature knocked out rather than killed is stable. A
  * death is told by CreatureDied. */
@@ -2563,6 +2578,7 @@ function modifierEffectLabel(modifier: JsonRecord): string | undefined {
     case "d20BonusDie": return sides === undefined || !Array.isArray(modifier.rolls) ? undefined
       : `${modifier.rolls.map((roll) => D20_ROLL_LABELS[String(roll)] ?? String(roll)).join("、")} +1d${sides}`;
     case "weaponDamageDieFromSource": return sides === undefined ? undefined : `被效果来源的武器命中时额外受到 1d${sides} 伤害`;
+    case "weaponHitRider": return "下一次武器命中时让对方进行豁免，失败则被束缚";
     default: return undefined;
   }
 }

@@ -334,7 +334,7 @@ test("Rules projects the player's own combat controls outside the actor's delta 
   assert.deepEqual(view.combatControls.jumps, [], "nothing in the yard is in jumping range");
   // SPEC 0012 §6.3 (ADR 0097, 0099): the warden is someone to hide from and
   // to ready against; with no ally there is nobody to help.
-  assert.deepEqual(view.combatControls.offers, { hide: true, search: true, help: null, ready: { triggerRefs: [NPC] }, stabilize: null });
+  assert.deepEqual(view.combatControls.offers, { hide: true, search: true, help: null, ready: { triggerRefs: [NPC] }, stabilize: null, breakFree: null });
   assert.deepEqual(view.combatControls.turn, { action: "1", bonusAction: "0", reaction: "1", attacksRemaining: "0" });
   // 30 feet of walking, 10 spent this turn.
   assert.deepEqual(view.combatControls.movement, {
@@ -565,7 +565,7 @@ test("a weapon attack is named by the held item and a malformed budget fails clo
     target: { kind: "creatureOrEnvironmentFeature", count: "1", reachInches: "60" },
     mechanicalKey: "weapon:item-entry:alice:longsword",
   };
-  const offers = { hide: false, search: false, help: null, ready: null, stabilize: null };
+  const offers = { hide: false, search: false, help: null, ready: null, stabilize: null, breakFree: null };
   const vitals = { temporaryHitPoints: "0", concentration: null, lifeState: "alive", deathSaves: { successes: "0", failures: "0" } };
   const projected = projectAuthoritativeTableObservation({
     userId: "principal:alice",
