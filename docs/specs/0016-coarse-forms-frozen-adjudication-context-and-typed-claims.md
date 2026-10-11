@@ -136,6 +136,7 @@ gates:
   - "tests/kp/protocol/schema-retrieval.test.mjs"
   - "tests/kp/protocol/structured-diagnostics.test.mjs"
   - "tests/kp/protocol/unparsed-revision.test.mjs"
+  - "tests/kp/npc/npc-materialization-wire.test.mjs"
 ---
 # SPEC 0016：粗粒度 Form、冻结裁决上下文与类型化主张
 
