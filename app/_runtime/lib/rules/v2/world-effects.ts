@@ -408,12 +408,13 @@ function expiryFor(
       kind: "fictionTime", entityId, dueMicros: (BigInt(now) + COMBAT_ROUND_MICROS).toString(),
     };
   }
-  const anchor = { ...combatPhaseExpiryAnchor(state, entityId, duration.edge, rootActionId),
+  const anchor: JsonRecord = { ...combatPhaseExpiryAnchor(state, entityId, duration.edge, rootActionId),
     encounterId: String(encounter.encounterId) };
   // "Until the end of its next turn": begun during the subject's own turn,
   // the end of that turn is not the next one (SRD Guiding Bolt).
-  if (duration.edge === "turnEnd" && isRecord(anchor.createdAt) && anchor.createdAt.edge === "turnStart"
-    && anchor.createdAt.slotIndex === anchor.slotIndex && anchor.createdAt.roundIndex === anchor.targetRound) {
+  const created = anchor.createdAt;
+  if (duration.edge === "turnEnd" && isRecord(created) && created.edge === "turnStart"
+    && created.slotIndex === anchor.slotIndex && created.roundIndex === anchor.targetRound) {
     anchor.targetRound = Number(anchor.targetRound) + 1;
   }
   return validExpiry(anchor) ? anchor : undefined;
