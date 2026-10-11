@@ -102,8 +102,9 @@ async function withTable(snap, run, { storage } = {}) {
     const tree = () => createElement(QueryClientProvider, { client: queryClient }, createElement(PlayTable, { code: "TACTIC", snap }));
     await act(async () => { renderer = create(tree()); });
     const map = () => renderer.root.findByType(TacticalMap);
-    const one = (props) => map().findByProps(props);
-    const all = (attribute) => map().findAll((node) => typeof node.type === "string" && node.props[attribute] !== undefined);
+    // The pick in progress is confirmed in the bar above the composer, outside the map.
+    const one = (props) => renderer.root.findByProps(props);
+    const all = (attribute) => renderer.root.findAll((node) => typeof node.type === "string" && node.props[attribute] !== undefined);
     const settle = async () => {
       for (let index = 0; index < 4; index += 1) await new Promise((resolve) => setTimeout(resolve, 0));
     };
@@ -116,11 +117,18 @@ async function withTable(snap, run, { storage } = {}) {
       const box = one({ "data-tactical-stitch-place": sceneId });
       await act(async () => { box.props.onChange({ target: { checked } }); await settle(); });
     };
+    // A sentence put in the composer is sent by the player's own send.
+    const sendComposer = async (expected) => {
+      const textarea = renderer.root.findByType("textarea");
+      assert.equal(textarea.props.value, expected);
+      const send = renderer.root.findByProps({ "aria-label": "发送行动" });
+      await act(async () => { send.props.onClick(); await settle(); });
+    };
     const remount = async () => {
       await act(async () => renderer.unmount());
       await act(async () => { renderer = create(tree()); });
     };
-    await run({ calls, map, one, all, press, check, remount, act, settle });
+    await run({ calls, map, one, all, press, check, remount, act, settle, sendComposer });
   } finally {
     if (renderer) await act(async () => renderer.unmount());
     queryClient?.clear();
@@ -141,9 +149,9 @@ test("the fixture is a valid public projection", async () => {
   }
 });
 
-test("outside an encounter 前往 on a door sends the player's sentence to the KP, and says when the door is closed", async () => {
+test("outside an encounter 前往 on a door puts the player's sentence in the composer for the KP, and says when the door is closed", async () => {
   const { compileSheet } = await import("../../../app/_runtime/lib/dnd/compute.ts");
-  await withTable(snapFor(compileSheet, { combat: false }), async ({ calls, one, all, press }) => {
+  await withTable(snapFor(compileSheet, { combat: false }), async ({ calls, one, all, press, sendComposer }) => {
     await press({ "data-tactical-disclosure-trigger": "desktop" });
     assert.deepEqual(all("data-tactical-go-to").map((node) => node.props["data-tactical-go-to"]), ["feature:gate", "feature:portal"]);
     assert.match(text(one({ "data-tactical-go-to": "feature:gate" })), /^庭院侧门→ 小礼拜堂$/);
@@ -153,15 +161,18 @@ test("outside an encounter 前往 on a door sends the player's sentence to the K
     // The door is selected on the map, with where it leads.
     assert.ok(one({ "data-tactical-selected": "feature:feature:gate" }));
     assert.match(text(one({ "data-tactical-leads-to": "scene:chapel" })), /通往小礼拜堂 · 现在可以通过/);
-    assert.match(text(one({ "data-tactical-intent-preview": true })), /将作为你的行动发送：我穿过庭院侧门去小礼拜堂。/);
+    assert.match(text(one({ "data-tactical-intent-preview": true })), /放进输入框的句子：我穿过庭院侧门去小礼拜堂。/);
     assert.equal(all("data-tactical-go-to-closed").length, 0);
     await press({ "data-tactical-intent-submit": true });
+    assert.equal(calls.length, 0, "putting the sentence in the composer sends nothing");
+    await sendComposer("我穿过庭院侧门去小礼拜堂。");
     assert.deepEqual([calls.at(-1).command, calls.at(-1).data.text, calls.at(-1).data.code], ["sendAction", "我穿过庭院侧门去小礼拜堂。", "TACTIC"]);
 
     // A closed door: the map says so, and the player may still ask the KP.
     await press({ "data-tactical-go-to": "feature:portal" });
     assert.match(text(one({ "data-tactical-go-to-closed": true })), /这扇门现在关着/);
     await press({ "data-tactical-intent-submit": true });
+    await sendComposer("我打开关闭的庭院铁门，去地下墓室。");
     assert.equal(calls.at(-1).data.text, "我打开关闭的庭院铁门，去地下墓室。");
     assert.deepEqual(calls.map((call) => call.command), ["sendAction", "sendAction"],
       "going elsewhere is the KP's to adjudicate; nothing goes straight to Rules");

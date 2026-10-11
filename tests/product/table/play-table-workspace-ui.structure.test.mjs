@@ -112,7 +112,7 @@ test("the play surface shows useful context, loads in place, and opens the chara
     );
     const characterTabs = characterPanel.findAll((node) => node.props.role === "tab");
     assert.deepEqual(characterTabs.map(renderedText), ["行动", "背包", "角色"]);
-    assert.match(renderedText(characterPanel.findByProps({ role: "tabpanel" })), /休整与职业能力/);
+    assert.match(renderedText(characterPanel.findByProps({ role: "tabpanel" })), /休整/);
     await act(async () => {
       characterTabs[1].props.onClick();
     });

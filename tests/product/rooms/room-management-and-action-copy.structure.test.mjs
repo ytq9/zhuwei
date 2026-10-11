@@ -62,7 +62,7 @@ test("on-demand table journal omits redundant controls and wraps action copy", a
   const featureLine = sliceBetween(
     playTable,
     "function FeatureLine",
-    "function SpellLine",
+    "type PresentCharacter",
   );
 
   assert.match(

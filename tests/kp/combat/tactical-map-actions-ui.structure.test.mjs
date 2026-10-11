@@ -4,11 +4,14 @@ import { createElement } from "react";
 
 import { playTableSnapFixture } from "../../support/fixtures/tactical-map-v2.mjs";
 
-// SPEC 0014 §§4、5、8 and ADR 0091: the map only collects the player's picks.
-// Moves, the end of a turn and abilities on the player's own turn go straight
-// to Rules (moveOnMap / combatAbility / endTurn); outside an encounter an
-// ability aimed at someone is sent to the KP as an intent sentence
-// (sendAction). An area is only an origin and a direction, never a target list.
+// SPEC 0014 §§4、5、8 and ADR 0091: the map only collects the player's picks;
+// abilities are chosen from the character panel's action list and every pick
+// is confirmed in the bar above the composer. Moves, the end of a turn and
+// abilities on the player's own turn go straight to Rules (moveOnMap /
+// combatAbility / endTurn); outside an encounter an ability aimed at someone
+// becomes the player's sentence in the composer, sent with the player's own
+// send (sendAction). An area is only an origin and a direction, never a
+// target list.
 
 const REVISION = `sha256:${"a".repeat(64)}`;
 
@@ -95,14 +98,30 @@ async function withTable(snap, run, respond = () => ({ action: "committed", narr
       renderer = create(createElement(QueryClientProvider, { client: queryClient }, createElement(PlayTable, { code: "TACTIC", snap })));
     });
     const map = () => renderer.root.findByType(TacticalMap);
-    const one = (props) => map().findByProps(props);
+    const one = (props) => renderer.root.findByProps(props);
+    const all = (attribute) => renderer.root.findAll((node) => typeof node.type === "string" && node.props[attribute] !== undefined);
     const settle = async () => {
       for (let index = 0; index < 4; index += 1) await new Promise((resolve) => setTimeout(resolve, 0));
     };
+    // Abilities are listed in the character panel, which opens from the
+    // composer's 行动 button where it does not sit beside the scene.
+    const openActions = async () => {
+      if (renderer.root.findAllByProps({ "data-character-actions": true }).length > 0) return;
+      const trigger = renderer.root.findByProps({ "data-table-actions-trigger": true });
+      await act(async () => { trigger.props.onClick(); await settle(); });
+    };
     const press = async (props) => {
+      if (Object.hasOwn(props, "data-tactical-ability")) await openActions();
       const node = one(props);
       assert.notEqual(node.props.disabled, true, `${JSON.stringify(props)} must be enabled`);
       await act(async () => { node.props.onClick(); await settle(); });
+    };
+    // A sentence put in the composer is sent by the player's own send.
+    const sendComposer = async (expected) => {
+      const textarea = renderer.root.findByType("textarea");
+      assert.equal(textarea.props.value, expected);
+      const send = renderer.root.findByProps({ "aria-label": "发送行动" });
+      await act(async () => { send.props.onClick(); await settle(); });
     };
     const key = async (name) => {
       const svg = map().find((node) => node.type === "svg" && node.props.role === "group");
@@ -116,7 +135,7 @@ async function withTable(snap, run, respond = () => ({ action: "committed", narr
       const node = one({ "data-entity-id": entityId });
       await act(async () => { node.props.onClick(); await settle(); });
     };
-    await run({ calls, map, one, press, key, token, act, settle });
+    await run({ calls, map, one, all, press, key, token, act, settle, openActions, sendComposer });
   } finally {
     if (renderer) await act(async () => renderer.unmount());
     queryClient?.clear();
@@ -133,9 +152,9 @@ function assertKeys(data, keys) {
 
 // SPEC 0014 §4: selecting a creature or object inspects it; only ground
 // selection offers movement. Natural-language approaches remain available.
-test("outside an encounter the map walks to a point, inspects people and objects, and sends abilities to the KP as intent", async () => {
+test("outside an encounter the map walks to a point, inspects people and objects, and puts abilities in the composer as the player's sentence", async () => {
   const { compileSheet } = await import("../../../app/_runtime/lib/dnd/compute.ts");
-  await withTable(snapFor(compileSheet, { combat: false }), async ({ calls, map, one, press, key, token, act, settle }) => {
+  await withTable(snapFor(compileSheet, { combat: false }), async ({ calls, map, one, all, press, key, token, act, settle, sendComposer }) => {
     await press({ "data-tactical-disclosure-trigger": "desktop" });
     assert.equal(one({ "data-tactical-actions": "exploration" }).props["data-tactical-my-turn"], "false");
     assert.equal(one({ "data-tactical-canvas": "v1" }).props["data-tactical-picking"], "destination");
@@ -169,7 +188,10 @@ test("outside an encounter the map walks to a point, inspects people and objects
       if (pick === "target") await token("npc:warden");
       else await press({ "data-tactical-aim-option": "npc:warden" });
       assert.match(text(one({ "data-tactical-intent-preview": true })), new RegExp(sentence));
+      const before = calls.length;
       await press({ "data-tactical-intent-submit": true });
+      assert.equal(calls.length, before, "putting the sentence in the composer sends nothing");
+      await sendComposer(sentence);
       const call = calls.at(-1);
       assert.equal(call.command, "sendAction");
       assert.equal(call.data.text, sentence);
@@ -177,7 +199,7 @@ test("outside an encounter the map walks to a point, inspects people and objects
     }
     assert.equal(calls.some((call) => call.command === "combatAbility"), false,
       "outside an encounter an ability is the KP's to adjudicate");
-    assert.equal(map().findAll((node) => node.props["data-tactical-move-mode"] !== undefined).length, 0);
+    assert.equal(all("data-tactical-move-mode").length, 0);
   }, (command) => command === "sendAction"
     ? { ok: true, action: "committed", narration: "published" }
     : { action: "committed", narration: "notApplicable" });
@@ -185,10 +207,10 @@ test("outside an encounter the map walks to a point, inspects people and objects
 
 test("on the player's turn the map submits a path, creature targets, an area origin and direction, basic actions and the end of the turn", async () => {
   const { compileSheet } = await import("../../../app/_runtime/lib/dnd/compute.ts");
-  await withTable(snapFor(compileSheet, { combat: true }), async ({ calls, map, one, press, key, token }) => {
+  await withTable(snapFor(compileSheet, { combat: true }), async ({ calls, all, one, press, key, token }) => {
     const panel = one({ "data-tactical-actions": "combat" });
     assert.equal(panel.props["data-tactical-my-turn"], "true");
-    assert.match(text(one({ "data-tactical-turn-grants": true })), /动作 1 · 附赠动作 1 · 反应 1 · 剩余移动 20 尺（速度 30 尺）/);
+    assert.equal(one({ "data-tactical-turn-grants": true }).props["aria-label"], "动作 1 · 附赠动作 1 · 反应 1 · 剩余移动 20 尺（速度 30 尺）");
 
     await press({ "data-tactical-move-mode": true });
     assert.equal(one({ "data-tactical-canvas": "v1" }).props["data-tactical-picking"], "path");
@@ -222,7 +244,7 @@ test("on the player's turn the map submits a path, creature targets, an area ori
       if (abilityRef === "action:grapple") {
         // A player target answers a contest itself, so the map offers grapple
         // and shove only against non-player creatures.
-        assert.equal(map().findAll((node) => node.props["data-tactical-target-option"] === "character:alice").length, 0);
+        assert.equal(all("data-tactical-target-option").filter((node) => node.props["data-tactical-target-option"] === "character:alice").length, 0);
         assert.ok(one({ "data-tactical-target-option": "npc:warden" }));
         await token("character:alice");
         assert.equal(one({ "data-entity-id": "character:alice" }).props["data-targeted"], "false");
@@ -271,7 +293,7 @@ test("on the player's turn the map submits a path, creature targets, an area ori
     assertKeys(call.data, ["code", "submissionId"]);
     assert.equal(calls.some((entry) => entry.command === "sendAction"), false,
       "on the player's turn structured actions never go through the KP");
-    assert.equal(map().findAll((node) => node.props["data-tactical-action-error"] !== undefined).length, 0);
+    assert.equal(all("data-tactical-action-error").length, 0);
   });
 });
 
@@ -300,14 +322,18 @@ test("a refused map action shows the server's explanation and the bar waits whil
 
 test("when it is another creature's turn the map says whose turn it is and the bar is disabled", async () => {
   const { compileSheet } = await import("../../../app/_runtime/lib/dnd/compute.ts");
-  await withTable(snapFor(compileSheet, { combat: true, activeEntityId: "npc:warden" }), async ({ calls, map, one }) => {
+  await withTable(snapFor(compileSheet, { combat: true, activeEntityId: "npc:warden" }), async ({ calls, all, one, openActions }) => {
     const panel = one({ "data-tactical-actions": "combat" });
     assert.equal(panel.props["data-tactical-my-turn"], "false");
-    assert.match(text(panel), /当前行动：守夜人。轮到你时再行动。/);
+    const turnBar = one({ "data-tactical-turn-bar": true });
+    assert.equal(turnBar.props["data-tactical-my-turn"], "false");
+    assert.match(text(turnBar), /当前行动：守夜人。轮到你时再行动。/);
     for (const props of [{ "data-tactical-move-mode": true }, { "data-tactical-end-turn": true }]) {
       assert.equal(one(props).props.disabled, true);
     }
-    const abilityButtons = map().findAll((node) => node.type === "button" && node.props["data-tactical-ability"] !== undefined);
+    await openActions();
+    assert.match(text(one({ "data-character-actions": true })), /等待守夜人行动/);
+    const abilityButtons = all("data-tactical-ability").filter((node) => node.type === "button");
     assert.equal(abilityButtons.length, ABILITIES.length + BASIC.length);
     assert.ok(abilityButtons.every((button) => button.props.disabled === true));
     assert.equal(calls.length, 0);
@@ -347,7 +373,7 @@ test("on the player's turn the map jumps across a picked feature and sends a cli
   const landing = { x: "240", y: "180", elevation: "60" };
   authoritative.combatControls.jumps = [{ abilityRef: "action:long-jump", featureId: "feature:ditch", landing, running: true,
     costFeet: 10, clearCheck: false, landingCheck: false }];
-  await withTable(snap, async ({ calls, map, one, press, act, settle }) => {
+  await withTable(snap, async ({ calls, map, one, press, act, settle, sendComposer }) => {
     const terrain = one({ "data-tactical-terrain": true });
     // Only the ditch and the pond are terrain to jump, climb or swim.
     assert.deepEqual(terrain.findAll((node) => node.type === "option" && node.props.value !== "").map((node) => node.props.value),
@@ -370,6 +396,7 @@ test("on the player's turn the map jumps across a picked feature and sends a cli
     await press({ "data-tactical-climb": "across" });
     assert.match(text(one({ "data-tactical-intent-preview": true })), /我爬过排水沟。/);
     await press({ "data-tactical-intent-submit": true });
+    await sendComposer("我爬过排水沟。");
     call = calls.at(-1);
     assert.deepEqual([call.command, call.data.text], ["sendAction", "我爬过排水沟。"]);
 
@@ -377,6 +404,7 @@ test("on the player's turn the map jumps across a picked feature and sends a cli
     assert.equal(map().findAll((node) => node.props["data-tactical-jump"] !== undefined).length, 0);
     await press({ "data-tactical-climb": "across" });
     await press({ "data-tactical-intent-submit": true });
+    await sendComposer("我游过水塘。");
     assert.equal(calls.at(-1).data.text, "我游过水塘。");
   }, (command) => command === "sendAction"
     ? { ok: true, action: "committed", narration: "published" }
@@ -415,7 +443,7 @@ test("the bar hides, searches, helps an ally, readies a response and aims an att
     { abilityRef: "action:ready", name: "预备", group: "basic", activation: "action",
       target: { kind: "ready", triggerRefs: ["character:bob", "npc:warden"], events: ["turnStarted", "movementCommitted", "spellCastingStarted"] } },
   );
-  await withTable(snap, async ({ calls, map, one, press, key, token }) => {
+  await withTable(snap, async ({ calls, all, one, press, key, token }) => {
     assert.match(text(one({ "data-tactical-hidden": true })), /你正躲藏着/);
     const abilityCall = (abilityRef) => {
       const latest = calls.at(-1);
@@ -445,13 +473,12 @@ test("the bar hides, searches, helps an ally, readies a response and aims an att
 
     // Ready: the warden's turn start, then the strike at it.
     await press({ "data-tactical-ability": "action:ready" });
-    assert.equal(map().findAll((node) => node.props["data-tactical-ready-response"] !== undefined).length, 0,
-      "the response comes after the trigger");
+    assert.equal(all("data-tactical-ready-response").length, 0, "the response comes after the trigger");
     await token("npc:warden");
     await press({ "data-tactical-ready-event": "turnStarted" });
     // Only abilities taking an action or an attack can be readied, and a
     // grapple or shove.
-    assert.deepEqual(map().findAll((node) => node.type === "button" && node.props["data-tactical-ready-response"] !== undefined)
+    assert.deepEqual(all("data-tactical-ready-response").filter((node) => node.type === "button")
       .map((node) => node.props["data-tactical-ready-response"]),
     ["ability:alice:unarmed-strike", "ability:alice:spell:sleep", "ability:alice:spell:thunderwave", "action:grapple", "action:shove"]);
     await press({ "data-tactical-ready-response": "ability:alice:unarmed-strike" });
@@ -505,10 +532,9 @@ test("first aid picks only the dying creature Rules listed and sends the Medicin
   });
   authoritative.combatControls.basicActions.push({ abilityRef: "action:stabilize", name: "急救", group: "basic", activation: "action",
     target: { kind: "creatures", count: 1, reachFeet: 5, onlyRefs: ["character:bob"] } });
-  await withTable(snap, async ({ calls, map, one, press, token }) => {
+  await withTable(snap, async ({ calls, all, one, press, token }) => {
     await press({ "data-tactical-ability": "action:stabilize" });
-    assert.deepEqual(map().findAll((node) => node.props["data-tactical-target-option"] !== undefined)
-      .map((node) => node.props["data-tactical-target-option"]), ["character:bob"]);
+    assert.deepEqual(all("data-tactical-target-option").map((node) => node.props["data-tactical-target-option"]), ["character:bob"]);
     await token("npc:warden");
     assert.equal(one({ "data-entity-id": "npc:warden" }).props["data-targeted"], "false");
     await token("character:bob");
@@ -517,5 +543,42 @@ test("first aid picks only the dying creature Rules listed and sends the Medicin
     assert.equal(call.command, "combatAbility");
     assertKeys(call.data, ["abilityRef", "code", "spatialRevision", "submissionId", "target"]);
     assert.deepEqual([call.data.abilityRef, call.data.target], ["action:stabilize", { kind: "creatures", refs: ["character:bob"] }]);
+  });
+});
+
+// SPEC 0010 §7, SPEC 0014 §§4、8 (ADR 0091): the action list shows what a
+// spell costs against the slots left; choosing one that needs a target hands
+// the pick to the bar above the composer, and on a narrow screen the bar opens
+// the map, whose dialog keeps the same bar under it to confirm in place.
+test("the action list counts spell slots and hands a pick to the bar, which can open the narrow-screen map", async () => {
+  const { compileSheet } = await import("../../../app/_runtime/lib/dnd/compute.ts");
+  const snap = snapFor(compileSheet, { combat: true });
+  Object.assign(snap.state.authoritative.controlledCharacter, {
+    resources: { slot1: 2 }, resourceMaximums: { slot1: 4 },
+  });
+  await withTable(snap, async ({ calls, one, all, press, openActions, act, settle }) => {
+    await openActions();
+    const healing = one({ "data-tactical-ability": "ability:alice:spell:healing-word" });
+    assert.match(text(healing), /治愈真言/);
+    assert.match(text(healing), /1 环 · 剩 2\/4/);
+    assert.match(text(healing), /附赠/);
+    assert.equal(all("data-table-character-dialog").length, 1);
+
+    await press({ "data-tactical-ability": "ability:alice:spell:sleep" });
+    assert.equal(all("data-table-character-dialog").length, 0, "a choice that waits for a pick gives the scene back");
+    assert.equal(one({ "data-tactical-task-bar": "area" }).props["data-tactical-task-bar"], "area");
+    await press({ "data-tactical-open-map": true });
+    const dialog = one({ "data-tactical-map-mobile": "open" });
+    const footer = dialog.findByProps({ "data-tactical-mobile-footer": true });
+    const option = footer.findByProps({ "data-tactical-area-option": "npc:warden" });
+    await act(async () => { option.props.onClick(); await settle(); });
+    const submit = footer.findByProps({ "data-tactical-area-submit": true });
+    assert.notEqual(submit.props.disabled, true);
+    await act(async () => { submit.props.onClick(); await settle(); });
+    const call = calls.at(-1);
+    assert.equal(call.command, "combatAbility");
+    assert.deepEqual([call.data.abilityRef, call.data.target], ["ability:alice:spell:sleep",
+      { kind: "area", origin: { x: "720", y: "180", elevation: "60" } }]);
+    assert.equal(all("data-tactical-task-bar").length, 0, "a confirmed pick clears the bar");
   });
 });

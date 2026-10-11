@@ -1,8 +1,7 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import {
   tacticalLevelLabel,
   tacticalTerrainPhrases,
-  type CombatAbilityTarget,
   type TacticalEntity,
   type TacticalFeatureDestination,
   type TacticalKnownFeature,
@@ -12,8 +11,24 @@ import {
   type TacticalProjection,
   type TacticalZone,
 } from "@/lib/rules/tactical-projection";
-import type { CombatControlAbility, CombatJumpChoice, NpcCombatTurnStatus, ReadyTriggerEvent } from "@/lib/table/authoritative";
+import type { CombatJumpChoice, NpcCombatTurnStatus } from "@/lib/table/authoritative";
 import type { TacticalMapActions } from "@/components/tactical-map-actions";
+import { ACTION_BUTTON } from "@/components/table-actions";
+import {
+  IDLE_TASK,
+  NPC_TURN_LABEL,
+  clampToScene,
+  entitySelectionKey,
+  inches,
+  mapGestures,
+  playerEncounter,
+  sceneBounds,
+  selfPoint,
+  snapToGrid,
+  type MapPoint,
+  type MapTask,
+  type TacticalTaskControl,
+} from "@/components/tactical-task";
 import { CONDITION_LABEL } from "@/lib/dnd/condition-labels";
 import { cn } from "@/lib/utils";
 
@@ -118,129 +133,6 @@ type TacticalSelection =
   | { kind: "feature"; value: TacticalKnownFeature }
   | { kind: "zone"; value: TacticalZone };
 
-/** A point the player picked on the map, in whole inches. */
-type MapPoint = { x: number; y: number };
-
-/** SPEC 0012 §8.1 (ADR 0099 decision 3): the creature and event a Ready
- * waits for. A path, creature or area pick made with it becomes the readied
- * response instead of an act now. */
-type ReadyPick = { triggerRef: string; event: ReadyTriggerEvent };
-
-/** SPEC 0014 §§4、5、8: what the player is putting together on the map. The
- * map only collects the player's picks; Rules decides paths, ranges, cover
- * and who an area affects. An attack may be aimed at a `point` instead of a
- * creature, for one the player cannot see (SPEC 0012 §6.3, ADR 0097). */
-type MapTask =
-  | { kind: "idle" }
-  | { kind: "destination"; point: MapPoint }
-  | { kind: "path"; waypoints: MapPoint[]; ready?: ReadyPick }
-  | { kind: "creatures"; ability: CombatControlAbility; refs: string[]; purpose: "combat" | "intent"; point?: MapPoint | null; ready?: ReadyPick }
-  | { kind: "area"; ability: CombatControlAbility; origin: MapPoint | null; direction: MapPoint | null; ready?: ReadyPick }
-  | { kind: "intent"; ability: CombatControlAbility; aimRef: string | null }
-  | { kind: "help"; ability: CombatControlAbility; allyRef: string | null; mode: "check" | "attack"; enemyRef: string | null }
-  | { kind: "ready"; ability: CombatControlAbility; triggerRef: string | null; event: ReadyTriggerEvent | null }
-  /** SPEC 0014 §4 (ADR 0098): a climb or swim on the combat map, sent to the
-   * KP as the player's sentence. */
-  | { kind: "climb"; featureId: string; sentence: string }
-  /** SPEC 0014 §8 (ADR 0103 decision 4): going through a door to the place it
-   * leads to, sent to the KP as the player's sentence. */
-  | { kind: "goTo"; featureId: string; sentence: string; passable: boolean };
-
-const READY_EVENT_LABEL: Record<ReadyTriggerEvent, string> = {
-  turnStarted: "开始回合时",
-  movementCommitted: "移动时",
-  spellCastingStarted: "开始施法时",
-};
-
-/** Whether a combat attack pick may name a point on the map instead of a
- * creature. */
-function aimable(ability: CombatControlAbility): boolean {
-  return ability.target.kind === "creatures" && ability.target.aimable === true;
-}
-
-const IDLE_TASK: MapTask = { kind: "idle" };
-
-/** At most 64 points per path, the first being where the actor stands. */
-const MAX_PATH_WAYPOINTS = 63;
-
-function inches(value: string): number {
-  return Number(value);
-}
-
-/** Display-only snapping to the 5-foot grid (SPEC 0014 §2.1); the submitted
- * point is the snapped whole-inch point. */
-function snapToGrid(value: number, grid: number): number {
-  return Math.round(value / grid) * grid;
-}
-
-function sceneBounds(projection: TacticalProjection) {
-  const xs = projection.scene.boundary.points.map((point) => inches(point.x));
-  const ys = projection.scene.boundary.points.map((point) => inches(point.y));
-  return { minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys) };
-}
-
-function clampToScene(point: MapPoint, projection: TacticalProjection): MapPoint {
-  const bounds = sceneBounds(projection);
-  return {
-    x: Math.min(bounds.maxX, Math.max(bounds.minX, point.x)),
-    y: Math.min(bounds.maxY, Math.max(bounds.minY, point.y)),
-  };
-}
-
-function selfPoint(projection: TacticalProjection): MapPoint {
-  return { x: inches(projection.self.position.x), y: inches(projection.self.position.y) };
-}
-
-function mapPosition(point: MapPoint, elevation: string): TacticalPosition {
-  return { x: String(point.x), y: String(point.y), elevation };
-}
-
-function playerEncounter(projection: TacticalProjection) {
-  const encounter = projection.encounter;
-  const inEncounter = encounter !== null
-    && encounter.status !== "concluded"
-    && encounter.participantEntityIds.includes(projection.self.id);
-  return { inEncounter, myTurn: inEncounter && encounter?.activeEntityId === projection.self.id };
-}
-
-/** Whether a click on the map ground picks a point in this task. */
-function taskPicksPoint(task: MapTask): boolean {
-  return task.kind === "path"
-    || (task.kind === "area"
-      && (task.origin === null || (task.ability.target.kind === "area" && task.ability.target.needsDirection && task.direction === null)));
-}
-
-/** Whether the ability lets the player pick this creature at all. Grapple
- * and shove against a player need that player's own answer, so the map offers
- * them only against non-player creatures that are not allies. */
-function creaturePickable(ability: CombatControlAbility, entity: TacticalEntity): boolean {
-  // An attack is never aimed at the attacker.
-  if (entity.relation === "self" && (ability.group === "attack" || ability.activation === "attack")) return false;
-  // SPEC 0012 §12.1 (ADR 0113): first aid reaches only the dying creatures Rules listed.
-  if (ability.target.kind === "creatures" && ability.target.onlyRefs !== undefined) return ability.target.onlyRefs.includes(entity.id);
-  return ability.target.kind !== "creatures" || ability.target.npcOpponentsOnly !== true
-    || (entity.kind === "npc" && (entity.relation === "enemy" || entity.relation === "neutral"));
-}
-
-function joinNames(names: string[]): string {
-  if (names.length <= 1) return names[0] ?? "";
-  return `${names.slice(0, -1).join("、")}和${names[names.length - 1]}`;
-}
-
-/** ADR 0091 §3: outside an encounter an ability picked on the map is sent to
- * the KP as a plain player intent. */
-function intentSentence(ability: CombatControlAbility, targetNames: string[]): string {
-  const targets = joinNames(targetNames);
-  if (ability.group === "attack" || (ability.group === "basic" && ability.activation === "attack")) {
-    const verb = ability.name.endsWith("攻击") ? `我${ability.name}` : `我用${ability.name}攻击`;
-    return `${verb}${targets || "目标"}。`;
-  }
-  const act = ability.group === "spell" ? "施放" : "使用";
-  if (ability.target.kind === "self") return `我对自己${act}${ability.name}。`;
-  if (ability.target.kind === "area") return targets ? `我朝${targets}${act}${ability.name}。` : `我${act}${ability.name}。`;
-  return targets ? `我对${targets}${act}${ability.name}。` : `我${act}${ability.name}。`;
-}
-
 /** SPEC 0014 §8 (ADR 0103 decision 4): a door or opening on the map that
  * leads to another place. */
 type DoorElsewhere = TacticalKnownFeature & { leadsTo: TacticalFeatureDestination };
@@ -327,37 +219,6 @@ function pointsBounds(points: Array<{ x: string; y: string }>, offset: MapPoint 
   const xs = points.map((point) => inches(point.x) + offset.x);
   const ys = points.map((point) => inches(point.y) + offset.y);
   return { minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys) };
-}
-
-const ACTIVATION_LABEL: Record<CombatControlAbility["activation"], string> = {
-  action: "动作",
-  bonusAction: "附赠动作",
-  attack: "攻击",
-  free: "不占动作",
-};
-
-function abilityDetail(ability: CombatControlAbility): string {
-  const spell = ability.spellLevel === 0 ? "戏法" : ability.slotLevel ? `${ability.slotLevel}环法术位` : null;
-  return [ACTIVATION_LABEL[ability.activation], spell].filter(Boolean).join(" · ");
-}
-
-function targetHint(ability: CombatControlAbility): string {
-  const target = ability.target;
-  if (target.kind === "creatures") {
-    const distance = target.reachFeet !== undefined
-      ? `触及 ${target.reachFeet} 尺`
-      : target.rangeFeet !== undefined
-        ? `射程 ${target.rangeFeet}${target.longRangeFeet ? `/${target.longRangeFeet}` : ""} 尺`
-        : null;
-    return [`选 ${target.count === 1 ? "1 个" : `至多 ${target.count} 个`}目标`, distance].filter(Boolean).join(" · ");
-  }
-  if (target.kind === "area") {
-    const origin = target.origin === "self" ? "从你所在处出发" : `在 ${target.rangeFeet ?? 0} 尺内点选位置`;
-    return `${target.sizeFeet} 尺范围 · ${origin}${target.needsDirection ? "，再点方向" : ""}`;
-  }
-  if (target.kind === "help") return "选一名同伴；攻击时再选你身边 5 尺内的敌人";
-  if (target.kind === "ready") return "选触发的人和时机，再选那时要做的事";
-  return target.kind === "self" ? "作用于自己" : "无需目标";
 }
 
 function formatLength(value: string): string {
@@ -466,10 +327,6 @@ function featureMechanics(feature: TacticalKnownFeature): string[] {
 
 function entityMapLabel(entity: TacticalEntity): string {
   return entity.relation === "self" ? "我" : Array.from(entity.name).slice(0, 2).join("");
-}
-
-function entitySelectionKey(entityId: string): string {
-  return `entity:${entityId}`;
 }
 
 function featureSelectionKey(featureId: string): string {
@@ -846,10 +703,6 @@ function TacticalZoneShape({
 }
 
 /** SPEC 0006 §7 (ADR 0101): what the NPC whose turn it is is doing. */
-const NPC_TURN_LABEL: Readonly<Record<NpcCombatTurnStatus["state"], string>> = {
-  acting: "正在行动", waitingForAnswer: "等待回答", waitingForRetry: "没能完成，下次行动时重试",
-};
-
 function encounterReadout(projection: TacticalProjection, npcTurn?: NpcCombatTurnStatus): string {
   if (projection.encounter === null) return "当前遭遇信息未知";
   if (projection.encounter.status === "concluded") return "遭遇已收束";
@@ -868,12 +721,20 @@ export function TacticalMap({
   defaultExpanded = false,
   actions,
   npcTurn,
+  mobileOpen: controlledMobileOpen,
+  onMobileOpenChange,
+  mobileFooter,
 }: {
   projection: TacticalProjection | null | undefined;
   defaultExpanded?: boolean;
   /** Without actions the map only shows the projection. */
   actions?: TacticalMapActions;
   npcTurn?: NpcCombatTurnStatus;
+  /** The narrow-screen map dialog, when the table opens it for a pick. */
+  mobileOpen?: boolean;
+  onMobileOpenChange?: (open: boolean) => void;
+  /** Shown under the narrow-screen map, so a pick is confirmed in place. */
+  mobileFooter?: ReactNode;
 }) {
   const baseId = useId().replace(/:/g, "");
   const desktopContentId = `tactical-map-${baseId}-desktop`;
@@ -887,7 +748,12 @@ export function TacticalMap({
   const [desktopExpanded, setDesktopExpanded] = useState(
     Boolean(projection) && defaultExpanded,
   );
-  const [mobileOpen, setMobileOpen] = useState(false);
+  const [ownMobileOpen, setOwnMobileOpen] = useState(false);
+  const mobileOpen = controlledMobileOpen ?? ownMobileOpen;
+  const setMobileOpen = (open: boolean) => {
+    if (onMobileOpenChange) onMobileOpenChange(open);
+    else setOwnMobileOpen(open);
+  };
   const [view, setView] = useState<TacticalView>("map");
   const [selectedKey, setSelectedKey] = useState<string | null>(
     projection ? initialSelectionKey(projection) : null,
@@ -920,21 +786,10 @@ export function TacticalMap({
   const status = projection
     ? encounterReadout(projection, npcTurn)
     : "尚无观察者可见的战术地图数据";
-  // A pick started on one turn never carries into the next one.
-  const turnKey = projection?.encounter
-    ? `${projection.encounter.id}:${projection.encounter.round}:${projection.encounter.activeEntityId ?? ""}`
-    : "exploration";
-  const [taskState, setTaskState] = useState<{ key: string; task: MapTask }>({ key: turnKey, task: IDLE_TASK });
-  const task = taskState.key === turnKey ? taskState.task : IDLE_TASK;
-  const [cursor, setCursor] = useState<MapPoint | null>(null);
-  const setTask = (next: MapTask) => {
-    setTaskState({ key: turnKey, task: next });
-    // The keyboard cursor starts again from the player for a new kind of pick.
-    const family = (candidate: MapTask) => candidate.kind === "destination" ? "idle" : candidate.kind;
-    if (family(next) !== family(task)) setCursor(null);
-  };
+  // The pick in progress belongs to the table, so the action list and the bar
+  // above the composer can start and confirm it.
   const interaction: TacticalInteraction | undefined = actions
-    ? { actions, task, setTask, cursor, setCursor }
+    ? { actions, task: actions.task, setTask: actions.setTask, cursor: actions.cursor, setCursor: actions.setCursor }
     : undefined;
 
   useEffect(() => {
@@ -1018,7 +873,7 @@ export function TacticalMap({
       data-tactical-map-disclosure={projection ? "ready" : "unknown"}
       aria-label="战术地图"
       className={cn("min-w-0 max-w-full shrink-0 border-b border-border bg-bg/45",
-        isDesktopExpanded && "lg:flex lg:min-h-0 lg:max-h-[65dvh] lg:shrink lg:flex-col")}
+        isDesktopExpanded && "lg:flex lg:min-h-0 lg:max-h-[50dvh] lg:shrink lg:flex-col")}
     >
       <div className="shrink-0 px-4 py-2.5">
         <button
@@ -1127,19 +982,18 @@ export function TacticalMap({
             stitching={stitching}
             mobile
           />
+          {mobileFooter ? (
+            <div data-tactical-mobile-footer className="max-h-[45dvh] shrink-0 overflow-y-auto border-t border-border bg-surface p-3">
+              {mobileFooter}
+            </div>
+          ) : null}
         </div>
       ) : null}
     </section>
   );
 }
 
-type TacticalInteraction = {
-  actions: TacticalMapActions;
-  task: MapTask;
-  setTask: (task: MapTask) => void;
-  cursor: MapPoint | null;
-  setCursor: (cursor: MapPoint | null) => void;
-};
+type TacticalInteraction = TacticalTaskControl & { actions: TacticalMapActions };
 
 /** SPEC 0014 §8 (ADR 0103 decision 5): the stitched map and how the player
  * changes it. Display only; nothing here reaches the table. */
@@ -1148,70 +1002,6 @@ type TacticalStitching = {
   setSceneIds: (sceneIds: string[]) => void;
   setLevel: (level: number) => void;
 };
-
-/** The map gestures of one task: which clicks pick a ground point and what a
- * picked point or an activated creature means for the task. */
-function mapGestures(
-  projection: TacticalProjection,
-  interaction: TacticalInteraction | undefined,
-  onSelect: (key: string) => void,
-) {
-  const task = interaction?.task ?? IDLE_TASK;
-  const { inEncounter } = playerEncounter(projection);
-  const groundPick = interaction !== undefined && !inEncounter && (task.kind === "idle" || task.kind === "destination");
-  const pointPick = interaction !== undefined && taskPicksPoint(task);
-  // SPEC 0012 §6.3 (ADR 0097 decision 4): an attack picks a creature from its
-  // token, or a point on the ground where the player guesses an unseen one is.
-  const aimPick = interaction !== undefined && task.kind === "creatures" && task.purpose === "combat" && aimable(task.ability);
-
-  function pickPoint(raw: MapPoint) {
-    if (interaction === undefined) return;
-    const grid = projection.scene.gridInches;
-    const point = clampToScene({ x: snapToGrid(raw.x, grid), y: snapToGrid(raw.y, grid) }, projection);
-    if (task.kind === "creatures" && aimPick) {
-      interaction.setTask({ ...task, refs: [], point });
-      return;
-    }
-    if (task.kind === "path") {
-      if (task.waypoints.length < MAX_PATH_WAYPOINTS) interaction.setTask({ ...task, waypoints: [...task.waypoints, point] });
-      return;
-    }
-    if (task.kind === "area") {
-      if (task.origin === null) interaction.setTask({ ...task, origin: point });
-      // A direction is the way from the area's origin to a second point.
-      else if (point.x !== task.origin.x || point.y !== task.origin.y) interaction.setTask({ ...task, direction: point });
-      return;
-    }
-    if (groundPick) interaction.setTask({ kind: "destination", point });
-  }
-
-  function activateEntity(entity: TacticalEntity) {
-    onSelect(entitySelectionKey(entity.id));
-    if (interaction === undefined) return;
-    if (task.kind === "creatures") {
-      if (!creaturePickable(task.ability, entity)) return;
-      const count = task.ability.target.kind === "creatures" ? task.ability.target.count : 1;
-      const refs = task.refs.includes(entity.id)
-        ? task.refs.filter((ref) => ref !== entity.id)
-        : count === 1 ? [entity.id] : task.refs.length < count ? [...task.refs, entity.id] : task.refs;
-      interaction.setTask({ ...task, refs, point: null });
-    } else if (task.kind === "help" && task.ability.target.kind === "help") {
-      // SPEC 0012 §6.3 (ADR 0099 decision 1): the ally to help, then for an
-      // attack the enemy within 5 feet.
-      if (task.ability.target.allyRefs.includes(entity.id)) interaction.setTask({ ...task, allyRef: entity.id });
-      else if (task.mode === "attack" && task.ability.target.enemyRefs.includes(entity.id)) interaction.setTask({ ...task, enemyRef: entity.id });
-    } else if (task.kind === "ready" && task.ability.target.kind === "ready") {
-      if (task.ability.target.triggerRefs.includes(entity.id)) interaction.setTask({ ...task, triggerRef: entity.id });
-    } else if (task.kind === "intent" && task.ability.target.kind === "area" && task.ability.target.origin === "point") {
-      interaction.setTask({ ...task, aimRef: entity.id });
-    } else if (pointPick) {
-      // Keyboard users pick a creature's spot from its token.
-      pickPoint({ x: inches(entity.position.x), y: inches(entity.position.y) });
-    }
-  }
-
-  return { groundPick, pointPick, aimPick, pickPoint, activateEntity };
-}
 
 function TacticalMapExpanded({
   projection,
@@ -1330,7 +1120,7 @@ function TacticalMapExpanded({
                 </p>
                 <p data-tactical-interactions={interaction ? "enabled" : "view-only"}>
                   {interaction
-                    ? "点选人物或物件查看详情；走动和行动在地图下方完成。"
+                    ? "点选人物或物件查看详情；选目标时在地图上点选。"
                     : "当前可点选查看详情。"}
                 </p>
               </div>
@@ -1340,12 +1130,11 @@ function TacticalMapExpanded({
           <TacticalTextReadout projection={projection} />
         )}
         {interaction ? (
-          <TacticalActionPanel
+          <TacticalPlacePanel
             projection={projection}
             interaction={interaction}
             selected={selected}
             onSelect={onSelect}
-            gestures={gestures}
             mapVisible={view === "map"}
           />
         ) : null}
@@ -1565,7 +1354,7 @@ function TacticalMapCanvas({
       data-tactical-canvas="v1"
       data-tactical-picking={!onCurrentLevel ? "none" : gestures.pointPick ? task.kind : gestures.aimPick ? "aim" : gestures.groundPick ? "destination" : "none"}
       data-tactical-stitched-view={stitch === null ? undefined : stitchedView ? String(stitch.level) : "none"}
-      className="aspect-[4/3] min-w-0 overflow-hidden rounded-[16px] border border-border bg-[#151411] p-3 lg:h-[clamp(18rem,42dvh,26rem)] lg:aspect-auto"
+      className="aspect-[4/3] min-w-0 overflow-hidden rounded-[16px] border border-border bg-[#151411] p-3 lg:h-[clamp(16rem,34dvh,24rem)] lg:aspect-auto"
     >
       <svg
         role="group"
@@ -2002,10 +1791,6 @@ function TacticalTextReadout({ projection }: { projection: TacticalProjection })
   );
 }
 
-/** SPEC 0012 §8.1 (ADR 0099): the basic actions a Ready can hold besides the
- * actor's own action and attack abilities. */
-const READYABLE_BASIC_ACTIONS: ReadonlySet<string> = new Set(["action:grapple", "action:shove", "action:shove-away"]);
-
 type ClimbChoice = { direction: "down" | "up" | "across"; label: string; sentence: string };
 
 /** SPEC 0014 §4 (ADR 0098): the climbs or swims the combat map offers on a
@@ -2038,178 +1823,36 @@ function jumpLabel(jump: CombatJumpChoice, feature: TacticalKnownFeature): strin
     checks.length > 0 ? `，${checks.join("，")}` : ""}）`;
 }
 
-const ACTION_BUTTON = "min-h-9 rounded-[10px] border border-border bg-bg/40 px-3 py-1.5 text-xs text-fg transition-colors hover:bg-elevated disabled:cursor-not-allowed disabled:opacity-50 aria-pressed:border-brass aria-pressed:bg-brass/15 aria-pressed:text-brass";
-const PRIMARY_BUTTON = "min-h-9 rounded-[10px] border border-brass/60 bg-brass/15 px-3 py-1.5 text-xs text-brass transition-colors hover:bg-brass/25 disabled:cursor-not-allowed disabled:opacity-50";
-
-const ABILITY_GROUP_LABEL: Record<CombatControlAbility["group"], string> = {
-  attack: "攻击",
-  spell: "法术",
-  feature: "职业能力",
-  item: "物品",
-  basic: "基础动作",
-};
-
-function AbilityButtons({
-  abilities,
-  armedRef,
-  disabled,
-  onChoose,
-  attribute = "data-tactical-ability",
-}: {
-  abilities: CombatControlAbility[];
-  armedRef: string | null;
-  disabled: boolean;
-  onChoose: (ability: CombatControlAbility) => void;
-  /** The data attribute naming each button's ability. */
-  attribute?: "data-tactical-ability" | "data-tactical-ready-response";
-}) {
-  const groups = (Object.keys(ABILITY_GROUP_LABEL) as CombatControlAbility["group"][])
-    .map((group) => ({ group, entries: abilities.filter((ability) => ability.group === group) }))
-    .filter((entry) => entry.entries.length > 0);
-  return (
-    <div className="space-y-2">
-      {groups.map(({ group, entries }) => (
-        <div key={group} role="group" aria-label={ABILITY_GROUP_LABEL[group]} data-tactical-ability-group={group}>
-          <p className="mb-1 text-[11px] text-subtle">{ABILITY_GROUP_LABEL[group]}</p>
-          <div className="flex min-w-0 flex-wrap gap-1.5">
-            {entries.map((ability) => (
-              <button
-                key={ability.abilityRef}
-                type="button"
-                {...{ [attribute]: ability.abilityRef }}
-                aria-pressed={armedRef === ability.abilityRef}
-                aria-label={`${ability.name}，${abilityDetail(ability)}`}
-                title={targetHint(ability)}
-                disabled={disabled}
-                onClick={() => onChoose(ability)}
-                className={cn(ACTION_BUTTON, "max-w-full break-words text-left")}
-              >
-                {ability.name}
-                <span className="ml-1 text-[10px] text-subtle">{abilityDetail(ability)}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-/** SPEC 0014 §8 (ADR 0091): the controls under the map. Outside an encounter
- * the player walks to a picked point, and an
- * ability aimed at someone becomes an intent sentence for the KP. On the
- * player's own turn the move, its abilities, the basic actions and the end
- * of the turn go straight to Rules. Every pick can also be made from the
- * name lists here, so the text readout keeps a full way to act. */
-function TacticalActionPanel({
+/** SPEC 0014 §§4、8 (ADR 0091, 0098, 0103): what the map itself offers from
+ * its ground and features: outside an encounter, walking to a picked point
+ * and the doors that lead elsewhere; on the combat map, the terrain to jump,
+ * climb or swim. Abilities, the turn and the confirmation of every pick are
+ * in the character panel's action list and the bar above the composer. */
+function TacticalPlacePanel({
   projection,
   interaction,
   selected,
   onSelect,
-  gestures,
   mapVisible,
 }: {
   projection: TacticalProjection;
   interaction: TacticalInteraction;
   selected: TacticalSelection;
   onSelect: (key: string) => void;
-  gestures: ReturnType<typeof mapGestures>;
-  /** In the text readout a point can only be picked by a name list. */
+  /** In the text readout a point can only be picked from the map view. */
   mapVisible: boolean;
 }) {
   const { actions, task, setTask } = interaction;
   const { inEncounter, myTurn } = playerEncounter(projection);
-  const controls = actions.controls;
-  const entities = [projection.self, ...projection.visibleEntities];
-  const elevation = projection.self.position.elevation;
   const busy = actions.busy;
-  const nameOf = (id: string) => id === projection.self.id
-    ? "自己"
-    : entities.find((entity) => entity.id === id)?.name ?? "目标";
-  const armedRef = task.kind === "creatures" || task.kind === "area" || task.kind === "intent"
-    || task.kind === "help" || task.kind === "ready"
-    ? task.ability.abilityRef
-    : null;
-  // SPEC 0012 §8.1 (ADR 0099 decision 3): the trigger a pick is readied for.
-  const readyPick = (task.kind === "path" || task.kind === "creatures" || task.kind === "area") ? task.ready : undefined;
-  const readyChosen: ReadyPick | undefined = task.kind === "ready" && task.triggerRef !== null && task.event !== null
-    ? { triggerRef: task.triggerRef, event: task.event } : undefined;
-
-  async function finish(result: Promise<boolean>) {
-    if (await result) setTask(IDLE_TASK);
-  }
-
-  /** Uses the ability now, or, with a ready pick, readies it as the response
-   * to that trigger. */
-  function submitAbility(ability: CombatControlAbility, target: CombatAbilityTarget, ready?: ReadyPick) {
-    void finish(ready === undefined
-      ? actions.useAbility(ability.abilityRef, target)
-      : actions.useAbility("action:ready", { kind: "ready", trigger: { ref: ready.triggerRef, event: ready.event },
-          response: { kind: "ability", abilityRef: ability.abilityRef, target } }));
-  }
-
-  function chooseCombatAbility(ability: CombatControlAbility, ready?: ReadyPick) {
-    if (armedRef === ability.abilityRef && ready === undefined) {
-      setTask(IDLE_TASK);
-      return;
-    }
-    const target = ability.target;
-    if (target.kind === "none") submitAbility(ability, { kind: "none" }, ready);
-    else if (target.kind === "self") submitAbility(ability, { kind: "creatures", refs: [projection.self.id] }, ready);
-    else if (target.kind === "creatures") setTask({ kind: "creatures", ability, refs: [], purpose: "combat", point: null, ...(ready ? { ready } : {}) });
-    else if (target.kind === "help") setTask({ kind: "help", ability, allyRef: null, mode: "check", enemyRef: null });
-    else if (target.kind === "ready") setTask({ kind: "ready", ability, triggerRef: null, event: null });
-    else if (target.origin === "self" && !target.needsDirection) {
-      submitAbility(ability, { kind: "area", origin: structuredClone(projection.self.position) }, ready);
-    } else {
-      setTask({ kind: "area", ability, origin: target.origin === "self" ? selfPoint(projection) : null, direction: null,
-        ...(ready ? { ready } : {}) });
-    }
-  }
-
-  function chooseIntentAbility(ability: CombatControlAbility) {
-    if (armedRef === ability.abilityRef) setTask(IDLE_TASK);
-    else if (ability.target.kind === "creatures") setTask({ kind: "creatures", ability, refs: [], purpose: "intent" });
-    else setTask({ kind: "intent", ability, aimRef: null });
-  }
-
-  function areaTarget(): CombatAbilityTarget | null {
-    if (task.kind !== "area" || task.ability.target.kind !== "area" || task.origin === null) return null;
-    const shape = task.ability.target;
-    if (shape.needsDirection && task.direction === null) return null;
-    const origin = shape.origin === "self"
-      ? structuredClone(projection.self.position)
-      : mapPosition(task.origin, elevation);
-    // SPEC 0014 §5: the page submits only the origin and a direction (the way
-    // from the origin to the second point); Rules finds who is inside.
-    return {
-      kind: "area",
-      origin,
-      ...(shape.needsDirection && task.direction !== null
-        ? {
-            direction: {
-              x: String(task.direction.x - Number(origin.x)),
-              y: String(task.direction.y - Number(origin.y)),
-              elevation: "0",
-            },
-          }
-        : {}),
-    };
-  }
-
-  const intent = task.kind === "creatures" && task.purpose === "intent"
-    ? { sentence: intentSentence(task.ability, task.refs.map(nameOf)), ready: task.refs.length > 0 }
-    : task.kind === "intent"
-      ? { sentence: intentSentence(task.ability, task.aimRef ? [nameOf(task.aimRef)] : []), ready: true }
-      : task.kind === "climb" || task.kind === "goTo" ? { sentence: task.sentence, ready: true } : null;
+  const combatDisabled = busy || !myTurn;
   // SPEC 0014 §8 (ADR 0103 decision 4): outside an encounter each door or
-  // opening that leads elsewhere offers going there, as a sentence for the KP.
+  // opening that leads elsewhere offers going there, as the player's sentence.
   const doors = inEncounter ? [] : doorsElsewhere(projection);
-
   // SPEC 0014 §4 (ADR 0098): on the combat map a jump goes straight to
-  // Rules; a climb or swim is the player's sentence for the KP. Either starts
-  // from a feature picked on the map or from the list.
-  const jumps = controls?.jumps ?? [];
+  // Rules; a climb or swim is the player's sentence. Either starts from a
+  // feature picked on the map or from the list.
+  const jumps = actions.controls?.jumps ?? [];
   const terrainFeatures = inEncounter
     ? projection.knownFeatures.filter((feature) => jumps.some((jump) => jump.featureId === feature.id)
       || climbChoices(feature, projection.self).length > 0)
@@ -2217,527 +1860,110 @@ function TacticalActionPanel({
   const terrainFeature = selected.kind === "feature" && terrainFeatures.some((feature) => feature.id === selected.value.id)
     ? selected.value : null;
 
-  const activeEntityId = projection.encounter?.activeEntityId ?? null;
-  const activeName = activeEntityId === null
-    ? "尚未确定"
-    : entities.find((entity) => entity.id === activeEntityId)?.name ?? "看不见的行动者";
-  const turn = controls?.turn ?? null;
-  const movement = controls?.movement ?? null;
-  const turnSummary = [
-    ...(turn ? [`动作 ${turn.action}`, `附赠动作 ${turn.bonusAction}`, `反应 ${turn.reaction}`] : []),
-    ...(turn && turn.attacksRemaining > 0 ? [`本次攻击动作还能攻击 ${turn.attacksRemaining} 次`] : []),
-    ...(movement ? [`剩余移动 ${movement.remainingFeet} 尺（速度 ${movement.speedFeet} 尺）`] : []),
-  ];
-  const combatDisabled = busy || !myTurn;
-  const area = areaTarget();
-
   return (
     <section
-      aria-label="地图行动"
+      aria-label="地图上的移动与地形"
       data-tactical-actions={inEncounter ? "combat" : "exploration"}
       data-tactical-my-turn={String(myTurn)}
       className="min-w-0 space-y-3 break-words rounded-[16px] border border-border bg-surface p-3 text-xs [overflow-wrap:anywhere] lg:col-span-2"
     >
       {inEncounter ? (
-        <>
-          <div role="status" aria-live="polite" className="space-y-1">
-            <p className="font-display text-sm text-fg">
-              {myTurn
-                ? `第 ${projection.encounter?.round ?? 0} 轮 · 轮到你`
-                : `当前行动：${activeName}。轮到你时再行动。`}
-            </p>
-            {turnSummary.length > 0 ? (
-              <p data-tactical-turn-grants className="text-muted">{turnSummary.join(" · ")}</p>
-            ) : null}
-            {controls?.hidden ? (
-              <p data-tactical-hidden className="text-brass">你正躲藏着：对方看不见你，攻击或被发现时暴露。</p>
-            ) : null}
-          </div>
-          <div className="flex min-w-0 flex-wrap gap-1.5">
-            <button
-              type="button"
-              data-tactical-move-mode
-              aria-pressed={task.kind === "path"}
-              disabled={combatDisabled}
-              onClick={() => setTask(task.kind === "path" ? IDLE_TASK : { kind: "path", waypoints: [] })}
-              className={ACTION_BUTTON}
-            >
-              移动
-            </button>
-            <button
-              type="button"
-              data-tactical-end-turn
-              disabled={combatDisabled}
-              onClick={() => void finish(actions.endTurn())}
-              className={PRIMARY_BUTTON}
-            >
-              结束回合
-            </button>
-          </div>
-          {task.kind === "path" ? (
-            <div data-tactical-path-picker className="space-y-2 rounded-[12px] border border-brass/40 p-2">
-              <p className="text-muted">
-                {task.ready ? `预备：${nameOf(task.ready.triggerRef)}${READY_EVENT_LABEL[task.ready.event]}，用反应走这条路。` : ""}
-                {mapVisible
-                  ? `从你所在处出发，依次点地图放下路径点（已放 ${task.waypoints.length} 个）。也可用方向键移动选点框，按回车放点。`
-                  : `路径点要在地图上放（已放 ${task.waypoints.length} 个），请切换到“地图”。`}
-              </p>
-              <div className="flex flex-wrap gap-1.5">
-                <button
-                  type="button"
-                  data-tactical-path-submit
-                  disabled={combatDisabled || task.waypoints.length === 0}
-                  onClick={() => {
-                    const path = [
-                      structuredClone(projection.self.position),
-                      ...task.waypoints.map((point) => mapPosition(point, elevation)),
-                    ];
-                    void finish(task.ready === undefined
-                      ? actions.walkPath(path)
-                      : actions.useAbility("action:ready", { kind: "ready",
-                          trigger: { ref: task.ready.triggerRef, event: task.ready.event }, response: { kind: "move", path } }));
-                  }}
-                  className={PRIMARY_BUTTON}
-                >
-                  {task.ready ? "确认预备" : "确认移动"}
-                </button>
-                <button
-                  type="button"
-                  disabled={task.waypoints.length === 0}
-                  onClick={() => setTask({ ...task, waypoints: task.waypoints.slice(0, -1) })}
-                  className={ACTION_BUTTON}
-                >
-                  撤回一点
-                </button>
-                <button
-                  type="button"
-                  data-tactical-path-clear
-                  onClick={() => setTask({ kind: "path", waypoints: [], ...(task.ready ? { ready: task.ready } : {}) })}
-                  className={ACTION_BUTTON}
-                >
-                  清除
-                </button>
-              </div>
-            </div>
-          ) : null}
-          <AbilityButtons
-            abilities={[...(controls?.abilities ?? []), ...(controls?.basicActions ?? [])]}
-            armedRef={readyPick === undefined ? armedRef : "action:ready"}
-            disabled={combatDisabled}
-            onChoose={(ability) => chooseCombatAbility(ability)}
-          />
-          {terrainFeatures.length > 0 ? (
-            <div data-tactical-terrain className="space-y-2 border-t border-border pt-2">
-              <label className="flex min-w-0 max-w-full items-center gap-1.5 text-muted">
-                <span className="shrink-0">地形</span>
-                <select
-                  data-tactical-terrain-select
-                  value={terrainFeature === null ? "" : featureSelectionKey(terrainFeature.id)}
-                  onChange={(event) => {
-                    if (event.target.value) onSelect(event.target.value);
-                  }}
-                  className="min-h-9 min-w-0 max-w-[14rem] rounded-[10px] border border-border bg-bg px-2 text-xs text-fg"
-                >
-                  <option value="" disabled>在地图上点选，或从这里选</option>
-                  {terrainFeatures.map((feature) => (
-                    <option key={feature.id} value={featureSelectionKey(feature.id)}>{feature.label}</option>
-                  ))}
-                </select>
-              </label>
-              {terrainFeature === null ? (
-                <p className="text-subtle">选一处地形，看能怎样跳过、跳上、攀爬或游过去。</p>
-              ) : (
-                <div className="flex min-w-0 flex-wrap gap-1.5">
-                  {jumps.filter((jump) => jump.featureId === terrainFeature.id).map((jump) => (
-                    <button
-                      key={jump.abilityRef}
-                      type="button"
-                      data-tactical-jump={jump.abilityRef}
-                      data-tactical-jump-feature={jump.featureId}
-                      disabled={combatDisabled}
-                      onClick={() => void finish(actions.useAbility(jump.abilityRef, { kind: "point", position: structuredClone(jump.landing) }))}
-                      className={cn(ACTION_BUTTON, "max-w-full break-words text-left")}
-                    >
-                      {jumpLabel(jump, terrainFeature)}
-                    </button>
-                  ))}
-                  {climbChoices(terrainFeature, projection.self).map((choice) => (
-                    <button
-                      key={choice.direction}
-                      type="button"
-                      data-tactical-climb={choice.direction}
-                      aria-pressed={task.kind === "climb" && task.sentence === choice.sentence}
-                      disabled={combatDisabled}
-                      title="交给 KP 裁定：是否需要运动检定，失败会怎样"
-                      onClick={() => setTask({ kind: "climb", featureId: terrainFeature.id, sentence: choice.sentence })}
-                      className={ACTION_BUTTON}
-                    >
-                      {choice.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          ) : null}
-          {task.kind === "help" && task.ability.target.kind === "help" ? (
-            <div data-tactical-help-picker className="space-y-2 rounded-[12px] border border-brass/40 p-2">
-              <p className="text-muted">帮助：选一名同伴。它下一次属性检定有优势；或选你身边 5 尺内的一个敌人，同伴在你下回合开始前第一次攻击它时有优势。</p>
-              <div className="flex flex-wrap gap-1.5">
-                {task.ability.target.allyRefs.map((ref) => (
-                  <button
-                    key={ref}
-                    type="button"
-                    data-tactical-help-ally={ref}
-                    aria-pressed={task.allyRef === ref}
-                    onClick={() => setTask({ ...task, allyRef: ref })}
-                    className={ACTION_BUTTON}
-                  >
-                    {nameOf(ref)}
-                  </button>
-                ))}
-              </div>
-              <div role="radiogroup" aria-label="帮助方式" className="flex flex-wrap gap-1.5">
-                <button
-                  type="button"
-                  role="radio"
-                  data-tactical-help-mode="check"
-                  aria-checked={task.mode === "check"}
-                  onClick={() => setTask({ ...task, mode: "check", enemyRef: null })}
-                  className={ACTION_BUTTON}
-                >
-                  下一次检定
-                </button>
-                <button
-                  type="button"
-                  role="radio"
-                  data-tactical-help-mode="attack"
-                  aria-checked={task.mode === "attack"}
-                  disabled={task.ability.target.enemyRefs.length === 0}
-                  onClick={() => setTask({ ...task, mode: "attack" })}
-                  className={ACTION_BUTTON}
-                >
-                  攻击身边的敌人
-                </button>
-              </div>
-              {task.mode === "attack" ? (
-                <div className="flex flex-wrap gap-1.5">
-                  {task.ability.target.enemyRefs.map((ref) => (
-                    <button
-                      key={ref}
-                      type="button"
-                      data-tactical-help-enemy={ref}
-                      aria-pressed={task.enemyRef === ref}
-                      onClick={() => setTask({ ...task, enemyRef: ref })}
-                      className={ACTION_BUTTON}
-                    >
-                      {nameOf(ref)}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-              <div className="flex flex-wrap gap-1.5">
-                <button
-                  type="button"
-                  data-tactical-help-submit
-                  disabled={combatDisabled || task.allyRef === null || (task.mode === "attack" && task.enemyRef === null)}
-                  onClick={() => {
-                    if (task.allyRef === null) return;
-                    void finish(actions.useAbility(task.ability.abilityRef, task.mode === "attack" && task.enemyRef !== null
-                      ? { kind: "help", allyRef: task.allyRef, enemyRef: task.enemyRef }
-                      : { kind: "help", allyRef: task.allyRef }));
-                  }}
-                  className={PRIMARY_BUTTON}
-                >
-                  确认
-                </button>
-                <button type="button" onClick={() => setTask(IDLE_TASK)} className={ACTION_BUTTON}>取消</button>
-              </div>
-            </div>
-          ) : null}
-          {task.kind === "ready" && task.ability.target.kind === "ready" ? (
-            <div data-tactical-ready-picker className="space-y-2 rounded-[12px] border border-brass/40 p-2">
-              <p className="text-muted">预备：先选触发的人和时机，再选那时要做的事——走一条路，或下面的一项能力。触发时会问你用不用反应执行。</p>
-              <div className="flex flex-wrap gap-1.5">
-                {task.ability.target.triggerRefs.map((ref) => (
-                  <button
-                    key={ref}
-                    type="button"
-                    data-tactical-ready-trigger={ref}
-                    aria-pressed={task.triggerRef === ref}
-                    onClick={() => setTask({ ...task, triggerRef: ref })}
-                    className={ACTION_BUTTON}
-                  >
-                    {nameOf(ref)}
-                  </button>
-                ))}
-              </div>
-              <div role="radiogroup" aria-label="触发时机" className="flex flex-wrap gap-1.5">
-                {task.ability.target.events.map((event) => (
-                  <button
-                    key={event}
-                    type="button"
-                    role="radio"
-                    data-tactical-ready-event={event}
-                    aria-checked={task.event === event}
-                    onClick={() => setTask({ ...task, event })}
-                    className={ACTION_BUTTON}
-                  >
-                    {READY_EVENT_LABEL[event]}
-                  </button>
-                ))}
-              </div>
-              {readyChosen ? (
-                <div className="space-y-2">
-                  <p className="text-fg">那时要做：</p>
-                  <button
-                    type="button"
-                    data-tactical-ready-move
-                    disabled={combatDisabled}
-                    onClick={() => setTask({ kind: "path", waypoints: [], ready: readyChosen })}
-                    className={ACTION_BUTTON}
-                  >
-                    走一条路
-                  </button>
-                  <AbilityButtons
-                    abilities={[
-                      ...(controls?.abilities ?? []).filter((ability) => ability.activation === "action" || ability.activation === "attack"),
-                      // A grapple or shove can be readied too; its defender picks its skill when it resolves.
-                      ...(controls?.basicActions ?? []).filter((ability) => READYABLE_BASIC_ACTIONS.has(ability.abilityRef)),
-                    ]}
-                    armedRef={null}
-                    disabled={combatDisabled}
-                    onChoose={(ability) => chooseCombatAbility(ability, readyChosen)}
-                    attribute="data-tactical-ready-response"
-                  />
-                </div>
-              ) : null}
-              <button type="button" onClick={() => setTask(IDLE_TASK)} className={ACTION_BUTTON}>取消</button>
-            </div>
-          ) : null}
-        </>
+        terrainFeatures.length === 0 ? (
+          <p className="text-subtle">能力在角色栏的“行动”里；移动和结束回合在输入框上方。</p>
+        ) : null
       ) : (
-        <>
-          <div className="space-y-2">
-            <p className="text-muted">场内移动</p>
-            {task.kind === "destination" ? (
-              <div data-tactical-destination-picker className="flex flex-wrap items-center gap-1.5">
-                <span className="text-fg">目的地已在地图上用虚线方框标出。</span>
-                <button
-                  type="button"
-                  data-tactical-destination-submit
-                  disabled={busy}
-                  onClick={() => void finish(actions.moveTo({
-                    kind: "point",
-                    x: String(task.point.x),
-                    y: String(task.point.y),
-                  }))}
-                  className={PRIMARY_BUTTON}
-                >
-                  走到这里
-                </button>
-                <button type="button" onClick={() => setTask(IDLE_TASK)} className={ACTION_BUTTON}>
-                  取消
-                </button>
-              </div>
-            ) : (
-              <p className="text-subtle">
-                {mapVisible
-                  ? "点地图上的空地选目的地；也可用方向键移动选点框，按回车选定。"
-                  : "要移动位置，请切换到“地图”点选空地；也可以直接用文字描述你的行动。"}
-              </p>
-            )}
-          </div>
-          {doors.length > 0 ? (
-            <div data-tactical-go-to-list className="space-y-2 border-t border-border pt-2">
-              <p className="text-muted">出口与通路</p>
-              <div className="grid min-w-0 gap-2 sm:grid-cols-2 xl:grid-cols-3">
-                {doors.map((door) => (
-                  <button
-                    key={door.id}
-                    type="button"
-                    data-tactical-go-to={door.id}
-                    data-tactical-go-to-passable={String(door.leadsTo.passable)}
-                    aria-pressed={task.kind === "goTo" && task.featureId === door.id}
-                    disabled={busy}
-                    onClick={() => {
-                      onSelect(featureSelectionKey(door.id));
-                      setTask({ kind: "goTo", featureId: door.id, sentence: goToSentence(door), passable: door.leadsTo.passable });
-                    }}
-                    className={cn(ACTION_BUTTON, "flex max-w-full flex-col items-start gap-1 break-words px-3 py-2.5 text-left")}
-                  >
-                    <span className="text-fg">{door.label}</span>
-                    <span className="text-xs text-muted">
-                      → {door.leadsTo.name}{door.leadsTo.passable ? "" : " · 暂时无法通过"}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : null}
-          {controls && controls.abilities.length > 0 ? (
-            <div className="space-y-2 border-t border-border pt-2">
-              <p className="text-muted">对人使用能力：选好能力和目标后，作为你的行动交给 KP 裁定。</p>
-              <AbilityButtons
-                abilities={controls.abilities}
-                armedRef={armedRef}
-                disabled={busy}
-                onChoose={chooseIntentAbility}
-              />
-            </div>
-          ) : null}
-        </>
-      )}
-
-      {task.kind === "creatures" ? (
-        <div data-tactical-target-picker={task.purpose} className="space-y-2 rounded-[12px] border border-brass/40 p-2">
-          <p className="text-muted">
-            {task.ready ? `预备：${nameOf(task.ready.triggerRef)}${READY_EVENT_LABEL[task.ready.event]}，用反应——` : ""}
-            {task.ability.name}：{targetHint(task.ability)}。在地图上点选，或从下面选择。
-            {task.ability.target.kind === "creatures" && task.ability.target.npcOpponentsOnly
-              ? "只能对非玩家角色使用；对其他玩家请用文字说明你的行动。"
-              : ""}
-            {gestures.aimPick ? "看不见的目标：点地图空地，朝你猜的位置攻击（劣势，猜错则落空）。" : ""}
+        <div className="space-y-1">
+          <p className="text-muted">场内移动</p>
+          <p className="text-subtle">
+            {task.kind === "destination"
+              ? "目的地已在地图上用虚线方框标出，在输入框上方确认。"
+              : mapVisible
+                ? "点地图上的空地选目的地；也可用方向键移动选点框，按回车选定。"
+                : "要移动位置，请切换到“地图”点选空地；也可以直接用文字描述你的行动。"}
           </p>
-          <div className="flex flex-wrap gap-1.5">
-            {entities.filter((entity) => creaturePickable(task.ability, entity)).map((entity) => (
+        </div>
+      )}
+      {doors.length > 0 ? (
+        <div data-tactical-go-to-list className="space-y-2 border-t border-border pt-2">
+          <p className="text-muted">出口与通路</p>
+          <div className="grid min-w-0 gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            {doors.map((door) => (
               <button
-                key={entity.id}
+                key={door.id}
                 type="button"
-                data-tactical-target-option={entity.id}
-                aria-pressed={task.refs.includes(entity.id)}
-                onClick={() => gestures.activateEntity(entity)}
-                className={ACTION_BUTTON}
+                data-tactical-go-to={door.id}
+                data-tactical-go-to-passable={String(door.leadsTo.passable)}
+                aria-pressed={task.kind === "goTo" && task.featureId === door.id}
+                disabled={busy}
+                onClick={() => {
+                  onSelect(featureSelectionKey(door.id));
+                  setTask({ kind: "goTo", featureId: door.id, sentence: goToSentence(door), passable: door.leadsTo.passable });
+                }}
+                className={cn(ACTION_BUTTON, "flex max-w-full flex-col items-start gap-1 break-words px-3 py-2.5 text-left")}
               >
-                {nameOf(entity.id)}
+                <span className="text-fg">{door.label}</span>
+                <span className="text-xs text-muted">
+                  → {door.leadsTo.name}{door.leadsTo.passable ? "" : " · 暂时无法通过"}
+                </span>
               </button>
             ))}
           </div>
-          <p className="text-fg">
-            已选：{task.refs.length > 0 ? joinNames(task.refs.map(nameOf))
-              : task.point ? `地图上一处（${task.point.x}, ${task.point.y}）` : "尚未选择"}
-          </p>
-          {task.purpose === "combat" ? (
-            <div className="flex flex-wrap gap-1.5">
-              <button
-                type="button"
-                data-tactical-target-submit
-                disabled={combatDisabled || (task.refs.length === 0 && !task.point)}
-                onClick={() => submitAbility(task.ability, task.refs.length === 0 && task.point
-                  ? { kind: "point", position: mapPosition(task.point, elevation) }
-                  : { kind: "creatures", refs: [...task.refs] }, task.ready)}
-                className={PRIMARY_BUTTON}
-              >
-                确认
-              </button>
-              <button type="button" onClick={() => setTask(IDLE_TASK)} className={ACTION_BUTTON}>取消</button>
-            </div>
-          ) : null}
         </div>
       ) : null}
-
-      {task.kind === "area" ? (
-        <div data-tactical-area-picker className="space-y-2 rounded-[12px] border border-brass/40 p-2">
-          <p className="text-muted">{task.ability.name}：{targetHint(task.ability)}。</p>
-          <p className="text-fg">
-            {task.origin === null
-              ? "在地图上点选位置，或从下面选一个人所在处。"
-              : task.ability.target.kind === "area" && task.ability.target.needsDirection && task.direction === null
-                ? "再点地图上一处，或从下面选一个人，定出朝向。"
-                : "已选好。范围内有谁由规则结算。"}
-          </p>
-          {taskPicksPoint(task) ? (
-            <div className="flex flex-wrap gap-1.5">
-              {entities.map((entity) => (
+      {terrainFeatures.length > 0 ? (
+        <div data-tactical-terrain className="space-y-2">
+          <label className="flex min-w-0 max-w-full items-center gap-1.5 text-muted">
+            <span className="shrink-0">地形</span>
+            <select
+              data-tactical-terrain-select
+              value={terrainFeature === null ? "" : featureSelectionKey(terrainFeature.id)}
+              onChange={(event) => {
+                if (event.target.value) onSelect(event.target.value);
+              }}
+              className="min-h-9 min-w-0 max-w-[14rem] rounded-[10px] border border-border bg-bg px-2 text-xs text-fg"
+            >
+              <option value="" disabled>在地图上点选，或从这里选</option>
+              {terrainFeatures.map((feature) => (
+                <option key={feature.id} value={featureSelectionKey(feature.id)}>{feature.label}</option>
+              ))}
+            </select>
+          </label>
+          {terrainFeature === null ? (
+            <p className="text-subtle">选一处地形，看能怎样跳过、跳上、攀爬或游过去。</p>
+          ) : (
+            <div className="flex min-w-0 flex-wrap gap-1.5">
+              {jumps.filter((jump) => jump.featureId === terrainFeature.id).map((jump) => (
                 <button
-                  key={entity.id}
+                  key={jump.abilityRef}
                   type="button"
-                  data-tactical-area-option={entity.id}
-                  onClick={() => gestures.pickPoint({ x: inches(entity.position.x), y: inches(entity.position.y) })}
+                  data-tactical-jump={jump.abilityRef}
+                  data-tactical-jump-feature={jump.featureId}
+                  disabled={combatDisabled}
+                  onClick={() => {
+                    void actions.useAbility(jump.abilityRef, { kind: "point", position: structuredClone(jump.landing) })
+                      .then((done) => { if (done) setTask(IDLE_TASK); });
+                  }}
+                  className={cn(ACTION_BUTTON, "max-w-full break-words text-left")}
+                >
+                  {jumpLabel(jump, terrainFeature)}
+                </button>
+              ))}
+              {climbChoices(terrainFeature, projection.self).map((choice) => (
+                <button
+                  key={choice.direction}
+                  type="button"
+                  data-tactical-climb={choice.direction}
+                  aria-pressed={task.kind === "climb" && task.sentence === choice.sentence}
+                  disabled={combatDisabled}
+                  title="交给 KP 裁定：是否需要运动检定，失败会怎样"
+                  onClick={() => setTask({ kind: "climb", featureId: terrainFeature.id, sentence: choice.sentence })}
                   className={ACTION_BUTTON}
                 >
-                  {nameOf(entity.id)}
+                  {choice.label}
                 </button>
               ))}
             </div>
-          ) : null}
-          <div className="flex flex-wrap gap-1.5">
-            <button
-              type="button"
-              data-tactical-area-submit
-              disabled={combatDisabled || area === null}
-              onClick={() => {
-                if (area !== null) submitAbility(task.ability, area, task.ready);
-              }}
-              className={PRIMARY_BUTTON}
-            >
-              确认
-            </button>
-            <button
-              type="button"
-              onClick={() => setTask({
-                ...task,
-                origin: task.ability.target.kind === "area" && task.ability.target.origin === "self" ? selfPoint(projection) : null,
-                direction: null,
-              })}
-              className={ACTION_BUTTON}
-            >
-              重选
-            </button>
-            <button type="button" onClick={() => setTask(IDLE_TASK)} className={ACTION_BUTTON}>取消</button>
-          </div>
-        </div>
-      ) : null}
-
-      {task.kind === "intent" && task.ability.target.kind === "area" && task.ability.target.origin === "point" ? (
-        <div data-tactical-aim-picker className="space-y-2 rounded-[12px] border border-brass/40 p-2">
-          <p className="text-muted">{task.ability.name}：可以在地图上或下面选一个人，说明朝谁施放。</p>
-          <div className="flex flex-wrap gap-1.5">
-            {projection.visibleEntities.map((entity) => (
-              <button
-                key={entity.id}
-                type="button"
-                data-tactical-aim-option={entity.id}
-                aria-pressed={task.aimRef === entity.id}
-                onClick={() => gestures.activateEntity(entity)}
-                className={ACTION_BUTTON}
-              >
-                {entity.name}
-              </button>
-            ))}
-          </div>
-        </div>
-      ) : null}
-
-      {intent ? (
-        <div data-tactical-intent-preview className="space-y-2 rounded-[12px] border border-brass/40 p-2">
-          <p className="text-fg">将作为你的行动发送：{intent.ready ? intent.sentence : "请先选择目标。"}</p>
-          {task.kind === "goTo" && !task.passable ? (
-            <p data-tactical-go-to-closed className="text-brass">这扇门现在关着；能不能打开由 KP 裁定。</p>
-          ) : null}
-          {actions.intentUnavailable ? <p className="text-subtle">{actions.intentUnavailable}</p> : null}
-          <div className="flex flex-wrap gap-1.5">
-            <button
-              type="button"
-              data-tactical-intent-submit
-              disabled={busy || !intent.ready || actions.intentUnavailable !== undefined}
-              onClick={() => {
-                setTask(IDLE_TASK);
-                void actions.sendIntent(intent.sentence);
-              }}
-              className={PRIMARY_BUTTON}
-            >
-              发送给 KP
-            </button>
-            <button type="button" onClick={() => setTask(IDLE_TASK)} className={ACTION_BUTTON}>取消</button>
-          </div>
-        </div>
-      ) : null}
-
-      {busy ? <p role="status" className="text-brass">正在提交……</p> : null}
-      {actions.error ? (
-        <div role="alert" data-tactical-action-error className="flex flex-wrap items-start gap-2 rounded-[12px] border border-danger/40 bg-danger/10 p-2">
-          <p className="min-w-0 flex-1 text-fg">{actions.error}</p>
-          <button type="button" onClick={actions.dismissError} className={ACTION_BUTTON}>知道了</button>
+          )}
         </div>
       ) : null}
     </section>

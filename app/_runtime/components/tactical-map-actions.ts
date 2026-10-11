@@ -9,22 +9,25 @@ import type {
   TacticalPosition,
   TacticalProjection,
 } from "@/lib/rules/tactical-projection";
+import { IDLE_TASK, type MapPoint, type MapTask, type TacticalTaskControl } from "@/components/tactical-task";
 
-/** What the tactical map may ask the table to do (SPEC 0014 §§3、4、8, ADR
- * 0091). Moves, the end of a turn and abilities used on the actor's own turn
- * go straight to Rules; an ability picked outside an encounter becomes a
- * player intent sentence for the KP. */
-export type TacticalMapActions = {
+/** What the map, the character panel's action list and the bar above the
+ * composer may ask the table to do (SPEC 0014 §§3、4、8, ADR 0091), and the
+ * pick in progress they share. Moves, the end of a turn and abilities used on
+ * the actor's own turn go straight to Rules; an ability picked outside an
+ * encounter becomes the player's sentence in the composer. */
+export type TacticalMapActions = TacticalTaskControl & {
   controls: CombatControls | null;
   busy: boolean;
   error: string | null;
-  /** Why an intent sentence cannot be sent now, if it cannot. */
+  /** Why a sentence cannot be put in the composer now, if it cannot. */
   intentUnavailable?: string;
   moveTo(destination: MapMoveDestination): Promise<boolean>;
   walkPath(path: TacticalPosition[]): Promise<boolean>;
   useAbility(abilityRef: string, target: CombatAbilityTarget): Promise<boolean>;
   endTurn(): Promise<boolean>;
-  sendIntent(sentence: string): Promise<void>;
+  /** Puts the player's sentence in the composer, to add to and send. */
+  draftIntent(sentence: string): void;
   dismissError(): void;
 };
 
@@ -34,12 +37,26 @@ export function useTacticalMapActions(input: {
   controls: CombatControls | null;
   sending: boolean;
   intentUnavailable?: string;
-  sendIntent(sentence: string): Promise<void>;
+  draftIntent(sentence: string): void;
 }): TacticalMapActions {
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const busyRef = useRef(false);
+  // A pick started on one turn never carries into the next one.
+  const encounter = input.projection?.encounter;
+  const turnKey = encounter
+    ? `${encounter.id}:${encounter.round}:${encounter.activeEntityId ?? ""}`
+    : "exploration";
+  const [taskState, setTaskState] = useState<{ key: string; task: MapTask }>({ key: turnKey, task: IDLE_TASK });
+  const task = taskState.key === turnKey ? taskState.task : IDLE_TASK;
+  const [cursor, setCursor] = useState<MapPoint | null>(null);
+  const setTask = (next: MapTask) => {
+    setTaskState({ key: turnKey, task: next });
+    // The keyboard cursor starts again from the player for a new kind of pick.
+    const family = (candidate: MapTask) => candidate.kind === "destination" ? "idle" : candidate.kind;
+    if (family(next) !== family(task)) setCursor(null);
+  };
 
   async function submit(
     call: (spatialRevision: string) => Promise<TableActionResponse>,
@@ -72,6 +89,10 @@ export function useTacticalMapActions(input: {
     busy: busy || input.sending,
     error,
     ...(input.intentUnavailable === undefined ? {} : { intentUnavailable: input.intentUnavailable }),
+    task,
+    setTask,
+    cursor,
+    setCursor,
     moveTo: (destination) => submit(
       (spatialRevision) => moveOnMap({ data: { code: input.code, spatialRevision, destination } }),
       "没能走过去",
@@ -85,7 +106,7 @@ export function useTacticalMapActions(input: {
       "没能完成这个动作",
     ),
     endTurn: () => submit(() => endTurn({ data: { code: input.code } }), "没能结束回合"),
-    sendIntent: input.sendIntent,
+    draftIntent: input.draftIntent,
     dismissError: () => setError(null),
   };
 }
