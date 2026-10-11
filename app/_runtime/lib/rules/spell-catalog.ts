@@ -159,7 +159,8 @@ export const SPELL_DEFINITIONS = {
   charm: {
     id: "charm", level: 1, actionCost: "action", castingSeconds: 6,
     range: feet(30), targets: targets("humanoid", 1, { requiresSight: true, perSlotAbove: 1 }), duration: timed(60 * 60),
-    resolution: save("wis", "negates-status", { advantageInCombat: true, effects: [effect("charmed", "被施法者魅惑", "condition")] }),
+    resolution: save("wis", "negates-status", { advantageInCombat: true,
+      effects: [{ ...effect("charmed", "被施法者魅惑", "condition"), endsWhen: ["harmedBySourceSide"] }] }),
   },
   disguise: {
     id: "disguise", level: 1, actionCost: "action", castingSeconds: 6,
@@ -262,7 +263,7 @@ export const SPELL_DEFINITIONS = {
   invisibility: {
     id: "invisibility", level: 2, actionCost: "action", castingSeconds: 6,
     range: touch, targets: targets("creature", 1, { perSlotAbove: 1 }), duration: timed(60 * 60, { concentration: true }),
-    resolution: { mode: "automatic", effects: [effect("invisible", "隐形；攻击或施法时结束", "condition")] },
+    resolution: { mode: "automatic", effects: [{ ...effect("invisible", "隐形；攻击或施法时结束", "condition"), endsWhen: ["targetAttacksOrCasts"] }] },
   },
   "mirror-image": {
     id: "mirror-image", level: 2, actionCost: "action", castingSeconds: 6,

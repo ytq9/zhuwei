@@ -4,7 +4,7 @@ import { partyDepartureEvents } from "./multiplayer-actions";
 import { abilityMultiattackGrant, multiattackGrant } from "./multiattack";
 import { armorWornWithoutProficiency } from "./armor-proficiency";
 import { RulesValidationError } from "../errors";
-import { activeEncounter, encounterActiveParticipants, encounterHostileTargets, encounterConclusionReason, encounterFightIsOver, encounterLivingPlayers, encounterParticipantsAbleToFight } from "./combat-encounters";
+import { activeEncounter, encounterActiveParticipants, encounterHostileTargets, encounterConclusionReason, encounterFightIsOver, encounterLivingPlayers, encounterParticipantsAbleToFight, fightingSourceSide, sourceSideIncludes } from "./combat-encounters";
 import { encounterMemoryDrafts } from "./combat-memory";
 import { timePassageHasPendingWork } from "./due-activities";
 export { activeEncounter } from "./combat-encounters";
@@ -37,7 +37,7 @@ import {
   conditionMovementPermission,
   conditionMovementCost,
 } from "./condition-mechanics";
-import { effectiveConditions, isWorldEffectRecord, planWorldEffect, planWorldEffectEnd, worldEffectDefinition, worldEffectEndDefinition } from "./world-effects";
+import { effectiveConditions, isWorldEffectRecord, planWorldEffect, planWorldEffectEnd, repeatSaveEffects, worldEffectDefinition, worldEffectEndDefinition, worldEffectEndDrafts, worldEffectsEndingWhen } from "./world-effects";
 import { combatPhaseExpiryAnchor, initiativePhaseOrder, phaseSlotForEntity } from "./effect-phase";
 
 import { canonicalSha256, sameCanonical } from "../profiles/canonical";
@@ -1916,14 +1916,16 @@ function legalCreatureCandidates(
     return creatureTargetInRange(source, source, definition) ? [sourceId] : [];
   }
   const encounter = activeEncounter(state, sourceId);
-  const healing = isRecord(definition.healing)
-    || isRecord(definition.temporaryHitPoints)
-    || definition.mechanicalKey === "stabilize";
-  const candidateIds = encounter === undefined
+  // SPEC 0012 §§3.3、10: in an encounter an ability that harms -- an attack
+  // or a contest in its place, a saving throw, damage -- is aimed at those its
+  // user is hostile to. Any other, healing or a protective spell, may reach
+  // any creature in range, its user and allies included.
+  const harmful = isRecord(definition.attack) || isRecord(definition.save)
+    || (Array.isArray(definition.damage) && definition.damage.length > 0)
+    || (isRecord(definition.activation) && definition.activation.kind === "attack");
+  const candidateIds = encounter === undefined || !harmful
     ? Object.keys(state.combatRuntime.entities)
-    : healing
-      ? Object.keys(state.combatRuntime.entities)
-      : hostileCandidates(state, sourceId);
+    : hostileCandidates(state, sourceId);
   return [...new Set(candidateIds)]
     .filter((candidateId) => {
       const target = state.combatRuntime.entities[candidateId];
@@ -2373,8 +2375,34 @@ function abilityWorldEffects(definition: JsonRecord): JsonRecord[] {
       && (effect.kind === "grantEffect" || effect.kind === "endEffect"));
 }
 
+/** SPEC 0012 §10.1: what one use of an Ability ends besides its own
+ * effects -- the user's conditions that end once it attacks or casts a spell
+ * (SRD Invisibility), and on each creature the use harms (an attack roll,
+ * a saving throw or damage), the conditions a harmful act by their source's
+ * side ends (SRD Charm Person). Read before this use applies its own. */
+function abilityUseEndingDrafts(
+  state: AuthoritativeWorldState,
+  sourceRef: string,
+  definition: JsonRecord,
+  targetIds: readonly string[],
+  mechanicalResult: JsonRecord,
+): Draft[] {
+  const attacked = isRecord(mechanicalResult.attack) || isRecord(mechanicalResult.attacks);
+  const own = attacked || isSpellDefinition(definition)
+    ? worldEffectsEndingWhen(state, sourceRef, "targetAttacksOrCasts").map((effect) => effect.effectId) : [];
+  const harmful = isRecord(definition.attack) || isRecord(definition.save)
+    || (Array.isArray(definition.damage) && definition.damage.length > 0);
+  const harmed = harmful ? targetIds.flatMap((targetId) => worldEffectsEndingWhen(state, targetId, "harmedBySourceSide")
+    .filter((effect) => !own.includes(effect.effectId) && sourceSideIncludes(state, effect.sourceRef, sourceRef))
+    .map((effect) => effect.effectId)) : [];
+  return [...worldEffectEndDrafts(state, own, "targetAttackedOrCast"), ...worldEffectEndDrafts(state, harmed, "harmedBySourceSide")];
+}
+
 /** Each frozen Effect reads the preceding Effect's committed state. This also
- * preserves native conditions when a later operation ends only one grant. */
+ * preserves native conditions when a later operation ends only one grant.
+ * SPEC 0012 §10.2: a spell whose conditions are held by concentration ends
+ * the caster's earlier concentration first, and begins its own once one of
+ * them is in place. */
 function appendAbilityWorldEffects(
   profiles: RuntimeProfileManifest,
   transition: StepResult,
@@ -2384,9 +2412,25 @@ function appendAbilityWorldEffects(
 ): StepResult {
   if (transition.kind !== "committed"
     || !isRecord(operation.definition) || !Array.isArray(operation.targetEntityIds)) return transition;
+  const definition = operation.definition;
+  const sourceRef = String(operation.sourceEntityId);
+  const targetIds = operation.targetEntityIds.filter(isNonEmptyString);
   let result: StepResult = transition;
-  for (const [index, effect] of abilityWorldEffects(operation.definition).entries()) {
-    for (const targetEntityId of operation.targetEntityIds.filter(isNonEmptyString)) {
+  const append = (drafts: Draft[]): void => {
+    if (result.kind === "committed" && drafts.length > 0) {
+      result = appendTransitions(result, sequence("committed", profiles, result.state, rootActionId, drafts, { mechanicalResult }));
+    }
+  };
+  append(abilityUseEndingDrafts(result.state, sourceRef, definition, targetIds, mechanicalResult));
+  const concentration = isRecord(definition.effect) && definition.effect.kind === "concentration" ? definition.effect : undefined;
+  const holdsConcentration = concentration !== undefined && abilityWorldEffects(definition)
+    .some((effect) => isRecord(effect.lifecycle) && effect.lifecycle.concentration === true);
+  if (holdsConcentration && result.kind === "committed" && isRecord(combatEntity(result.state, sourceRef)?.concentration)) {
+    append([{ eventType: "ConcentrationEnded", payload: { entityId: sourceRef, reason: "replacedByNewConcentration" } }]);
+  }
+  let heldByConcentration = false;
+  for (const [index, effect] of abilityWorldEffects(definition).entries()) {
+    for (const targetEntityId of targetIds) {
       const attack = isRecord(mechanicalResult.attacks)
         ? mechanicalResult.attacks[targetEntityId] : mechanicalResult.attack;
       const save = isRecord(mechanicalResult.saves) ? mechanicalResult.saves[targetEntityId] : undefined;
@@ -2394,11 +2438,14 @@ function appendAbilityWorldEffects(
       if (result.kind === "rejected" || result.kind === "initialized") return result;
       let drafts: Draft[];
       if (effect.kind === "grantEffect") {
+        const repeats = isRecord(effect.lifecycle) && effect.lifecycle.repeatSave !== undefined;
         const planned = planWorldEffect(result.state, {
-          rootActionId, sourceRef: String(operation.sourceEntityId),
+          rootActionId, sourceRef,
           sourceDefinitionRef: String(operation.abilityRef), targetEntityId, effect, index,
+          ...(repeats && isRecord(save) ? { repeatSave: { ability: String(save.ability), dc: Number(save.dc) } } : {}),
         });
         if (planned.kind === "rejected") return rejected("invalidRulesInput", planned.message);
+        if (planned.kind === "applied" && planned.effectRecord.lifecycle?.concentration === true) heldByConcentration = true;
         drafts = planned.kind === "immune" ? [] : [{
           eventType: "EffectApplied", payload: { effect: planned.effectRecord },
           visibilityPolicyId: "visibility:room-authority-only", secrecy: "internal",
@@ -2413,6 +2460,11 @@ function appendAbilityWorldEffects(
       if (drafts.length > 0) result = appendTransitions(result,
         sequence("committed", profiles, result.state, rootActionId, drafts, { mechanicalResult }));
     }
+  }
+  if (heldByConcentration && concentration !== undefined) {
+    append([{ eventType: "ConcentrationStarted", payload: { entityId: sourceRef, concentration: {
+      abilityRef: String(operation.abilityRef), durationMicros: concentration.durationMicros ?? null, linkedEffects: true,
+    } } }]);
   }
   return { ...result, mechanicalResult } as StepResult;
 }
@@ -3740,12 +3792,24 @@ function costsAvailableAtLongSpellStart(
 function abilityEffectsExecutable(definition: JsonRecord, specCount: number): boolean {
   if (definition.grants !== undefined
     && (!Array.isArray(definition.grants) || definition.grants.length > 0)) return false;
-  const executableEffects = new Set(abilityWorldEffects(definition));
+  const worldEffects = abilityWorldEffects(definition);
+  const executableEffects = new Set(worldEffects);
   // ADR 0149: a push on a failed save is carried out after the damage.
   const savePush = abilitySavePush(definition);
   if (savePush !== undefined) executableEffects.add(savePush.effect);
-  // Match the actual no-dice continuation: its concentration branch runs only
-  // for the singular effect and only when no world-effect executor takes over.
+  const concentration = isRecord(definition.effect) && definition.effect.kind === "concentration";
+  // SPEC 0012 §10: a condition held by concentration needs the spell's
+  // concentration, and a repeated save needs the save it repeats.
+  if (worldEffects.some((effect) => isRecord(effect.lifecycle)
+    && ((effect.lifecycle.concentration === true && !concentration)
+      || (effect.lifecycle.repeatSave !== undefined && !isRecord(definition.save))))) return false;
+  // The concentration begins once a condition it holds is in place
+  // (`appendAbilityWorldEffects`). Otherwise match the actual no-dice
+  // continuation: its concentration branch runs only for the singular effect
+  // and only when no world-effect executor takes over.
+  if (concentration && worldEffects.some((effect) => isRecord(effect.lifecycle) && effect.lifecycle.concentration === true)) {
+    executableEffects.add(definition.effect as JsonRecord);
+  }
   if (specCount === 0 && executableEffects.size === 0
     && isRecord(definition.effect) && definition.effect.kind === "concentration") {
     executableEffects.add(definition.effect);
@@ -4092,7 +4156,10 @@ function prepareAbilitySavingThrow(
   targetId: string,
 ): { frozen: JsonRecord; specs: DiceSpec[] } {
   const ability = String(save.ability);
-  const savingThrow = conditionSavingThrow(state, targetId, ability);
+  // SRD 5.1 Charm Person: a target fighting the caster's side saves with advantage.
+  const savingThrow = conditionSavingThrow(state, targetId, ability,
+    save.advantageWhileFightingSource === true && fightingSourceSide(state, entityId(source), targetId)
+      ? { advantageReasons: ["fightingCasterSide2014"] } : {});
   const mode = savingThrow.mode;
   const dc = Number(save.dc ?? (isRecord(source.spellcasting) ? source.spellcasting.spellSaveDc : 10));
   const modifier = combatSavingThrowModifier(profiles, state.combatRuntime.entities[targetId]!, ability);
@@ -6345,6 +6412,14 @@ function beginSpellFrame(
       payload: { cast: spellCastSummary(frame), sourcePatch: structuredClone(sourcePatch) },
     },
   ];
+  // SPEC 0012 §10.2: casting a concentration spell ends the caster's earlier
+  // concentration at once, and with it the conditions that held; a counter
+  // later does not bring them back. After the cast's own patch, which still
+  // carries the earlier concentration.
+  if (isRecord(frame.effect) && isRecord(frame.effect.definition) && isRecord(frame.effect.definition.effect)
+    && frame.effect.definition.effect.kind === "concentration" && isRecord(sourcePatch.concentration)) {
+    drafts.push({ eventType: "ConcentrationEnded", payload: { entityId: frame.sourceEntityId, reason: "replacedByNewConcentration" } });
+  }
   return afterDrafts(profiles, state, String(frame.rootActionId), drafts, (nextState) =>
     openCounterspellWindow(profiles, nextState, frame));
 }
@@ -6376,7 +6451,8 @@ function resolveSpellAbilityEffect(
         mechanicalResult: structuredClone(frame.effect.mechanical),
         sourcePatch: spellEffectSourcePatch(source, frame),
       },
-    }];
+    }, ...abilityUseEndingDrafts(state, String(frame.sourceEntityId), frame.effect.definition,
+      frame.effect.targetEntityIds.filter(isNonEmptyString), frame.effect.mechanical)];
     const parameters = isRecord(frame.effect.parameters) ? frame.effect.parameters : {};
     if (isRecord(frame.effect.definition.effect)
       && frame.effect.definition.effect.kind === "concentration") {
@@ -8292,17 +8368,43 @@ function endTurn(
     ...missedLongSpellcastingDrafts(state, encounter, String(input.sourceEntityId)),
     { eventType: "TurnEnded", payload: { encounterId: input.encounterId, sourceEntityId: input.sourceEntityId } },
   ];
+  // SPEC 0012 §10.1: a creature repeats its saving throws against the
+  // conditions it is under at the end of its own turn, before the next turn
+  // starts. They are read after the turn's own endings have committed.
+  if (repeatSaveEffects(state, String(input.sourceEntityId)).length > 0) {
+    return afterDrafts(profiles, state, root, drafts, (nextState) =>
+      beginTurnEndRepeatSaves(profiles, nextState, root, String(input.encounterId), String(input.sourceEntityId)));
+  }
+  return continueAfterTurnEnded(profiles, state, root, String(input.encounterId), drafts);
+}
+
+/** After the active creature's turn has ended: the next creature's turn
+ * starts, or the round ends -- with the dying creatures' death saves first. */
+function continueAfterTurnEnded(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  root: string,
+  encounterId: string,
+  turnDrafts: Draft[],
+  resolutionId?: string,
+): StepResult {
+  const encounter = state.combatRuntime.encounters[encounterId];
+  if (encounter === undefined || !Array.isArray(encounter.turnOrderEntityIds)) throw new RulesValidationError("encounter turn is unavailable");
+  const stamp = (draft: Draft): Draft => resolutionId === undefined ? draft : { ...draft, resolutionId };
+  const drafts: Draft[] = turnDrafts.map(stamp);
+  const order = encounter.turnOrderEntityIds.filter(isNonEmptyString);
+  const cursor = Number(encounter.turnCursor);
   const remains = (id: string) => !(Array.isArray(encounter.departedEntityIds) && encounter.departedEntityIds.includes(id));
   const nextEntityId = order.slice(cursor + 1).find(remains);
   if (nextEntityId !== undefined) {
-    drafts.push(...readyExpiryDrafts(state, nextEntityId));
-    drafts.push(...shieldExpiryDrafts(state, nextEntityId));
-    drafts.push({ eventType: "TurnStarted", payload: { encounterId: input.encounterId, round: Number(encounter.round), sourceEntityId: nextEntityId } });
+    drafts.push(...readyExpiryDrafts(state, nextEntityId).map(stamp));
+    drafts.push(...shieldExpiryDrafts(state, nextEntityId).map(stamp));
+    drafts.push(stamp({ eventType: "TurnStarted", payload: { encounterId, round: Number(encounter.round), sourceEntityId: nextEntityId } }));
     return afterDraftsOptional(profiles, state, root, drafts, (nextState) =>
       turnStartFollowups(profiles, nextState, root, nextEntityId, true));
   }
   const nextOrder = order.filter(remains);
-  drafts.push({ eventType: "RoundEnded", payload: { encounterId: input.encounterId, round: Number(encounter.round), fictionAdvanceMicros: COMBAT_ROUND_MICROS.toString() } });
+  drafts.push(stamp({ eventType: "RoundEnded", payload: { encounterId, round: Number(encounter.round), fictionAdvanceMicros: COMBAT_ROUND_MICROS.toString() } }));
   const deathSaveTargets = Object.values(state.combatRuntime.entities)
     .filter((entity) => nextOrder.includes(entityId(entity)) && entity.deathPolicy === "deathSaves"
       && entity.lifeState !== "dead"
@@ -8311,17 +8413,17 @@ function endTurn(
       && Number(entity.hitPoints.current) === 0)
     .map(entityId);
   if (deathSaveTargets.length === 0) {
-    drafts.push({ eventType: "RoundStarted", payload: { encounterId: input.encounterId, round: Number(encounter.round) + 1, turnOrderEntityIds: nextOrder } });
+    drafts.push(stamp({ eventType: "RoundStarted", payload: { encounterId, round: Number(encounter.round) + 1, turnOrderEntityIds: nextOrder } }));
     const nextEntityId = nextOrder[0];
-    drafts.push(...readyExpiryDrafts(state, nextEntityId));
-    drafts.push(...shieldExpiryDrafts(state, nextEntityId));
-    drafts.push({ eventType: "TurnStarted", payload: { encounterId: input.encounterId, round: Number(encounter.round) + 1, sourceEntityId: nextEntityId } });
+    drafts.push(...readyExpiryDrafts(state, nextEntityId).map(stamp));
+    drafts.push(...shieldExpiryDrafts(state, nextEntityId).map(stamp));
+    drafts.push(stamp({ eventType: "TurnStarted", payload: { encounterId, round: Number(encounter.round) + 1, sourceEntityId: nextEntityId } }));
     return afterDraftsOptional(profiles, state, root, drafts, (nextState) =>
       turnStartFollowups(profiles, nextState, root, nextEntityId, true));
   }
   return awaitRandomness(profiles, state, root, {
     kind: "resolveDeathSavesAndRound",
-    encounterId: input.encounterId,
+    encounterId,
     nextRound: Number(encounter.round) + 1,
     turnOrderEntityIds: nextOrder,
     targetEntityIds: deathSaveTargets,
@@ -8332,6 +8434,69 @@ function endTurn(
     frozenParameters: { targetEntityId: targetId, mode: conditionSavingThrow(state, targetId, "death").mode,
       naturalOneFailures: 2, successThreshold: 10, deathFailureThreshold: 3 },
   })), drafts);
+}
+
+type TurnEndRepeatSave = { effectId: string; ability: string; dc: number; modifier: number;
+  mode: "normal" | "advantage" | "disadvantage"; automaticFailure: boolean };
+
+/** SPEC 0012 §10.1: the saves a creature whose turn just ended repeats, one
+ * per condition that asks for it, frozen with its mode and modifier. */
+function beginTurnEndRepeatSaves(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  root: string,
+  encounterId: string,
+  targetEntityId: string,
+): StepResult {
+  const target = combatEntity(state, targetEntityId);
+  const saves: TurnEndRepeatSave[] = target === undefined ? [] : repeatSaveEffects(state, targetEntityId).map((effect) => {
+    const { ability, dc } = effect.lifecycle!.repeatSave!;
+    const roll = conditionSavingThrow(state, targetEntityId, ability);
+    return { effectId: effect.effectId, ability, dc, modifier: combatSavingThrowModifier(profiles, target, ability),
+      mode: roll.mode, automaticFailure: roll.automaticFailure };
+  });
+  const operation = { kind: "resolveTurnEndRepeatSaves", encounterId, targetEntityId, saves };
+  const specs: DiceSpec[] = saves.filter((save) => !save.automaticFailure).map((save) => ({
+    purposeKey: `save:repeat:${save.effectId}`, dice: attackDice(save.mode),
+    frozenParameters: { targetEntityId, effectId: save.effectId, ability: save.ability, dc: save.dc, modifier: save.modifier, mode: save.mode },
+  }));
+  if (specs.length === 0) {
+    return continueAfterTurnEnded(profiles, state, root, encounterId, turnEndRepeatSaveDrafts(targetEntityId, saves, new Map()));
+  }
+  return awaitRandomness(profiles, state, root, operation, specs);
+}
+
+function turnEndRepeatSaveDrafts(targetEntityId: string, saves: readonly TurnEndRepeatSave[], faces: AuthorityFaces): Draft[] {
+  return saves.flatMap((save) => {
+    const rolls = save.automaticFailure ? [] : faces.get(`save:repeat:${save.effectId}`) ?? [];
+    const roll = save.automaticFailure ? null : selectedD20(rolls, save.mode);
+    const total = roll === null ? null : roll + save.modifier;
+    const succeeded = total !== null && total >= save.dc;
+    return [
+      { eventType: "EffectSaveRepeated", payload: { effectId: save.effectId, targetEntityId, ability: save.ability, dc: save.dc,
+        modifier: save.modifier, mode: save.mode, rolls: [...rolls], roll, total, automaticFailure: save.automaticFailure, succeeded } },
+      ...(succeeded ? [{ eventType: "EffectEnded", payload: { effectId: save.effectId, targetEntityId, reason: "repeatSaveSucceeded" },
+        visibilityPolicyId: "visibility:room-authority-only", secrecy: "internal" } as Draft] : []),
+    ] as Draft[];
+  });
+}
+
+function resolveTurnEndRepeatSaves(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  resolution: JsonRecord,
+  faces: AuthorityFaces,
+): StepResult {
+  const operation = resolution.operation;
+  if (!isRecord(operation) || operation.kind !== "resolveTurnEndRepeatSaves"
+    || !isNonEmptyString(operation.encounterId) || !isNonEmptyString(operation.targetEntityId)
+    || !Array.isArray(operation.saves)) return rejected("invalidRulesInput", "Repeated-save continuation is malformed.");
+  const saves = operation.saves as TurnEndRepeatSave[];
+  if (saves.some((save) => !isRecord(save) || state.combatRuntime.effects[save.effectId] === undefined)) {
+    return rejected("privateOrUnknownReference", "A repeated save's effect is no longer in place.");
+  }
+  return continueAfterTurnEnded(profiles, state, String(resolution.rootActionId), operation.encounterId,
+    turnEndRepeatSaveDrafts(operation.targetEntityId, saves, faces), String(resolution.resolutionId));
 }
 
 function resolveDeathSavesAndRound(
@@ -8719,6 +8884,7 @@ function fulfillRandomness(
     case "resolveMedicineStabilization": return resolveMedicineStabilization(profiles, state, authority.resolution, authority.faces);
     case "resolveDamageConcentration": return resolveDamageConcentration(profiles, state, authority.resolution, authority.faces);
     case "resolveDeathSavesAndRound": return resolveDeathSavesAndRound(profiles, state, authority.resolution, authority.faces);
+    case "resolveTurnEndRepeatSaves": return resolveTurnEndRepeatSaves(profiles, state, authority.resolution, authority.faces);
     case "resolveOpportunityAndMovement": return resolveOpportunityAndMovement(profiles, state, authority.resolution, authority.faces);
     case "resolveHidingAction": return resolveHidingAction(profiles, state, authority.resolution, authority.faces);
     case "resolveHiddenPerception": return resolveHiddenPerception(profiles, state, authority.resolution, authority.faces);

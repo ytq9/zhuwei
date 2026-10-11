@@ -37,6 +37,7 @@ npm run spec:trace
 | 2026-10-11 | [ADR 0146：地图与行动列表组成的句子放进输入框，行动集中到角色栏](../adr/0146-picked-sentences-go-into-the-composer.md) | [SPEC 0014 §§4、8](./0014-observer-tactical-map-and-environment.md) |
 | 2026-10-11 | [ADR 0147：删除无调用者的桌面按钮接口与旧面板](../adr/0147-retire-unused-table-buttons-and-legacy-panels.md) | 条款不变；验收门改查现役入口：[SPEC 0004](./0004-kp-and-noncombat-mechanics.md)、[SPEC 0011](./0011-reliability-correction-observability-and-evaluation.md) |
 | 2026-10-11 | [ADR 0148：地图分层绘制、四分之一格选点与 Rules 的射程和范围预览](../adr/0148-map-layers-quarter-cell-picks-and-rules-area-preview.md) | 条款不变；实现 [SPEC 0014 §7](./0014-observer-tactical-map-and-environment.md) 的区域预览与射程列表 |
+| 2026-10-11 | [ADR 0150：法术写明的持续状态由 Rules 施加，随专注结束，回合结束重新豁免](../adr/0150-spell-conditions-run-by-rules-with-concentration-and-repeat-saves.md) | [SPEC 0012 §§9.2、10.1、10.2](./0012-part-b-abilities-damage-and-conclusion.md) |
 | 2026-10-11 | [ADR 0149：立方、锥形、线形法术进入行动列表，从施法者自身发出的从其占位边缘展开](../adr/0149-self-cast-cubes-cones-and-lines-start-at-the-casters-edge.md) | [SPEC 0013 §5.6](./0013-part-b-ability-and-geometry.md)、[SPEC 0012 §9.4](./0012-part-b-abilities-damage-and-conclusion.md) |
 | 2026-10-11 | [ADR 0156：建卡按 2014 的 3 级角色检查，做完才能锁定](../adr/0156-character-cards-are-checked-before-they-lock.md) | [SPEC 0004 §4](./0004-kp-and-noncombat-mechanics.md) |
 | 2026-10-10 | [ADR 0132：随身物品先列清单，点名后再读](../adr/0132-carried-items-are-listed-and-read-when-named.md) | [SPEC 0016 §4.3](./0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md)，条款不变，只调整冻结与调取方式 |

@@ -359,7 +359,7 @@ const VNEXT_DIRECT_CLAIM_EVENT_TYPES = new Set([
   "RelationshipChanged", "PromiseMade", "DebtIncurred",
   "PartyMemberLeft", "PartyLeaderTransferred", "PartyGroupDisbanded",
   "ActivityCompleted", "RestCompleted", "KnowledgeAcquired", "CharacterMoved", "CharacterRepositioned",
-  "CreaturePushed", "CharacterJumped", "HiddenPerceptionRolled", "EnvironmentFeatureStateChanged", "EnvironmentFeatureCompleted",
+  "CreaturePushed", "CharacterJumped", "HiddenPerceptionRolled", "EffectSaveRepeated", "EnvironmentFeatureStateChanged", "EnvironmentFeatureCompleted",
   "CharacterClimbed", "CharacterJumpedOnto", "CharacterFell",
   "KnowledgeReviewed",
   "NarrativeDetailCommitted",
@@ -763,6 +763,9 @@ export function deriveAuthorityClaimsFromCommittedRange(
         break;
       case "HiddenPerceptionRolled":
         materials.push(hiddenPerceptionClaim(event, payload));
+        break;
+      case "EffectSaveRepeated":
+        materials.push(effectSaveRepeatedClaim(event, payload));
         break;
       case "CharacterClimbed":
       case "CharacterJumpedOnto":
@@ -1938,6 +1941,19 @@ function hiddenPerceptionClaim(event: EventEnvelope, payload: JsonRecord): Claim
       summary: "看得到躲藏处的对方都没有发现躲藏者。" }
     : { ...eventClaimBase(event, "found-hidden", [hiderRef, foundByRef], "visibility:scene-observers", false), kind: "mechanicalOutcome",
       actorRef: foundByRef, targetRefs: [hiderRef], outcomeCode: "foundHidden", summary: "该角色发现了躲藏者的位置。" };
+}
+
+/** SPEC 0012 §10.1: the target tried again to throw off a condition at the
+ * end of its turn; whether the condition ended is the EffectEnded's claim. */
+function effectSaveRepeatedClaim(event: EventEnvelope, payload: JsonRecord): ClaimMaterial {
+  const targetRef = stringField(payload, "targetEntityId"), ability = stringField(payload, "ability");
+  const dc = finiteNumber(payload.dc), total = finiteNumber(payload.total);
+  if (targetRef === undefined || ability === undefined || dc === undefined) throw new RulesValidationError("EFFECT_SAVE_REPEATED_CLAIM_INVALID");
+  const succeeded = payload.succeeded === true;
+  return { ...eventClaimBaseWithSeparatedBasis(event, "repeat-save", { requiredViewerRefs: [targetRef] }), kind: "mechanicalOutcome",
+    actorRef: targetRef, targetRefs: [targetRef], outcomeCode: succeeded ? "repeatSaveSucceeded" : "repeatSaveFailed",
+    summary: succeeded ? "该角色在回合结束时再次豁免，成功了。" : "该角色在回合结束时再次豁免，没有成功。",
+    check: { kind: "save", result: succeeded ? "success" : "failure", ...(total === undefined ? {} : { total }), dc } };
 }
 
 /** A door, gate or hatch of the scene changed state; a world interaction's

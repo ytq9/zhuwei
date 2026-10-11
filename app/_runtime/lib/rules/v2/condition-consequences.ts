@@ -3,7 +3,7 @@ import { canonicalSha256 } from "../profiles/canonical";
 import type { AuthoritativeWorldState, EventEnvelope, JsonRecord } from "./model";
 import { conditionHitPointLimits, conditionMechanics } from "./condition-mechanics";
 import { releaseItemQuantity } from "./item-transitions";
-import { dueWorldEffectDrafts } from "./world-effects";
+import { concentrationLinkedEffectIds, dueWorldEffectDrafts, worldEffectEndDrafts, worldEffectsEndingWhen } from "./world-effects";
 import { grappledBy, withoutGrapple } from "./contest";
 import { helpRecords, isDodging, withoutDodge, withoutHelpFrom } from "./basic-actions";
 import { hasExactKeys, isNonEmptyString, isRecord, isSha256 } from "./validation";
@@ -76,7 +76,26 @@ function helpEndDrafts(state:AuthoritativeWorldState,entityIds:readonly string[]
     eventType:"ConditionChanged",payload:{entityId,conditions:withoutHelpFrom(state.combatRuntime.entities[entityId]!.conditions,helperRef)},
     visibilityPolicyId:"visibility:room-authority-only",secrecy:"internal"}));
 }
+/** SPEC 0012 §10.2: the conditions a caster held by concentration end with it. */
+function concentrationLinkEndDrafts(state:AuthoritativeWorldState,entityId:string):FollowupDraft[] {
+  return worldEffectEndDrafts(state,concentrationLinkedEffectIds(state,entityId),"concentrationEnded");
+}
+/** SPEC 0012 §10.2: once its spell holds no condition any more -- each saved,
+ * expired or was ended -- there is nothing left to concentrate on. */
+function emptyConcentrationDrafts(state:AuthoritativeWorldState):FollowupDraft[] {
+  return Object.keys(state.combatRuntime.entities).sort().filter(id=>{
+    const concentration=state.combatRuntime.entities[id]?.concentration;
+    return isRecord(concentration)&&concentration.linkedEffects===true&&concentrationLinkedEffectIds(state,id).length===0;
+  }).map(id=>({eventType:"ConcentrationEnded",payload:{entityId:id,reason:"spellEnded"},
+    visibilityPolicyId:"visibility:room-authority-only",secrecy:"internal"}));
+}
 export function conditionFollowupDrafts(state:AuthoritativeWorldState,event:EventEnvelope, scope: { timelineId?: string } = {}):FollowupDraft[] {
+  if(event.eventType==="ConcentrationEnded")return concentrationLinkEndDrafts(state,String((event.payload as JsonRecord).entityId));
+  // SPEC 0012 §10.1: a countered spell was still cast.
+  if(event.eventType==="SpellCountered") {
+    const caster=String((event.payload as JsonRecord).sourceEntityId);
+    return worldEffectEndDrafts(state,worldEffectsEndingWhen(state,caster,"targetAttacksOrCasts").map(effect=>effect.effectId),"targetAttackedOrCast");
+  }
   if(event.eventType==="EncounterConcluded") {
     const participants=state.combatRuntime.encounters[String((event.payload as JsonRecord).encounterId)]?.participantEntityIds;
     const ids=Array.isArray(participants)?participants.filter(isNonEmptyString).sort():[];
@@ -100,7 +119,8 @@ export function conditionFollowupDrafts(state:AuthoritativeWorldState,event:Even
     :payload.targetEntityId??payload.entityId;
   const lostDodge=isNonEmptyString(ref)&&isDodging(state.combatRuntime.entities[ref]?.conditions)
     &&(conditionMechanics(state,ref).incapacitated||conditionMechanics(state,ref).speedIsZero)?dodgeEndDrafts(state,[ref]):[];
-  if(!isNonEmptyString(ref)||state.entities[ref]===undefined)return [...lostDodge,...(event.eventType==="EffectEnded"?dueWorldEffectDrafts(state,scope):[])];
+  const spellEnded=event.eventType==="EffectEnded"?emptyConcentrationDrafts(state):[];
+  if(!isNonEmptyString(ref)||state.entities[ref]===undefined)return [...lostDodge,...spellEnded,...(event.eventType==="EffectEnded"?dueWorldEffectDrafts(state,scope):[])];
   const policy={visibilityPolicyId:"visibility:room-authority-only",secrecy:"internal" as const};
   const drafts:FollowupDraft[]=[...lostDodge];
   const sync=planConditionStateSynchronization(state,ref);
@@ -113,6 +133,6 @@ export function conditionFollowupDrafts(state:AuthoritativeWorldState,event:Even
     payload:{entityId:targetId,conditions:withoutGrapple(state.combatRuntime.entities[targetId]!.conditions)},...policy});
   if(facts.exhaustion>=6&&state.entities[ref]?.tenureStatus!=="dead")drafts.push({
     eventType:"CreatureDied",payload:{characterId:ref,causeId:event.rootActionId},...policy});
-  if(event.eventType==="EffectEnded")drafts.push(...dueWorldEffectDrafts(state,scope));
+  if(event.eventType==="EffectEnded")drafts.push(...spellEnded,...dueWorldEffectDrafts(state,scope));
   return drafts;
 }

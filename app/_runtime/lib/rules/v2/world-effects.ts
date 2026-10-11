@@ -15,11 +15,26 @@ export type WorldEffectDuration =
   | { kind: "timed"; durationMicros: string }
   | { kind: "untilEnded" }
   | { kind: "turnBoundary"; subject: "source" | "target"; edge: "turnStart" | "turnEnd" };
+/** SPEC 0012 §10.1: how a granted condition can end besides its duration. */
+export const WORLD_EFFECT_ENDINGS = ["harmedBySourceSide", "targetAttacksOrCasts"] as const;
+export type WorldEffectEnding = typeof WORLD_EFFECT_ENDINGS[number];
+export type WorldEffectLifecycle = {
+  /** Ends when its source's concentration ends (SPEC 0012 §10.2). */
+  concentration?: true;
+  /** The target repeats the Ability's saving throw at the end of each of its turns. */
+  repeatSave?: { edge: "turnEnd" };
+  endsWhen?: WorldEffectEnding[];
+};
 export type WorldEffectDefinition = {
   kind: "grantEffect";
   condition: ConditionId;
   duration: WorldEffectDuration;
   level?: number;
+  lifecycle?: WorldEffectLifecycle;
+};
+/** The record keeps the save it repeats, frozen when the effect began. */
+export type WorldEffectRecordLifecycle = Omit<WorldEffectLifecycle, "repeatSave"> & {
+  repeatSave?: { edge: "turnEnd"; ability: string; dc: number };
 };
 export type WorldEffectEndDefinition = {
   kind: "endEffect";
@@ -54,6 +69,7 @@ export type WorldEffectRecord = JsonRecord & {
   expiresAt: Expiry;
   visibilityPolicyId: string;
   visibilityFactId: string | null;
+  lifecycle?: WorldEffectRecordLifecycle;
 };
 export type WorldEffectEndDraft = {
   eventType: "EffectEnded";
@@ -90,15 +106,58 @@ export function isWorldEffectDuration(value: unknown): value is WorldEffectDurat
     && (value.edge === "turnStart" || value.edge === "turnEnd");
 }
 
-/** The Ability Effect family owns this shape; a hazard only references it. */
+const SAVE_ABILITIES = ["cha", "con", "dex", "int", "str", "wis"] as const;
+
+function isWorldEffectLifecycle(value: unknown): value is WorldEffectLifecycle {
+  return isRecord(value) && hasOnlyKeys(value, [], ["concentration", "endsWhen", "repeatSave"])
+    && Object.keys(value).length > 0
+    && (value.concentration === undefined || value.concentration === true)
+    && (value.repeatSave === undefined
+      || (isRecord(value.repeatSave) && hasExactKeys(value.repeatSave, ["edge"]) && value.repeatSave.edge === "turnEnd"))
+    && (value.endsWhen === undefined || (Array.isArray(value.endsWhen) && value.endsWhen.length > 0
+      && value.endsWhen.every((ending, index, all) => (WORLD_EFFECT_ENDINGS as readonly unknown[]).includes(ending)
+        && (index === 0 || String(all[index - 1]) < String(ending)))));
+}
+
+function isWorldEffectRecordLifecycle(value: unknown): value is WorldEffectRecordLifecycle {
+  if (!isRecord(value)) return false;
+  const repeatSave = value.repeatSave;
+  if (repeatSave !== undefined && (!isRecord(repeatSave) || !hasExactKeys(repeatSave, ["ability", "dc", "edge"])
+    || !(SAVE_ABILITIES as readonly unknown[]).includes(repeatSave.ability)
+    || !Number.isSafeInteger(repeatSave.dc) || Number(repeatSave.dc) < 0 || Number(repeatSave.dc) > 30)) return false;
+  return isWorldEffectLifecycle(definitionLifecycle(value as WorldEffectRecordLifecycle));
+}
+
+/** The frozen definition a record's lifecycle came from. */
+function definitionLifecycle(lifecycle: WorldEffectRecordLifecycle): WorldEffectLifecycle {
+  const { repeatSave, ...rest } = lifecycle;
+  return { ...rest, ...(repeatSave === undefined ? {} : { repeatSave: { edge: repeatSave.edge } }) };
+}
+
+/** The Ability Effect family owns this shape; a hazard only references it.
+ * A spell's effect also carries its catalog tag and label for narration;
+ * the frozen mechanic leaves them out. */
 export function worldEffectDefinition(value: unknown): WorldEffectDefinition | undefined {
-  if (!isRecord(value) || !hasOnlyKeys(value, ["condition", "duration", "kind"], ["level"])
+  if (!isRecord(value) || !hasOnlyKeys(value, ["condition", "duration", "kind"], ["label", "level", "lifecycle", "tag"])
     || value.kind !== "grantEffect" || !conditionId(value.condition)
-    || !isWorldEffectDuration(value.duration)) return undefined;
+    || !isWorldEffectDuration(value.duration)
+    || !(value.tag === undefined || isNonEmptyString(value.tag))
+    || !(value.label === undefined || isNonEmptyString(value.label))
+    || !(value.lifecycle === undefined || isWorldEffectLifecycle(value.lifecycle))) return undefined;
   if (value.condition === "exhaustion"
     ? !Number.isSafeInteger(value.level) || Number(value.level) < 1 || Number(value.level) > 6
     : value.level !== undefined) return undefined;
-  return structuredClone(value) as WorldEffectDefinition;
+  const { tag: _tag, label: _label, ...mechanic } = structuredClone(value);
+  return mechanic as WorldEffectDefinition;
+}
+
+/** The definition a stored record must match in its frozen Ability. */
+function recordDefinition(effect: WorldEffectRecord): WorldEffectDefinition {
+  return {
+    kind: "grantEffect", condition: effect.condition, duration: effect.duration,
+    ...(effect.level === null ? {} : { level: effect.level }),
+    ...(effect.lifecycle === undefined ? {} : { lifecycle: definitionLifecycle(effect.lifecycle) }),
+  };
 }
 
 export function worldEffectEndDefinition(value: unknown): WorldEffectEndDefinition | undefined {
@@ -154,21 +213,19 @@ function validExpiry(value: unknown): value is Expiry {
 }
 
 export function isWorldEffectRecord(value: unknown): value is WorldEffectRecord {
-  if (!isRecord(value) || !hasExactKeys(value, [
+  if (!isRecord(value) || !hasOnlyKeys(value, [
     "condition", "duration", "effectId", "expiresAt", "kind", "level", "schema",
     "sourceDefinitionRef", "sourceRef", "startedAtFictionMicros", "targetEntityId", "pausedMicros", "suspension",
     "visibilityFactId", "visibilityPolicyId",
-  ]) || value.schema !== WORLD_EFFECT_SCHEMA || value.kind !== "condition"
+  ], ["lifecycle"]) || value.schema !== WORLD_EFFECT_SCHEMA
+    || !(value.lifecycle === undefined || isWorldEffectRecordLifecycle(value.lifecycle)) || value.kind !== "condition"
     || ![value.effectId, value.sourceRef, value.sourceDefinitionRef, value.targetEntityId]
       .every(isNonEmptyString)
     || !unsignedMicros(value.startedAtFictionMicros) || !unsignedMicros(value.pausedMicros)
     || !validExpiry(value.expiresAt)
     || spatialVisibilityPolicyKind(value.visibilityPolicyId) === undefined
     || !(value.visibilityFactId === null || isNonEmptyString(value.visibilityFactId))) return false;
-  const definition = worldEffectDefinition({
-    kind: "grantEffect", condition: value.condition, duration: value.duration,
-    ...(value.level === null ? {} : { level: value.level }),
-  });
+  const definition = worldEffectDefinition(recordDefinition(value as WorldEffectRecord));
   if (definition === undefined) return false;
   if (definition.condition !== "poisoned" && (value.pausedMicros !== "0" || value.suspension !== null)) return false;
   if (value.suspension !== null) {
@@ -254,6 +311,8 @@ export function planWorldEffect(state: AuthoritativeWorldState, input: {
   occurrenceKey?: string;
   visibilityPolicyId?: string;
   visibilityFactId?: string;
+  /** The saving throw a `repeatSave` effect repeats, as the Ability froze it. */
+  repeatSave?: { ability: string; dc: number };
 }): { kind: "applied"; effectRecord: WorldEffectRecord }
   | { kind: "immune"; condition: ConditionId }
   | { kind: "rejected"; message: string } {
@@ -273,6 +332,15 @@ export function planWorldEffect(state: AuthoritativeWorldState, input: {
   }
   const expiresAt = expiryFor(state, input.targetEntityId, input.sourceRef, definition.duration, now, input.rootActionId);
   if (expiresAt === undefined) return { kind: "rejected", message: "The effect duration has no authoritative subject." };
+  if ((definition.lifecycle?.repeatSave === undefined) !== (input.repeatSave === undefined)) {
+    return { kind: "rejected", message: "A repeated saving throw needs the save its Ability froze." };
+  }
+  const { repeatSave: repeated, ...ending } = definition.lifecycle ?? {};
+  const lifecycle: WorldEffectRecordLifecycle | undefined = definition.lifecycle === undefined ? undefined : {
+    ...ending,
+    ...(repeated === undefined || input.repeatSave === undefined ? {}
+      : { repeatSave: { edge: repeated.edge, ability: input.repeatSave.ability, dc: input.repeatSave.dc } }),
+  };
   const effectRecord: WorldEffectRecord = {
     schema: WORLD_EFFECT_SCHEMA,
     effectId: `effect:${canonicalSha256({ rootActionId: input.rootActionId,
@@ -284,6 +352,7 @@ export function planWorldEffect(state: AuthoritativeWorldState, input: {
     pausedMicros: "0", suspension: null,
     expiresAt, visibilityPolicyId: input.visibilityPolicyId ?? "visibility:scene-observers",
     visibilityFactId: input.visibilityFactId ?? null,
+    ...(lifecycle === undefined ? {} : { lifecycle }),
   };
   if (!isWorldEffectRecord(effectRecord) || state.combatRuntime.effects[effectRecord.effectId] !== undefined) {
     return { kind: "rejected", message: "The condition effect identity or visibility is invalid." };
@@ -325,6 +394,33 @@ export function worldEffectIds(state: AuthoritativeWorldState, input: {
       && (input.condition === undefined || effect.condition === input.condition)
       && (input.sourceRef === undefined || effect.sourceRef === input.sourceRef))
     .map((effect) => String(effect.effectId)).sort();
+}
+
+/** SPEC 0012 §10.2: the granted conditions that end with `sourceRef`'s concentration. */
+export function concentrationLinkedEffectIds(state: AuthoritativeWorldState, sourceRef: string): string[] {
+  return Object.values(state.combatRuntime.effects)
+    .filter((effect) => isWorldEffectRecord(effect) && effect.sourceRef === sourceRef
+      && effect.lifecycle?.concentration === true)
+    .map((effect) => String(effect.effectId)).sort();
+}
+
+/** SPEC 0012 §10.1: the effects on a target whose saving throw it repeats at
+ * the end of each of its turns, in a stable order. */
+export function repeatSaveEffects(state: AuthoritativeWorldState, targetEntityId: string): WorldEffectRecord[] {
+  return Object.values(state.combatRuntime.effects)
+    .filter((effect): effect is WorldEffectRecord => isWorldEffectRecord(effect)
+      && effect.targetEntityId === targetEntityId && effect.lifecycle?.repeatSave !== undefined)
+    .sort((left, right) => left.effectId.localeCompare(right.effectId));
+}
+
+/** The effects on a target that a given kind of act ends. */
+export function worldEffectsEndingWhen(
+  state: AuthoritativeWorldState, targetEntityId: string, ending: WorldEffectEnding,
+): WorldEffectRecord[] {
+  return Object.values(state.combatRuntime.effects)
+    .filter((effect): effect is WorldEffectRecord => isWorldEffectRecord(effect)
+      && effect.targetEntityId === targetEntityId && effect.lifecycle?.endsWhen?.includes(ending) === true)
+    .sort((left, right) => left.effectId.localeCompare(right.effectId));
 }
 
 /** Read-only mechanical/projection view. Never persist this derived record as
@@ -501,10 +597,7 @@ export function applyWorldEffectEvent(state: AuthoritativeWorldState, event: Eve
       || entityInstant(state, effect.targetEntityId) !== effect.startedAtFictionMicros
       || !sameCanonical(effect.expiresAt, expiryFor(state,
         effect.targetEntityId, effect.sourceRef, effect.duration, effect.startedAtFictionMicros, event.rootActionId))
-      || !registeredEffectMatches(state, effect.sourceDefinitionRef, {
-        kind: "grantEffect", condition: effect.condition, duration: effect.duration,
-        ...(effect.level === null ? {} : { level: effect.level }),
-      })) {
+      || !registeredEffectMatches(state, effect.sourceDefinitionRef, recordDefinition(effect))) {
       throw new RulesValidationError("Condition effect does not match its frozen authoritative target.");
     }
     state.combatRuntime.effects[effect.effectId] = structuredClone(effect);

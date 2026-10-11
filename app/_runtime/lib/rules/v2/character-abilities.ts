@@ -4,7 +4,8 @@ import { nonItemResources } from "./item-resources";
 import type { GearItemResolver } from "../../dnd/gear";
 import { spellDefinition, formulaAtSlot, spellMaxTargets, spellAreaSize, spellDurationAtSlot, spellEffectValueAtSlot } from "../spell-catalog";
 import { savePushFeet } from "./creature-push";
-import type { DiceFormula, SpellDefinition, SpellRange } from "../spell-model";
+import type { DiceFormula, SpellDefinition, SpellEffectDefinition, SpellRange } from "../spell-model";
+import { CONDITION_IDS } from "./condition-vocabulary";
 import type { TacticalPosition } from "../tactical-projection";
 import {
   compileAbilityDefinition,
@@ -350,6 +351,41 @@ function spellTarget(definition: SpellDefinition, slotLevel: number = definition
   };
 }
 
+/** How long a spell's lasting condition holds, from its catalog duration
+ * (SPEC 0012 §10.1); an instantaneous spell leaves none. */
+function spellEffectDuration(source: SpellDefinition, slotLevel: number): JsonRecord | undefined {
+  const duration = source.duration;
+  if (duration.kind === "special") return { kind: "untilEnded" };
+  if (duration.kind !== "timed") return undefined;
+  if (duration.turnBoundary !== undefined) {
+    return { kind: "turnBoundary", subject: duration.turnBoundary.startsWith("caster") ? "source" : "target",
+      edge: duration.turnBoundary.endsWith("Start") ? "turnStart" : "turnEnd" };
+  }
+  return { kind: "timed", durationMicros: String(spellDurationAtSlot(source, slotLevel)! * 1_000_000) };
+}
+
+/** SPEC 0012 §10.1: a catalog effect Rules can carry out becomes its frozen
+ * mechanic, keeping its tag and label for narration; any other stays a
+ * descriptive record, which Rules refuses to cast. */
+function compiledSpellEffect(source: SpellDefinition, effect: SpellEffectDefinition, slotLevel: number): JsonRecord {
+  const duration = spellEffectDuration(source, slotLevel);
+  if (effect.kind === "condition" && (CONDITION_IDS as readonly string[]).includes(effect.tag) && duration !== undefined) {
+    const lifecycle = {
+      ...(source.duration.kind !== "instant" && source.duration.concentration === true ? { concentration: true } : {}),
+      ...(source.resolution.save?.repeats === "turnEnd" ? { repeatSave: { edge: "turnEnd" } } : {}),
+      ...(effect.endsWhen === undefined || effect.endsWhen.length === 0 ? {} : { endsWhen: [...effect.endsWhen].sort() }),
+    };
+    return { kind: "grantEffect", tag: effect.tag, label: effect.label, condition: effect.tag, duration,
+      ...(Object.keys(lifecycle).length === 0 ? {} : { lifecycle }) };
+  }
+  return {
+    tag: effect.tag,
+    label: effect.label,
+    kind: effect.kind,
+    ...(effect.value === undefined ? {} : { value: spellEffectValueAtSlot(effect, source.level, slotLevel) }),
+  };
+}
+
 function compileSpell(
   character: CharacterRecord,
   build: JsonRecord,
@@ -381,7 +417,7 @@ function compileSpell(
   const castingModifier = abilityModifier(character.abilityScores?.[castingAbility] ?? 10);
   const castingIdentity = spellActivation.castingTimeMicros === undefined ? ""
     : `:casting:${spellActivation.castingTimeMicros}:ritual:${spellActivation.ritual === true}`;
-  const definitionId = `ability:${character.id}:spell:${spellId}:level:${character.level ?? 1}:modifier:${castingModifier}:proficiency:${character.proficiencyBonus ?? 0}${castingIdentity}:slot:${slotLevel}:compiled-v2`;
+  const definitionId = `ability:${character.id}:spell:${spellId}:level:${character.level ?? 1}:modifier:${castingModifier}:proficiency:${character.proficiencyBonus ?? 0}${castingIdentity}:slot:${slotLevel}:compiled-v3`;
   const compiled: JsonRecord = {
     definitionId,
     revision: "1",
@@ -400,6 +436,7 @@ function compileSpell(
       ability: resolution.save.ability,
       halfOnSuccess: resolution.save.onSuccess === "half",
       onSuccess: resolution.save.onSuccess,
+      ...(resolution.save.advantageInCombat === true ? { advantageWhileFightingSource: true } : {}),
     };
   }
   if (resolution.damage !== undefined) {
@@ -420,12 +457,7 @@ function compileSpell(
     };
   }
   if (Array.isArray(resolution.effects) && resolution.effects.length > 0) {
-    compiled.effects = resolution.effects.map((effect) => ({
-      tag: effect.tag,
-      label: effect.label,
-      kind: effect.kind,
-      ...(effect.value === undefined ? {} : { value: spellEffectValueAtSlot(effect, source.level, slotLevel) }),
-    }));
+    compiled.effects = resolution.effects.map((effect) => compiledSpellEffect(source, effect, slotLevel));
   }
   return compiled;
 }

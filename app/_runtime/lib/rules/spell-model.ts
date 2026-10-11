@@ -102,6 +102,8 @@ export type SpellEffectDefinition = {
     | "special";
   value?: number;
   perSlotAbove?: number;
+  /** SRD acts that end the effect early on its target (SPEC 0012 §10.1). */
+  endsWhen?: readonly ("harmedBySourceSide" | "targetAttacksOrCasts")[];
 };
 
 export type SpellResolution = {

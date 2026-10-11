@@ -14,6 +14,7 @@ import { applyCreaturePushedEvent, isCreaturePushedPayload } from "./creature-pu
 import { applyCharacterJumpedEvent, isCharacterJumpedPayload } from "./character-jump";
 import { hiddenCondition, hidingOpponents } from "./spatial-visibility";
 import { applyHiddenPerceptionRolledEvent, isHiddenPerceptionRolledPayload } from "./hiding";
+import { applyEffectSaveRepeatedEvent, isEffectSaveRepeatedPayload } from "./effect-repeat-saves";
 import { helpRecords } from "./basic-actions";
 import { applyCharacterClimbedEvent, applyCharacterFellEvent, applyCharacterJumpedOntoEvent, isCharacterClimbedPayload,
   isCharacterFellPayload, isCharacterJumpedOntoPayload } from "./terrain-traversal";
@@ -418,7 +419,7 @@ const EVENT_TYPES = new Set<EventType>([
   "PromiseTermsEstablished", "PromiseReviewed", "PromiseChanged",
   "NpcWorkProposed", "NpcWorkStarted", "NpcWorkDecision",
   "NpcReactionOpened", "NpcReactionSettled",
-  "CharacterRepositioned", "CreaturePushed", "CharacterJumped", "HiddenPerceptionRolled",
+  "CharacterRepositioned", "CreaturePushed", "CharacterJumped", "HiddenPerceptionRolled", "EffectSaveRepeated",
   "CharacterClimbed", "CharacterJumpedOnto", "CharacterFell",
   "NpcCombatTurnPlanned", "NpcCombatTurnStepTaken", "NpcCombatTurnSettled",
   "KnowledgeReviewed",
@@ -744,6 +745,7 @@ function isTypedPayload(eventType: EventType, value: unknown): boolean {
     case "CreaturePushed": return isCreaturePushedPayload(value);
     case "CharacterJumped": return isCharacterJumpedPayload(value);
     case "HiddenPerceptionRolled": return isHiddenPerceptionRolledPayload(value);
+    case "EffectSaveRepeated": return isEffectSaveRepeatedPayload(value);
     case "CharacterClimbed": return isCharacterClimbedPayload(value);
     case "CharacterJumpedOnto": return isCharacterJumpedOntoPayload(value);
     case "CharacterFell": return isCharacterFellPayload(value);
@@ -2783,6 +2785,7 @@ function foldEventInternal(
         && !applyCreaturePushedEvent(state, event)
         && !applyCharacterJumpedEvent(state, event)
         && !applyHiddenPerceptionRolledEvent(state, event)
+        && !applyEffectSaveRepeatedEvent(state, event)
         && !applyCharacterClimbedEvent(state, event)
         && !applyCharacterJumpedOntoEvent(state, event)
         && !applyCharacterFellEvent(state, event)

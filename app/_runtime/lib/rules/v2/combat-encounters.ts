@@ -167,3 +167,28 @@ export function encounterConclusionReason(state: AuthoritativeWorldState, encoun
   const reasons = [...new Set(standing.map(id => encounterStandDown(encounter, id)!.reason))];
   return reasons.length === 1 && STAND_DOWN_REASONS.includes(reasons[0]!) ? reasons[0]! : "hostilesCannotContinue";
 }
+
+/** SPEC 0012 §10.1: whether `actorId` is `sourceId` or one of its companions,
+ * for an effect a harmful act by the source's side ends (SRD Charm Person).
+ * In an encounter they share, a companion is a participant neither hostile
+ * to the source nor its hostility target; outside one, player characters are
+ * companions of each other. */
+export function sourceSideIncludes(state: AuthoritativeWorldState, sourceId: string, actorId: string): boolean {
+  if (actorId === sourceId) return true;
+  const encounter = activeEncounter(state, sourceId);
+  if (encounter !== undefined && encounterActiveParticipants(encounter).includes(actorId)) {
+    return !encounterHostileTargets(encounter, sourceId).includes(actorId)
+      && !encounterHostileTargets(encounter, actorId).includes(sourceId);
+  }
+  const kind = (id: string) => state.combatRuntime.entities[id]?.kind ?? state.entities[id]?.kind;
+  return kind(sourceId) === "player" && kind(actorId) === "player";
+}
+
+/** SRD 5.1 Charm Person: whether the target is fighting the caster's side in
+ * an encounter they share, which gives it advantage on the saving throw. */
+export function fightingSourceSide(state: AuthoritativeWorldState, sourceId: string, targetId: string): boolean {
+  const encounter = activeEncounter(state, sourceId);
+  return encounter !== undefined && encounterActiveParticipants(encounter).includes(targetId)
+    && (encounterHostileTargets(encounter, sourceId).includes(targetId)
+      || encounterHostileTargets(encounter, targetId).includes(sourceId));
+}
