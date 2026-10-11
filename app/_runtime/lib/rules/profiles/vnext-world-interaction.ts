@@ -197,7 +197,7 @@ export const VNEXT_STAGE3_EVENT_SCHEMA_PROFILE_DOCUMENT: CanonicalProfileDocumen
   schema: "zhuwei.runtime-profile/v1",
   profileKind: "eventSchema",
   profileId: CONTAINER_EVENT_PROFILE_ID,
-  semanticVersion: "10.0.0",
+  semanticVersion: "11.0.0",
   normativePayload: Object.freeze({
     spec: "SPEC 0016",
     authoritativeEnvelope: "zhuwei.room-world-event/v2",
@@ -222,6 +222,9 @@ export const VNEXT_STAGE3_EVENT_SCHEMA_PROFILE_DOCUMENT: CanonicalProfileDocumen
       "WorldInteractionResolved",
       // SPEC 0014 §4 (ADR 0114): a door of a new place completed on first use.
       "EnvironmentFeatureCompleted",
+      // SPEC 0012 §10.1 (ADR 0150, 0157, 0160): a repeated save against a
+      // lasting effect, a summon moving, a mark moving to a new creature.
+      "EffectSaveRepeated", "EffectZoneMoved", "EffectRetargeted",
     ]),
     // SPEC 0004 §4: a door's state change may be a KP-ruled unlock of a locked door.
     environmentFeatureTransitionIntents: Object.freeze(["close", "lock", "open", "unlock"]),
@@ -254,7 +257,7 @@ export const VNEXT_STAGE3_RUNTIME_MANIFEST_PROFILE_DOCUMENT: CanonicalProfileDoc
     schema: "zhuwei.runtime-profile/v1",
     profileKind: "runtimeManifest",
     profileId: CONTAINER_RUNTIME_PROFILE_ID,
-    semanticVersion: "10.0.0",
+    semanticVersion: "11.0.0",
     normativePayload: Object.freeze({
       spec: "SPEC 0016",
       productGeneration: "zhuwei-0.4-vnext-isolated-stage3",
