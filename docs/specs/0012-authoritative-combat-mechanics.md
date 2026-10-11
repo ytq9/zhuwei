@@ -33,6 +33,7 @@ gates:
   - "tests/kp/combat/combat-long-casting.test.mjs"
   - "tests/kp/combat/combat-end.test.mjs"
   - "tests/kp/combat/combat-end.room.test.ts"
+  - "tests/kp/combat/combat-map-reply.room.test.ts"
   - "tests/kp/combat/combat-map-claims.test.mjs"
   - "tests/kp/combat/combat-aftermath.test.mjs"
   - "tests/kp/combat/npc-combat-stance.test.mjs"
