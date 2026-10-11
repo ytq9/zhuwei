@@ -2,8 +2,6 @@
 
 import { useId, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
 import {
   GEAR_SLOTS,
   slotLabel,
@@ -22,11 +20,16 @@ type InventoryPanelProps = {
   inventory?: AuthoritativeInventory;
   canEdit: boolean;
   code: string;
+  /** Puts the player's sentence about an item in the composer (dropping,
+   * handing over, putting it somewhere), where the KP rules it once sent. */
+  onDraft?: (sentence: string) => void;
 };
 
 type GearActionController = {
   busyKey: string | null;
-  act(action: "wear" | "stow", slot: GearSlot, itemId?: string): Promise<void>;
+  /** The last refusal, under the item it was about. */
+  failure: { entryId: string; message: string } | null;
+  act(action: "wear" | "stow", slot: GearSlot, entryId: string): Promise<void>;
   use(itemEntryId: string): Promise<void>;
 };
 
@@ -37,29 +40,35 @@ function inventoryEntryLabel(entry: AuthoritativeInventoryEntry): string {
   return entry.kind === "identified" ? entry.name : OPAQUE_ITEM_LABEL;
 }
 
+/** Equipping, stowing and using go straight to Rules; whether a change costs
+ * an action in combat is Rules' to decide, and a refusal is shown under the
+ * item it concerns. */
 function useGearActions(code: string, canEdit: boolean): GearActionController {
   const queryClient = useQueryClient();
   const inFlight = useRef(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [failure, setFailure] = useState<GearActionController["failure"]>(null);
 
   async function act(
     action: "wear" | "stow",
     slot: GearSlot,
-    itemId?: string,
+    entryId: string,
   ) {
     if (!canEdit || inFlight.current) return;
+    const itemId = action === "wear" ? entryId : undefined;
     const actionKey = `${action}:${slot}:${itemId ?? ""}`;
     inFlight.current = true;
     setBusyKey(actionKey);
+    setFailure(null);
     try {
       const result = await setGear({ data: { code, action, slot, itemId } });
       if (!tableActionAccepted(result)) {
-        toast.error(String(result.error ?? "换装失败"));
+        setFailure({ entryId, message: String(result.error ?? "换装失败") });
       } else {
         void queryClient.invalidateQueries({ queryKey: ["table", code] });
       }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "换装失败");
+      setFailure({ entryId, message: error instanceof Error ? error.message : "换装失败" });
     } finally {
       inFlight.current = false;
       setBusyKey(null);
@@ -71,24 +80,27 @@ function useGearActions(code: string, canEdit: boolean): GearActionController {
     const actionKey = `use:${itemEntryId}`;
     inFlight.current = true;
     setBusyKey(actionKey);
+    setFailure(null);
     try {
       const result = await useInventoryItem({ data: { code, itemEntryId } });
       if (!tableActionAccepted(result)) {
-        toast.error(String(result.error ?? "使用物品失败"));
+        setFailure({ entryId: itemEntryId, message: String(result.error ?? "使用物品失败") });
       } else {
         void queryClient.invalidateQueries({ queryKey: ["table", code] });
       }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "使用物品失败");
+      setFailure({ entryId: itemEntryId, message: error instanceof Error ? error.message : "使用物品失败" });
     } finally {
       inFlight.current = false;
       setBusyKey(null);
     }
   }
 
-  return { busyKey, act, use };
+  return { busyKey, failure, act, use };
 }
 
+/** A disclosure for what is seldom needed: the empty slots and what a
+ * container held when last looked into. */
 function InventorySection({
   title,
   hint,
@@ -103,7 +115,7 @@ function InventorySection({
   const triggerId = `${id}-trigger`;
   const panelId = `${id}-panel`;
   return (
-    <div className="min-w-0 max-w-full overflow-hidden rounded-[12px] border border-border">
+    <div className="min-w-0 max-w-full overflow-hidden rounded-[10px] border border-border">
       <button
         id={triggerId}
         type="button"
@@ -112,7 +124,7 @@ function InventorySection({
         onClick={() => setOpen((value) => !value)}
         className="flex min-h-11 w-full min-w-0 items-center justify-between gap-2 px-2.5 py-2 text-left"
       >
-        <span className="text-xs font-medium">{title}</span>
+        <span className="text-xs text-muted">{title}</span>
         <span className="min-w-0 truncate text-[11px] text-subtle">
           {open ? "收起" : hint}
         </span>
@@ -163,9 +175,36 @@ export function inventoryPackSummary(inventory: AuthoritativeInventory) {
   return `${entries.length} 种 · 共 ${total} 个`;
 }
 
+/** The slots always shown first, filled or not; the others follow when filled. */
+const CORE_SLOT_ORDER: readonly GearSlot[] = ["main", "off", "armor"];
+const CORE_SLOTS: ReadonlySet<GearSlot> = new Set(CORE_SLOT_ORDER);
+
+/** The backpack's groups, coins first, by the projected item category. */
+const PACK_GROUPS: ReadonlyArray<{ id: string; label: string; categories: ReadonlyArray<AuthoritativeIdentifiedInventoryEntry["category"]> }> = [
+  { id: "currency", label: "货币", categories: ["currency"] },
+  { id: "weapon", label: "武器", categories: ["weapon"] },
+  { id: "armor", label: "护甲与盾牌", categories: ["armor", "shield"] },
+  { id: "ammunition", label: "弹药", categories: ["ammunition"] },
+  { id: "consumable", label: "消耗品", categories: ["consumable"] },
+  { id: "tool", label: "工具", categories: ["tool"] },
+  { id: "other", label: "杂物", categories: ["equipment", "object"] },
+];
+
+const OBJECT_STATE_LABEL = { open: "已打开", closed: "已关闭", locked: "已上锁" } as const;
+
+/** Sentences about an item the KP rules: the player finishes them in the
+ * composer. */
+function itemSentences(name: string): Array<{ label: string; sentence: string }> {
+  return [
+    { label: "放下", sentence: `我把${name}放在地上。` },
+    { label: "交给…", sentence: `我把${name}交给` },
+    { label: "放进…", sentence: `我把${name}放进` },
+  ];
+}
+
 function AuthoritativeItemFacts({ entry }: { entry: AuthoritativeIdentifiedInventoryEntry }) {
   const counters = [
-    entry.objectState === undefined ? null : ({ open: "已打开", closed: "已关闭", locked: "已上锁" }[entry.objectState]),
+    entry.objectState === undefined ? null : OBJECT_STATE_LABEL[entry.objectState],
     entry.charges === null
       ? null
       : `充能 ${entry.charges.current}/${entry.charges.maximum}`,
@@ -196,73 +235,160 @@ function OpaqueItemState({ entry }: { entry: AuthoritativeInventoryEntry & { kin
   );
 }
 
-function AuthoritativeItemControls({
+const ROW_BUTTON = "min-h-9 shrink-0 rounded-[10px] border border-border bg-surface px-2.5 text-xs text-fg transition-colors hover:bg-elevated disabled:cursor-not-allowed disabled:opacity-50";
+
+/** What the row offers at a glance, as Rules allows it: stowing what is worn,
+ * using, and equipping into each slot the item fits. */
+function ItemQuickActions({
   entry,
-  canEdit,
+  slot,
   actions,
-  stowSlot,
 }: {
-  entry: AuthoritativeIdentifiedInventoryEntry;
-  canEdit: boolean;
+  entry: AuthoritativeInventoryEntry;
+  slot?: GearSlot;
   actions: GearActionController;
-  stowSlot?: GearSlot;
 }) {
-  if (!canEdit) return null;
+  const busy = actions.busyKey !== null;
+  if (slot !== undefined) {
+    return (
+      <button
+        type="button"
+        data-inventory-stow={entry.entryId}
+        disabled={busy}
+        onClick={() => void actions.act("stow", slot, entry.entryId)}
+        className={ROW_BUTTON}
+      >
+        {actions.busyKey === `stow:${slot}:` ? "收起中……" : "卸下"}
+      </button>
+    );
+  }
+  if (entry.kind === "opaque") return null;
   const useActivity = entry.activities.find(({ activityId }) => activityId === "use");
-  const useKey = `use:${entry.entryId}`;
   return (
-    <div className="mt-2 flex flex-wrap gap-1.5" aria-busy={actions.busyKey !== null}>
+    <>
       {useActivity ? (
-        <Button
+        <button
           type="button"
-          size="sm"
-          variant="brass"
-          className="min-h-11"
-          disabled={actions.busyKey !== null || !useActivity.enabled}
+          data-inventory-use={entry.entryId}
+          disabled={busy || !useActivity.enabled}
           title={useActivity.disabledReason === null
             ? undefined
             : INVENTORY_ACTIVITY_DISABLED_COPY[useActivity.disabledReason]}
           onClick={() => void actions.use(entry.entryId)}
+          className={ROW_BUTTON}
         >
-          {actions.busyKey === useKey
+          {actions.busyKey === `use:${entry.entryId}`
             ? "使用中……"
             : useActivity.disabledReason === null
               ? useActivity.label
               : INVENTORY_ACTIVITY_DISABLED_COPY[useActivity.disabledReason]}
-        </Button>
+        </button>
       ) : null}
-      {stowSlot === undefined
-        ? entry.allowedSlots.map((slot) => {
-            const actionKey = `wear:${slot}:${entry.entryId}`;
-            return (
-              <Button
-                key={slot}
-                type="button"
-                size="sm"
-                variant="brass"
-                className="min-h-11"
-                disabled={actions.busyKey !== null}
-                onClick={() => void actions.act("wear", slot, entry.entryId)}
-              >
-                {actions.busyKey === actionKey
-                  ? "装备中……"
-                  : `装备到${slotLabel(slot)}`}
-              </Button>
-            );
-          })
-        : (
-            <Button
-              type="button"
-              size="sm"
-              variant="brass"
-              className="min-h-11"
-              disabled={actions.busyKey !== null}
-              onClick={() => void actions.act("stow", stowSlot)}
-            >
-              {actions.busyKey === `stow:${stowSlot}:` ? "收纳中……" : "卸到背包"}
-            </Button>
+      {entry.allowedSlots.map((allowed) => (
+        <button
+          key={allowed}
+          type="button"
+          data-inventory-wear={`${entry.entryId}:${allowed}`}
+          aria-label={`装备到${slotLabel(allowed)}`}
+          disabled={busy}
+          onClick={() => void actions.act("wear", allowed, entry.entryId)}
+          className={ROW_BUTTON}
+        >
+          {actions.busyKey === `wear:${allowed}:${entry.entryId}`
+            ? "装备中……"
+            : entry.allowedSlots.length === 1 ? "装备" : `装到${slotLabel(allowed)}`}
+        </button>
+      ))}
+    </>
+  );
+}
+
+/** One item: its name, count and state, the actions Rules allows inline, and
+ * on demand its description and the sentences the player can say about it. */
+function ItemRow({
+  entry,
+  slot,
+  canEdit,
+  actions,
+  onDraft,
+}: {
+  entry: AuthoritativeInventoryEntry;
+  /** The slot it is worn in, if any. */
+  slot?: GearSlot;
+  canEdit: boolean;
+  actions: GearActionController;
+  onDraft?: (sentence: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  const triggerId = `${id}-trigger`;
+  const panelId = `${id}-panel`;
+  const tags = entry.kind === "identified"
+    ? [
+        entry.twoHanded ? "双手" : null,
+        entry.objectState === undefined ? null : OBJECT_STATE_LABEL[entry.objectState],
+        entry.condition === "broken" ? "已损坏" : null,
+      ].filter((tag): tag is string => tag !== null)
+    : entry.condition === "broken" ? ["已损坏"] : [];
+  const failure = actions.failure?.entryId === entry.entryId ? actions.failure.message : null;
+  return (
+    <li data-inventory-entry={entry.entryId} className="min-w-0 rounded-[10px] border border-border bg-bg/40">
+      <div className="flex min-h-11 min-w-0 items-center gap-2 px-2.5 py-1">
+        <button
+          id={triggerId}
+          type="button"
+          aria-controls={panelId}
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
+          className="flex min-h-9 min-w-0 flex-1 items-center gap-2 text-left"
+        >
+          {slot !== undefined ? <span className="w-9 shrink-0 text-[11px] text-subtle">{slotLabel(slot)}</span> : null}
+          <span className="min-w-0 break-words text-sm text-fg [overflow-wrap:anywhere]">{inventoryEntryLabel(entry)}</span>
+          {entry.quantity > 1 ? <span className="shrink-0 text-xs tabular-nums text-subtle">×{entry.quantity}</span> : null}
+          {tags.map((tag) => (
+            <span key={tag} className="shrink-0 rounded-full border border-border px-1.5 text-[10px] text-subtle">{tag}</span>
+          ))}
+        </button>
+        {canEdit ? (
+          <span className="flex shrink-0 flex-wrap justify-end gap-1.5" aria-busy={actions.busyKey !== null}>
+            <ItemQuickActions entry={entry} slot={slot} actions={actions} />
+          </span>
+        ) : null}
+      </div>
+      {failure ? (
+        <p role="alert" data-inventory-failure className="px-2.5 pb-2 text-[11px] text-danger">{failure}</p>
+      ) : null}
+      {open ? (
+        <div
+          id={panelId}
+          role="region"
+          aria-labelledby={triggerId}
+          className="space-y-2 border-t border-border px-2.5 py-2"
+        >
+          {entry.kind === "opaque" ? (
+            <OpaqueItemState entry={entry} />
+          ) : (
+            <AuthoritativeItemFacts entry={entry} />
           )}
-    </div>
+          {canEdit && onDraft && entry.kind === "identified" ? (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[11px] text-subtle">说出来：</span>
+              {itemSentences(entry.name).map(({ label, sentence }) => (
+                <button
+                  key={label}
+                  type="button"
+                  data-inventory-say={label}
+                  onClick={() => onDraft(sentence)}
+                  className={ROW_BUTTON}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </li>
   );
 }
 
@@ -270,88 +396,44 @@ function AuthoritativeGearSlots({
   inventory,
   canEdit,
   actions,
+  onDraft,
 }: {
   inventory: AuthoritativeInventory;
   canEdit: boolean;
   actions: GearActionController;
+  onDraft?: (sentence: string) => void;
 }) {
-  const [openSlot, setOpenSlot] = useState<GearSlot | null>(null);
-  const id = useId();
   const entriesBySlot = new Map(
     inventory.entries.flatMap((entry) => entry.equippedSlot === null
       ? []
       : [[entry.equippedSlot, entry] as const]),
   );
+  const shown = [
+    ...CORE_SLOT_ORDER.map((id) => GEAR_SLOTS.find((slot) => slot.id === id)!),
+    ...GEAR_SLOTS.filter((slot) => !CORE_SLOTS.has(slot.id) && entriesBySlot.has(slot.id)),
+  ];
+  const empty = GEAR_SLOTS.filter((slot) => !CORE_SLOTS.has(slot.id) && !entriesBySlot.has(slot.id));
   return (
-    <ul className="grid gap-1.5">
-      {GEAR_SLOTS.map((slot) => {
-        const entry = entriesBySlot.get(slot.id);
-        const open = openSlot === slot.id;
-        const triggerId = `${id}-${slot.id}-trigger`;
-        const panelId = `${id}-${slot.id}-panel`;
-        return (
-          <li key={slot.id} className="rounded-[10px] border border-border bg-bg/40">
-            <button
-              id={triggerId}
-              type="button"
-              aria-controls={panelId}
-              aria-expanded={open}
-              onClick={() => setOpenSlot(open ? null : slot.id)}
-              className="flex min-h-11 w-full items-center justify-between gap-2 px-2.5 py-1.5 text-left"
-            >
-              <span className="text-[11px] text-subtle">{slot.label}</span>
-              <span className="min-w-0 break-words text-right text-xs [overflow-wrap:anywhere]">
-                {entry === undefined
-                  ? <span className="text-subtle">空</span>
-                  : <>{inventoryEntryLabel(entry)}{entry.quantity > 1 ? ` ×${entry.quantity}` : ""}</>}
-              </span>
-            </button>
-            {open ? (
-              <div
-                id={panelId}
-                role="region"
-                aria-labelledby={triggerId}
-                className="border-t border-border px-2.5 py-2"
-              >
-                {entry === undefined ? (
-                  <p className="text-xs text-subtle">这一格是空的。从背包里选一件装备。</p>
-                ) : (
-                  entry.kind === "opaque" ? (
-                    <>
-                      <OpaqueItemState entry={entry} />
-                      {canEdit ? (
-                        <div className="mt-2 flex flex-wrap gap-1.5" aria-busy={actions.busyKey !== null}>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="brass"
-                            className="min-h-11"
-                            disabled={actions.busyKey !== null}
-                            onClick={() => void actions.act("stow", slot.id)}
-                          >
-                            {actions.busyKey === `stow:${slot.id}:` ? "收纳中……" : "卸到背包"}
-                          </Button>
-                        </div>
-                      ) : null}
-                    </>
-                  ) : (
-                    <>
-                      <AuthoritativeItemFacts entry={entry} />
-                      <AuthoritativeItemControls
-                        entry={entry}
-                        canEdit={canEdit}
-                        actions={actions}
-                        stowSlot={slot.id}
-                      />
-                    </>
-                  )
-                )}
-              </div>
-            ) : null}
-          </li>
-        );
-      })}
-    </ul>
+    <div className="grid min-w-0 gap-1.5">
+      <ul className="grid min-w-0 gap-1.5">
+        {shown.map((slot) => {
+          const entry = entriesBySlot.get(slot.id);
+          return entry === undefined ? (
+            <li key={slot.id} data-inventory-slot={slot.id} className="flex min-h-11 items-center gap-2 rounded-[10px] border border-dashed border-border px-2.5 text-xs">
+              <span className="w-9 shrink-0 text-[11px] text-subtle">{slot.label}</span>
+              <span className="text-subtle">空</span>
+            </li>
+          ) : (
+            <ItemRow key={slot.id} entry={entry} slot={slot.id} canEdit={canEdit} actions={actions} onDraft={onDraft} />
+          );
+        })}
+      </ul>
+      {empty.length > 0 ? (
+        <InventorySection title="其他槽位" hint={`${empty.length} 个空着`}>
+          <p className="text-[11px] leading-relaxed text-subtle">{empty.map((slot) => slot.label).join("、")}：空。从背包里装备时会放到对应槽位。</p>
+        </InventorySection>
+      ) : null}
+    </div>
   );
 }
 
@@ -359,70 +441,50 @@ function AuthoritativeBackpack({
   inventory,
   canEdit,
   actions,
+  onDraft,
 }: {
   inventory: AuthoritativeInventory;
   canEdit: boolean;
   actions: GearActionController;
+  onDraft?: (sentence: string) => void;
 }) {
-  const [openEntry, setOpenEntry] = useState<string | null>(null);
-  const id = useId();
   const entries = inventory.entries.filter(({ equippedSlot }) => equippedSlot === null);
   if (entries.length === 0) {
     return <p className="text-xs text-subtle">背包是空的。</p>;
   }
+  const groups = [
+    ...PACK_GROUPS.map((group) => ({
+      id: group.id,
+      label: group.label,
+      entries: entries.filter((entry) => entry.kind === "identified" && group.categories.includes(entry.category)),
+    })),
+    { id: "opaque", label: "未辨明", entries: entries.filter((entry) => entry.kind === "opaque") },
+  ].filter((group) => group.entries.length > 0);
   return (
-    <ul className="grid gap-1.5">
-      {entries.map((entry, index) => {
-        const open = openEntry === entry.entryId;
-        const triggerId = `${id}-${index}-trigger`;
-        const panelId = `${id}-${index}-panel`;
-        return (
-          <li key={entry.entryId} className="rounded-[10px] border border-border bg-bg/40">
-            <button
-              id={triggerId}
-              type="button"
-              aria-controls={panelId}
-              aria-expanded={open}
-              onClick={() => setOpenEntry(open ? null : entry.entryId)}
-              className="flex min-h-11 w-full items-center justify-between gap-2 px-2.5 py-1.5 text-left"
-            >
-              <span className="min-w-0 break-words text-xs [overflow-wrap:anywhere]">
-                {inventoryEntryLabel(entry)}
-              </span>
-              <span className="shrink-0 text-[11px] text-subtle">×{entry.quantity}</span>
-            </button>
-            {open ? (
-              <div
-                id={panelId}
-                role="region"
-                aria-labelledby={triggerId}
-                className="border-t border-border px-2.5 py-2"
-              >
-                {entry.kind === "opaque" ? (
-                  <OpaqueItemState entry={entry} />
-                ) : (
-                  <>
-                    <AuthoritativeItemFacts entry={entry} />
-                    <AuthoritativeItemControls
-                      entry={entry}
-                      canEdit={canEdit}
-                      actions={actions}
-                    />
-                  </>
-                )}
-              </div>
-            ) : null}
-          </li>
-        );
-      })}
-    </ul>
+    <div className="grid min-w-0 gap-3">
+      {groups.map((group) => (
+        <div key={group.id} role="group" aria-label={group.label} data-inventory-group={group.id} className="grid min-w-0 gap-1.5">
+          <p className="text-[11px] text-subtle">{group.label}</p>
+          <ul className="grid min-w-0 gap-1.5">
+            {group.entries.map((entry) => (
+              <ItemRow key={entry.entryId} entry={entry} canEdit={canEdit} actions={actions} onDraft={onDraft} />
+            ))}
+          </ul>
+        </div>
+      ))}
+    </div>
   );
 }
 
+/** SPEC 0010 §7, SPEC 0001 §16: the character's own items as Rules projects
+ * them. What is worn comes first with its slot; the backpack is grouped by
+ * kind with coins on top. Equipping, stowing and using go to Rules from the
+ * row; anything else done with an item is the player's sentence. */
 export function InventoryPanel({
   inventory,
   canEdit,
   code,
+  onDraft,
 }: InventoryPanelProps) {
   const actions = useGearActions(code, canEdit);
   if (inventory === undefined) return (
@@ -431,21 +493,31 @@ export function InventoryPanel({
     </div>
   );
   return (
-    <>
-      <InventorySection title="身上" hint={inventoryWornSummary(inventory)}>
+    <div className="grid min-w-0 gap-4">
+      <section aria-label="身上" data-inventory-section="worn" className="grid min-w-0 gap-2">
+        <p className="flex items-baseline justify-between gap-2 text-xs font-medium">
+          身上
+          <span className="min-w-0 truncate text-[11px] font-normal text-subtle">{inventoryWornSummary(inventory)}</span>
+        </p>
         <AuthoritativeGearSlots
           inventory={inventory}
           canEdit={canEdit}
           actions={actions}
+          onDraft={onDraft}
         />
-      </InventorySection>
-      <InventorySection title="背包" hint={inventoryPackSummary(inventory)}>
+      </section>
+      <section aria-label="背包" data-inventory-section="pack" className="grid min-w-0 gap-2">
+        <p className="flex items-baseline justify-between gap-2 text-xs font-medium">
+          背包
+          <span className="min-w-0 truncate text-[11px] font-normal text-subtle">{inventoryPackSummary(inventory)}</span>
+        </p>
         <AuthoritativeBackpack
           inventory={inventory}
           canEdit={canEdit}
           actions={actions}
+          onDraft={onDraft}
         />
-      </InventorySection>
+      </section>
       {inventory.containerMemories?.map(memory => (
         <InventorySection key={memory.containerRef} title={`${inventoryEntryLabel(inventory.entries.find(entry => entry.entryId === memory.containerRef)!)} · 上次查看`}
           hint="重新打开后更新">
@@ -460,6 +532,6 @@ export function InventoryPanel({
           </ul>
         </InventorySection>
       ))}
-    </>
+    </div>
   );
 }

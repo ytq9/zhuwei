@@ -965,6 +965,14 @@ export function PlayTable({
     tacticalMapInCombat ? "combat" : "exploration",
     tacticalProjection?.scene.id ?? "unknown",
   ].join(":");
+  /** ADR 0146: a sentence put together from the map, the action list or an
+   * item goes into the composer, where the player can add to it and send. */
+  function draftSentence(sentence: string) {
+    setText((draft) => draft.trim() ? `${draft.trim()} ${sentence}` : sentence);
+    setCharacterOpen(false);
+    setMapOpen(false);
+    setTimeout(() => composerRef.current?.querySelector("textarea")?.focus(), 0);
+  }
   // SPEC 0014 §§3、4、8 (ADR 0091): the map's moves, turn actions and the
   // sentences put together outside an encounter, which go into the composer
   // for the player to add to and send.
@@ -974,12 +982,7 @@ export function PlayTable({
     controls: snap.state.authoritative?.combatControls ?? null,
     sending,
     ...(currentPending ? { intentUnavailable: "请先完成当前待你决定的选择，再放入新的行动。" } : {}),
-    draftIntent: (sentence) => {
-      setText((draft) => draft.trim() ? `${draft.trim()} ${sentence}` : sentence);
-      setCharacterOpen(false);
-      setMapOpen(false);
-      setTimeout(() => composerRef.current?.querySelector("textarea")?.focus(), 0);
-    },
+    draftIntent: draftSentence,
   });
   const inEncounter = tacticalProjection !== null && playerEncounter(tacticalProjection).inEncounter;
   const controlledCharacter = snap.state.authoritative?.controlledCharacter;
@@ -1010,6 +1013,7 @@ export function PlayTable({
   const characterContent = myCard === undefined ? null : (
     <CharacterDetail
       tab={characterTab}
+      onDraft={currentPending ? undefined : draftSentence}
       actionList={tacticalProjection === null ? undefined : (
         <ActionList
           projection={tacticalProjection}
@@ -3117,6 +3121,7 @@ function Fold({
 function CharacterDetail({
   tab,
   actionList,
+  onDraft,
   sheet,
   canEdit,
   code,
@@ -3131,6 +3136,8 @@ function CharacterDetail({
 }: {
   tab: CharacterPanelTab;
   actionList?: ReactNode;
+  /** Puts a sentence about an item in the composer; absent while a decision waits. */
+  onDraft?: (sentence: string) => void;
   sheet: CharacterSheet;
   canEdit: boolean;
   code: string;
@@ -3155,6 +3162,7 @@ function CharacterDetail({
         inventory={authoritativeCharacter?.inventory}
         canEdit={canEdit}
         code={code}
+        onDraft={onDraft}
       />
     );
   }
