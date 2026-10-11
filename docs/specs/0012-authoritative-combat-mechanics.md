@@ -11,6 +11,8 @@ supersedes:
     scope: "纯战斗机械，以及 B07–B15、B17–B22、B29–B30、B35–B40、B49、B53 的战斗段"
 revisions:
   - date: 2026-10-11
+    scope: "§10.1：持续区域（云雾术、沉默术）以冻结的区域原点为球心，重度遮蔽挡住视线，沉默区域内耳聋、免疫雷鸣、不能施放带言语成分的法术（ADR 0154）"
+  - date: 2026-10-11
     scope: "§10.1：猎人印记的武器命中额外 1d6 随武器伤害掷、重击翻倍，寻找被标记者的躲藏察觉有优势（ADR 0153）"
   - date: 2026-10-11
     scope: "§10.1：加值骰（祝福术、神导术）随所加的 d20 一起请求并计入总值；神导术自动用于下一次属性检定，自动的躲藏察觉不消耗它（ADR 0152）"
@@ -30,7 +32,7 @@ revisions:
     scope: "§13：遭遇结束时每个活着的 NPC 参战者得到本人对这场战斗的记忆；NPC 在遭遇结束后按本人视角开战建立新遭遇（ADR 0118）"
   - date: 2026-10-05
     scope: "§§1、3.3、13：NPC 一方的投降、接受投降、停战和重新动手由该 NPC 本人决定，主持 KP 只记录玩家角色自己的投降；对手停手而站着时 Rules 也向玩家提议结束（ADR 0117）"
-adr: ["0117", "0118", "0123", "0149", "0150", "0151", "0152", "0153"]
+adr: ["0117", "0118", "0123", "0149", "0150", "0151", "0152", "0153", "0154"]
 parts:
   - "0012-part-b-abilities-damage-and-conclusion.md"
 gates_verified_on: 2026-10-05
@@ -50,6 +52,7 @@ gates:
   - "tests/kp/combat/spell-condition-effects.test.mjs"
   - "tests/kp/combat/spell-modifier-effects.test.mjs"
   - "tests/kp/combat/spell-bonus-dice.test.mjs"
+  - "tests/kp/combat/spell-zone-effects.test.mjs"
 ---
 # SPEC 0012：权威战斗机械
 

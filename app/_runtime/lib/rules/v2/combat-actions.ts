@@ -37,7 +37,8 @@ import {
   conditionMovementPermission,
   conditionMovementCost,
 } from "./condition-mechanics";
-import { effectiveConditions, isWorldEffectRecord, modifierEffectDefinition, planModifierEffect, planWorldEffect, planWorldEffectEnd, repeatSaveEffects, worldEffectDefinition, worldEffectEndDefinition, worldEffectEndDrafts, worldEffectsEndingWhen } from "./world-effects";
+import { effectiveConditions, isWorldEffectRecord, modifierEffectDefinition, planModifierEffect, planWorldEffect, planZoneEffect, zoneEffectDefinition, planWorldEffectEnd, repeatSaveEffects, worldEffectDefinition, worldEffectEndDefinition, worldEffectEndDrafts, worldEffectsEndingWhen } from "./world-effects";
+import { castingSilenced, zoneBlocksSight } from "./zone-effects";
 import { attacksAgainstHaveAdvantage, d20BonusDie, effectiveArmorClass as modifiedArmorClass, reactionsBlocked, weaponDamageDieFrom, wearsBodyArmor } from "./effect-modifiers";
 import { combatPhaseExpiryAnchor, initiativePhaseOrder, phaseSlotForEntity } from "./effect-phase";
 
@@ -647,7 +648,7 @@ function canonicalAbilityDefinition(value: unknown): value is JsonRecord {
   }
   if (value.effects !== undefined && (!Array.isArray(value.effects) || value.effects.length > 8
     || !value.effects.every(effect => worldEffectDefinition(effect) !== undefined || worldEffectEndDefinition(effect) !== undefined
-      || modifierEffectDefinition(effect) !== undefined))) return false;
+      || modifierEffectDefinition(effect) !== undefined || zoneEffectDefinition(effect) !== undefined))) return false;
   if (value.grants !== undefined
     && (!Array.isArray(value.grants)
       || !value.grants.every((grant) => isRecord(grant)
@@ -2400,7 +2401,7 @@ function appendTransitions(prefix: StepResult, next: StepResult): StepResult {
 function abilityWorldEffects(definition: JsonRecord): JsonRecord[] {
   return [definition.effect, ...(Array.isArray(definition.effects) ? definition.effects : [])]
     .filter((effect): effect is JsonRecord => isRecord(effect)
-      && (effect.kind === "grantEffect" || effect.kind === "endEffect" || effect.kind === "grantModifier"));
+      && ["createZone", "endEffect", "grantEffect", "grantModifier"].includes(String(effect.kind)));
 }
 
 /** SPEC 0012 §10.1: what one use of an Ability ends besides its own
@@ -2464,7 +2465,22 @@ function appendAbilityWorldEffects(
     append([{ eventType: "ConcentrationEnded", payload: { entityId: sourceRef, reason: "replacedByNewConcentration" } }]);
   }
   let heldByConcentration = false;
+  // SPEC 0012 §10.1 (SRD Fog Cloud, Silence): a zone is filled once, around
+  // where the area was cast.
   for (const [index, effect] of abilityWorldEffects(definition).entries()) {
+    if (effect.kind !== "createZone" || result.kind !== "committed") continue;
+    const area = isRecord(mechanicalResult.area) ? mechanicalResult.area : undefined;
+    const shape = isRecord(definition.target) && isRecord(definition.target.shape) ? definition.target.shape : undefined;
+    const source = combatEntity(result.state, sourceRef);
+    const planned = planZoneEffect(result.state, { rootActionId, sourceRef, sourceDefinitionRef: String(operation.abilityRef),
+      effect, index, sceneId: String(source?.sceneId), origin: area?.origin, radiusInches: shape?.radiusInches });
+    if (planned.kind === "rejected") return rejected("invalidRulesInput", planned.message);
+    if (planned.effectRecord.lifecycle?.concentration === true) heldByConcentration = true;
+    append([{ eventType: "EffectApplied", payload: { effect: planned.effectRecord },
+      visibilityPolicyId: "visibility:room-authority-only", secrecy: "internal" }]);
+  }
+  for (const [index, effect] of abilityWorldEffects(definition).entries()) {
+    if (effect.kind === "createZone") continue;
     for (const targetEntityId of targetIds) {
       const attack = isRecord(mechanicalResult.attacks)
         ? mechanicalResult.attacks[targetEntityId] : mechanicalResult.attack;
@@ -2599,6 +2615,17 @@ function armorSpellcastingRejection(): StepResult {
   return rejected("missingPrerequisite", "armor:not-proficient-cannot-cast");
 }
 
+/** SRD 5.1 Silence: a spell with a verbal component cannot be cast by a
+ * caster standing in the sphere (SPEC 0012 §9.2). */
+function verbalCastingSilenced(state: AuthoritativeWorldState, entity: JsonRecord, definition: JsonRecord): boolean {
+  return isRecord(definition.activation) && Array.isArray(definition.activation.components)
+    && definition.activation.components.includes("V") && castingSilenced(state, entityId(entity));
+}
+
+function silencedSpellcastingRejection(): StepResult {
+  return rejected("missingPrerequisite", "spell:verbal-component-silenced");
+}
+
 function isSpellDefinition(definition: JsonRecord): boolean {
   return ["actionSpell", "bonusActionSpell", "reactionSpell"].includes(String(activationKind(definition)));
 }
@@ -2632,7 +2659,7 @@ function reactionSpellRefs(
   return abilityRefs(entity).filter((abilityRef) => {
     const definition = state.combatRuntime.definitions[abilityRef];
     if (definition === undefined || activationKind(definition) !== "reactionSpell"
-      || !definitionHasMechanicalKey(definition, mechanicalKey)) return false;
+      || !definitionHasMechanicalKey(definition, mechanicalKey) || verbalCastingSilenced(state, entity, definition)) return false;
     const minimumLevel = definitionSpellLevel(definition);
     return isRecord(entity.resources) && Object.entries(entity.resources).some(([resourceId, pool]) => {
       const match = /^spellSlot:([1-9])$/.exec(resourceId);
@@ -2670,7 +2697,8 @@ function canSeeWithinCounterspellRange(
     && !condition(state, reactor, "blinded")
     && !condition(state, caster, "invisible")
     && entitiesWithinRange(reactor, caster, "720")
-    && targetCover(state, reactor, caster) !== "full";
+    && targetCover(state, reactor, caster) !== "full"
+    && !zoneBlocksSight(state, reactor, caster);
 }
 
 function triggerOrder(
@@ -2823,7 +2851,8 @@ function seesCreature(state: AuthoritativeWorldState, viewer: JsonRecord, other:
     && conditionMechanics(state, entityId(viewer)).canSee
     && !condition(state, other, "invisible")
     && spatialRecordVisibleTo(state, other, entityId(viewer))
-    && targetCover(state, viewer, other) !== "full";
+    && targetCover(state, viewer, other) !== "full"
+    && !zoneBlocksSight(state, viewer, other);
 }
 
 function attackMode(
@@ -2876,6 +2905,11 @@ function attackMode(
   if (hasAttackHelp(source.conditions, entityId(target))) advantageReasons.push("helpedAttack2014");
   // SRD 5.1 Guiding Bolt: the next attack roll against the target.
   if (attacksAgainstHaveAdvantage(state, entityId(target))) advantageReasons.push("markedForNextAttack2014");
+  // SRD 5.1 Fog Cloud: across a heavily obscured area neither sees the other.
+  if (zoneBlocksSight(state, source, target)) {
+    advantageReasons.push("attackerUnseenInObscurement2014");
+    disadvantageReasons.push("targetUnseenInObscurement2014");
+  }
 
   const advantage = advantageReasons.length > 0;
   const disadvantage = disadvantageReasons.length > 0;
@@ -3866,6 +3900,9 @@ function abilityEffectsExecutable(definition: JsonRecord, specCount: number): bo
   const savePush = abilitySavePush(definition);
   if (savePush !== undefined) executableEffects.add(savePush.effect);
   const concentration = isRecord(definition.effect) && definition.effect.kind === "concentration";
+  // SPEC 0012 §10.1: a zone needs a sphere cast at a point.
+  if (worldEffects.some((effect) => effect.kind === "createZone") && !(isRecord(definition.target)
+    && definition.target.kind === "area" && isRecord(definition.target.shape) && isNonEmptyString(definition.target.shape.radiusInches))) return false;
   // SPEC 0012 §10: a condition held by concentration needs the spell's
   // concentration, and a repeated save needs the save it repeats.
   if (worldEffects.some((effect) => isRecord(effect.lifecycle)
@@ -4515,6 +4552,7 @@ function invokeAbility(
     return rejected("invalidRulesInput", "The creature's condition prevents taking this action.");
   }
   if (isSpellDefinition(definition) && cannotCastInArmor(state, source)) return armorSpellcastingRejection();
+  if (isSpellDefinition(definition) && verbalCastingSilenced(state, source, definition)) return silencedSpellcastingRejection();
   const itemEntryUse = activation.kind === "useObject"
     && Array.isArray(definition.costs)
     && definition.costs.some((cost) => isRecord(cost)
@@ -7889,6 +7927,7 @@ function readyAction(
     return rejected("invalidRulesInput", "Only a spell with a casting time of one action can be readied.");
   }
   if (cannotCastInArmor(state, source)) return armorSpellcastingRejection();
+  if (verbalCastingSilenced(state, source, definition)) return silencedSpellcastingRejection();
   const spent = spendCosts(state, entityId(source), sourcePatch, definition);
   if (spent === undefined) return rejected("insufficientResource", "The readied spell slot is unavailable.");
   ready.spellAlreadyCast = true;

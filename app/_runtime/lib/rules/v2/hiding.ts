@@ -3,6 +3,7 @@ import { coverLevel, type CoverLevel } from "../profiles/combat-geometry";
 import type { RuntimeProfileManifest } from "../profiles/types";
 import { activeEncounter } from "./combat-encounters";
 import { weaponDamageDieFrom } from "./effect-modifiers";
+import { zoneBlocksSight } from "./zone-effects";
 import { conditionAbilityCheck, conditionMechanics, conditionSourceRefs, type ConditionRollMode } from "./condition-mechanics";
 import { passivePerception } from "./concealment";
 import type { AuthoritativeWorldState, EventEnvelope, JsonRecord } from "./model";
@@ -108,6 +109,9 @@ export function hideCover(state: AuthoritativeWorldState, observerId: string, hi
  * unconscious, dead) or the hider is behind full cover from it. */
 export function perceptionCoverAdjustment(state: AuthoritativeWorldState, perceiverId: string, hiderId: string): number | undefined {
   if (!conditionMechanics(state, perceiverId).canSee) return undefined;
+  // SRD 5.1 Fog Cloud: no one sees into or through a heavily obscured area.
+  const perceiver = state.combatRuntime.entities[perceiverId], hider = state.combatRuntime.entities[hiderId];
+  if (perceiver !== undefined && hider !== undefined && zoneBlocksSight(state, perceiver, hider)) return undefined;
   const cover = hideCover(state, perceiverId, hiderId);
   return cover === "full" ? undefined : PERCEPTION_COVER_ADJUSTMENT[cover];
 }

@@ -2524,6 +2524,12 @@ function conditionEffectClaim(event: EventEnvelope, payload: JsonRecord, range: 
     const lasting = durationText();
     if (lasting === undefined) return undefined;
     description = `目标的${CONDITION_LABELS[effect.condition]}${level}效果${ended ? "已经结束" : "已生效"}。${lasting}`;
+  } else if (effect.kind === "zone" && isRecord(effect.zone) && ZONE_LABELS[String(effect.zone.kind)] !== undefined) {
+    // SPEC 0012 §10.1: a zone, told by what fills it and how large it is.
+    const lasting = durationText(), radius = finiteNumber(Number(effect.radiusInches));
+    if (lasting === undefined || radius === undefined) return undefined;
+    const label = ZONE_LABELS[String(effect.zone.kind)];
+    description = ended ? `那片${label}已经消失。` : `一片半径 ${radius / 12} 尺的${label}已经形成。${lasting}`;
   } else if (modifierLabel !== undefined) {
     // SPEC 0012 §10.1: a modifier effect, told by what it changes.
     const lasting = durationText();
@@ -2537,6 +2543,7 @@ function conditionEffectClaim(event: EventEnvelope, payload: JsonRecord, range: 
     viewerRefs: [targetRef], materialVisibilityPolicyRef: stringField(effect, "visibilityPolicyId"),
   }), kind: "mechanicalOutcome", targetRefs: [targetRef], outcomeCode: ended ? "effectEnded" : "effectApplied", summary: description };
 }
+const ZONE_LABELS: Readonly<Record<string, string>> = Object.freeze({ heavilyObscured: "浓雾（重度遮蔽）", silence: "沉默区域" });
 const D20_ROLL_LABELS: Readonly<Record<string, string>> = Object.freeze({ attack: "攻击检定", check: "属性检定", save: "豁免检定" });
 function modifierEffectLabel(modifier: JsonRecord): string | undefined {
   const amount = finiteNumber(modifier.amount), sides = finiteNumber(modifier.sides);

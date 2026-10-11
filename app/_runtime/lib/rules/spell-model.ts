@@ -117,6 +117,8 @@ export type SpellEffectDefinition = {
   /** SRD acts that end the effect early on its target (SPEC 0012 §10.1). */
   endsWhen?: readonly ("bonusDieUsed" | "harmedBySourceSide" | "targetAttacked" | "targetAttacksOrCasts" | "targetDonsArmor")[];
   modifier?: SpellModifier;
+  /** The area the effect fills for the spell's duration (SPEC 0012 §10.1). */
+  zone?: { kind: "heavilyObscured" | "silence" };
 };
 
 export type SpellResolution = {
@@ -145,6 +147,8 @@ export type SpellResolution = {
 export type SpellDefinition = {
   id: string;
   level: SpellLevel;
+  /** SRD 5.1 components: Verbal, Somatic, Material (SPEC 0012 §9.2). */
+  components: readonly ("V" | "S" | "M")[];
   actionCost: SpellActionCost;
   castingSeconds: number;
   ritual?: boolean;

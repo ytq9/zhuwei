@@ -5,6 +5,7 @@ import { isNonEmptyString, isRecord } from "./validation";
 import { movementApproachesEntity, pathLengthMilliInches } from "../profiles/combat-geometry";
 import { armorRollDisadvantage } from "./armor-proficiency";
 import { hitPointMaximumBonus, speedModifierInches } from "./effect-modifiers";
+import { entirelySilenced } from "./zone-effects";
 
 /** SRD 5.1, Appendix PH-A, pp. 358–359 (2014 conditions). These are
  * read-only consequences. The action/event owner commits HP, death, dropped
@@ -72,7 +73,8 @@ export function conditionMechanics(state: AuthoritativeWorldState, entityId: str
     speechFaltering: has("stunned"),
     unawareOfSurroundings: dead || petrified || has("unconscious"),
     canSee: !dead && !petrified && !has("unconscious") && !has("blinded"),
-    canHear: !dead && !petrified && !has("unconscious") && !has("deafened"),
+    // SRD 5.1 Silence: entirely inside the sphere, a creature is deafened.
+    canHear: !dead && !petrified && !has("unconscious") && !has("deafened") && !entirelySilenced(state, entityId),
     speedIsZero, speedHalved: exhaustion >= 2,
     hitPointMaximumHalved: exhaustion >= 4,
     cannotBenefitFromSpeedBonus: grappled || has("restrained"),
@@ -273,7 +275,9 @@ export function conditionDamageDefense(state: AuthoritativeWorldState, entityId:
   const facts = conditionMechanics(state, entityId);
   const base = state.combatRuntime.entities[entityId]?.damageDefenses;
   const contains = (key: string) => isRecord(base) && Array.isArray(base[key]) && base[key].includes(damageType);
-  return { immune: contains("immune") || (facts.petrified && damageType === "poison"),
+  // SRD 5.1 Silence: a creature entirely inside is immune to thunder damage.
+  return { immune: contains("immune") || (facts.petrified && damageType === "poison")
+      || (damageType === "thunder" && entirelySilenced(state, entityId)),
     resistant: contains("resistant") || facts.petrified,
     vulnerable: contains("vulnerable") };
 }

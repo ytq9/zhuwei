@@ -302,16 +302,18 @@ function spellcastingAbility(build: JsonRecord, spellId: string): "int" | "wis" 
 }
 
 function activation(definition: SpellDefinition, slotLevel: number = definition.level): JsonRecord | undefined {
+  // SPEC 0012 §9.2: the components casting needs, which Silence can deny.
+  const components = [...definition.components].sort();
   if (definition.actionCost === "action") {
-    return { kind: "actionSpell", spellLevel: String(slotLevel),
+    return { kind: "actionSpell", spellLevel: String(slotLevel), components,
       ...(definition.castingSeconds > 6 || definition.ritual === true
         ? { castingTimeMicros: String(definition.castingSeconds * 1_000_000), ritual: definition.ritual === true } : {}) };
   }
   if (definition.actionCost === "bonusAction") {
-    return { kind: "bonusActionSpell", spellLevel: String(slotLevel) };
+    return { kind: "bonusActionSpell", spellLevel: String(slotLevel), components };
   }
   if (definition.actionCost === "reaction") {
-    return { kind: "reactionSpell", spellLevel: String(slotLevel) };
+    return { kind: "reactionSpell", spellLevel: String(slotLevel), components };
   }
   return undefined;
 }
@@ -384,6 +386,11 @@ function compiledSpellEffect(source: SpellDefinition, effect: SpellEffectDefinit
             ? { kind: effect.modifier.kind, sides: effect.modifier.sides, rolls: [...effect.modifier.rolls].sort() }
             : effect.modifier.kind === "weaponDamageDieFromSource" ? { kind: effect.modifier.kind, sides: effect.modifier.sides }
               : { kind: effect.modifier.kind };
+  if (effect.zone !== undefined && duration !== undefined) {
+    const kept = lifecycle(false);
+    return { kind: "createZone", tag: effect.tag, label: effect.label, zone: { kind: effect.zone.kind }, duration,
+      ...(Object.keys(kept).length === 0 ? {} : { lifecycle: kept }) };
+  }
   if (modifier !== undefined && duration !== undefined) {
     const kept = lifecycle(false);
     return { kind: "grantModifier", tag: effect.tag, label: effect.label, modifier, duration,

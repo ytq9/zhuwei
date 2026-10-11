@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { canonicalSha256 } from "../../../app/_runtime/lib/rules/profiles/canonical.ts";
-import { registeredAbilityRecord } from "../../../app/_runtime/lib/rules/profiles/ability-compiler.ts";
+import { compileAbilityDefinition, registeredAbilityRecord } from "../../../app/_runtime/lib/rules/profiles/ability-compiler.ts";
 import { buildPlayerCombatEntity, planPlayerAbilityCatalog, synchronizePlayerCombatEntity } from "../../../app/_runtime/lib/rules/v2/character-abilities.ts";
 import { createAuthoredProbeFixture, PROBE_ACTOR as ACTOR, PROBE_TARGET as OTHER } from "../../../tools/lib/vnext-authored-probe-fixture.mjs";
 import { hashWorldState } from "../../../app/_runtime/lib/rules/v2/validation.ts";
@@ -41,16 +41,33 @@ function invoke(f, parameters) {
     sourceEntityId: ACTOR, abilityRef: f.abilityRef, parameters });
 }
 
-for (const scenario of [
-  { spellId: "spiritual", parameters: { targetEntityId: OTHER } },
-  { spellId: "silence", parameters: { areaOrigin: { x: "100", y: "100", elevation: "0" } } },
-  { spellId: "silence", ritual: true,
-    parameters: { ritual: true, areaOrigin: { x: "100", y: "100", elevation: "0" } } },
-  { spellId: "command", parameters: { targetEntityId: OTHER } },
-]) {
-  test(`registered ${scenario.spellId}${scenario.ritual ? " ritual" : ""} refuses missing effect execution before any cost, die, or success`, () => {
-    const f = fixture(scenario.spellId, scenario), before = structuredClone(f.state);
-    const result = invoke(f, scenario.parameters);
+// Catalog spells get their executors from ADR 0150 on, so the refusal is
+// shown with a spell registered the same way whose one effect Rules has no
+// mechanic for: cast at once, and as a ritual that would start a long casting.
+function unsupportedFixture(ritual) {
+  const f = fixture("cure");
+  const state = structuredClone(f.state);
+  const definition = { definitionId: `ability:${ACTOR}:spell:unsupported${ritual ? ":ritual" : ""}`, revision: "1",
+    rulesBasis: "srd5.1-2014", mechanicalKey: "spell:unsupported", sourceSpellId: "unsupported",
+    activation: { kind: "actionSpell", spellLevel: "1", components: ["V"], ...(ritual ? { castingTimeMicros: "6000000", ritual: true } : {}) },
+    target: { kind: "creature", count: "1", rangeInches: "720" }, costs: [{ kind: "spellSlot", level: "1", amount: "1" }],
+    effects: [{ tag: "unsupported", label: "没有执行机制的效果", kind: "special" }] };
+  const compiled = compileAbilityDefinition(definition);
+  assert.equal(compiled.ok, true, JSON.stringify(compiled));
+  state.combatRuntime.definitions[definition.definitionId] = registeredAbilityRecord(compiled.artifact);
+  state.combatRuntime.entities[ACTOR].abilityRefs = [...state.combatRuntime.entities[ACTOR].abilityRefs, definition.definitionId].sort();
+  const genesis = { ...f.genesis, initialState: state, initialStateHash: hashWorldState(state) };
+  delete genesis.genesisHash;
+  genesis.genesisHash = canonicalSha256(genesis);
+  const replay = f.runtime.replay(genesis, []);
+  assert.equal(replay.kind, "replayed");
+  return { ...f, genesis, state: replay.state, abilityRef: definition.definitionId };
+}
+
+for (const ritual of [false, true]) {
+  test(`a registered spell${ritual ? " cast as a ritual" : ""} with an effect Rules cannot carry out is refused before any cost, die, or success`, () => {
+    const f = unsupportedFixture(ritual), before = structuredClone(f.state);
+    const result = invoke(f, { targetEntityId: OTHER, ...(ritual ? { ritual: true } : {}) });
     assert.equal(result.kind, "rejected", JSON.stringify({ kind: result.kind, rejection: result.rejection }));
     assert.equal(result.rejection.code, "unsupportedOperation");
     assert.deepEqual(result.events, []);

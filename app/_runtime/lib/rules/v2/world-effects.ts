@@ -106,9 +106,41 @@ export type ModifierEffectRecord = JsonRecord & {
   visibilityFactId: string | null;
   lifecycle?: WorldEffectLifecycle;
 };
-/** A granted condition or a modifier: the effects with a duration, a
+/** SPEC 0012 §10.1: an area an effect fills for its duration (SRD Fog Cloud,
+ * Silence), a sphere frozen where it was cast. */
+export const ZONE_KINDS = ["heavilyObscured", "silence"] as const;
+export type ZoneKind = typeof ZONE_KINDS[number];
+export type ZoneEffectDefinition = {
+  kind: "createZone";
+  zone: { kind: ZoneKind };
+  duration: WorldEffectDuration;
+  lifecycle?: WorldEffectLifecycle;
+};
+export const ZONE_EFFECT_SCHEMA = "zhuwei.zone-effect/v1" as const;
+/** A zone keeps time and ends by its caster: `targetEntityId` is the caster. */
+export type ZoneEffectRecord = JsonRecord & {
+  schema: typeof ZONE_EFFECT_SCHEMA;
+  effectId: string;
+  kind: "zone";
+  zone: { kind: ZoneKind };
+  sourceRef: string;
+  sourceDefinitionRef: string;
+  targetEntityId: string;
+  sceneId: string;
+  origin: { x: string; y: string; elevation: string };
+  radiusInches: string;
+  duration: WorldEffectDuration;
+  startedAtFictionMicros: string;
+  pausedMicros: "0";
+  suspension: null;
+  expiresAt: Expiry;
+  visibilityPolicyId: string;
+  visibilityFactId: string | null;
+  lifecycle?: WorldEffectLifecycle;
+};
+/** A granted condition, a modifier or a zone: the effects with a duration, a
  * concentration link and early endings. */
-export type LastingEffectRecord = WorldEffectRecord | ModifierEffectRecord;
+export type LastingEffectRecord = WorldEffectRecord | ModifierEffectRecord | ZoneEffectRecord;
 export type WorldEffectEndDraft = {
   eventType: "EffectEnded";
   payload: { effectId: string; targetEntityId: string; reason: string };
@@ -247,13 +279,31 @@ function modifierRecordDefinition(effect: ModifierEffectRecord): ModifierEffectD
     ...(effect.lifecycle === undefined ? {} : { lifecycle: effect.lifecycle }) };
 }
 
+export function zoneEffectDefinition(value: unknown): ZoneEffectDefinition | undefined {
+  if (!isRecord(value) || !hasOnlyKeys(value, ["duration", "kind", "zone"], ["label", "lifecycle", "tag"])
+    || value.kind !== "createZone" || !isRecord(value.zone) || !hasExactKeys(value.zone, ["kind"])
+    || !(ZONE_KINDS as readonly unknown[]).includes(value.zone.kind)
+    || !isWorldEffectDuration(value.duration)
+    || !(value.tag === undefined || isNonEmptyString(value.tag))
+    || !(value.label === undefined || isNonEmptyString(value.label))
+    || !(value.lifecycle === undefined || (isWorldEffectLifecycle(value.lifecycle)
+      && value.lifecycle.repeatSave === undefined && value.lifecycle.endsWhen === undefined))) return undefined;
+  const { tag: _tag, label: _label, ...mechanic } = structuredClone(value);
+  return mechanic as ZoneEffectDefinition;
+}
+
+function zoneRecordDefinition(effect: ZoneEffectRecord): ZoneEffectDefinition {
+  return { kind: "createZone", zone: effect.zone, duration: effect.duration,
+    ...(effect.lifecycle === undefined ? {} : { lifecycle: effect.lifecycle }) };
+}
+
 export function isWorldEffectRecordCandidate(value: unknown): boolean {
-  return isRecord(value) && (value.schema === WORLD_EFFECT_SCHEMA || value.schema === MODIFIER_EFFECT_SCHEMA);
+  return isRecord(value) && [WORLD_EFFECT_SCHEMA, MODIFIER_EFFECT_SCHEMA, ZONE_EFFECT_SCHEMA].includes(String(value.schema) as never);
 }
 
 function registeredEffectMatches(
   state: AuthoritativeWorldState, sourceDefinitionRef: string,
-  definition: WorldEffectDefinition | WorldEffectEndDefinition | ModifierEffectDefinition,
+  definition: WorldEffectDefinition | WorldEffectEndDefinition | ModifierEffectDefinition | ZoneEffectDefinition,
 ): boolean {
   const source = state.campaignRuntime.definitions[sourceDefinitionRef]
     ?? state.combatRuntime.definitions[sourceDefinitionRef];
@@ -262,7 +312,8 @@ function registeredEffectMatches(
   return source.mechanicGraph.operations.some((operation) => {
     if (!isRecord(operation) || operation.family !== "Effect" || !isRecord(operation.input)) return false;
     const input = operation.input.effect ?? operation.input;
-    const frozen = worldEffectDefinition(input) ?? worldEffectEndDefinition(input) ?? modifierEffectDefinition(input);
+    const frozen = worldEffectDefinition(input) ?? worldEffectEndDefinition(input) ?? modifierEffectDefinition(input)
+      ?? zoneEffectDefinition(input);
     return frozen !== undefined && sameCanonical(frozen, definition);
   });
 }
@@ -359,8 +410,36 @@ export function isModifierEffectRecord(value: unknown): value is ModifierEffectR
   return definition !== undefined && expiryMatchesDuration(value as LastingEffectRecord, definition.duration);
 }
 
+const integerString = (value: unknown): value is string => typeof value === "string" && /^-?(0|[1-9][0-9]*)$/.test(value) && value !== "-0";
+
+export function isZoneEffectRecord(value: unknown): value is ZoneEffectRecord {
+  if (!isRecord(value) || !hasOnlyKeys(value, [
+    "duration", "effectId", "expiresAt", "kind", "origin", "pausedMicros", "radiusInches", "sceneId", "schema",
+    "sourceDefinitionRef", "sourceRef", "startedAtFictionMicros", "suspension", "targetEntityId",
+    "visibilityFactId", "visibilityPolicyId", "zone",
+  ], ["lifecycle"]) || value.schema !== ZONE_EFFECT_SCHEMA || value.kind !== "zone"
+    || ![value.effectId, value.sourceRef, value.sourceDefinitionRef, value.targetEntityId, value.sceneId].every(isNonEmptyString)
+    || value.targetEntityId !== value.sourceRef
+    || !isRecord(value.origin) || !hasExactKeys(value.origin, ["elevation", "x", "y"])
+    || ![value.origin.x, value.origin.y, value.origin.elevation].every(integerString)
+    || !unsignedMicros(value.radiusInches, true)
+    || !unsignedMicros(value.startedAtFictionMicros) || value.pausedMicros !== "0" || value.suspension !== null
+    || !validExpiry(value.expiresAt)
+    || spatialVisibilityPolicyKind(value.visibilityPolicyId) === undefined
+    || !(value.visibilityFactId === null || isNonEmptyString(value.visibilityFactId))) return false;
+  const definition = zoneEffectDefinition(zoneRecordDefinition(value as ZoneEffectRecord));
+  return definition !== undefined && expiryMatchesDuration(value as LastingEffectRecord, definition.duration);
+}
+
 export function isLastingEffectRecord(value: unknown): value is LastingEffectRecord {
-  return isWorldEffectRecord(value) || isModifierEffectRecord(value);
+  return isWorldEffectRecord(value) || isModifierEffectRecord(value) || isZoneEffectRecord(value);
+}
+
+/** The zones of a kind in a scene, in a stable order. */
+export function zoneEffectsIn(state: AuthoritativeWorldState, sceneId: string, kind: ZoneKind): ZoneEffectRecord[] {
+  return Object.values(state.combatRuntime.effects)
+    .filter((effect): effect is ZoneEffectRecord => isZoneEffectRecord(effect) && effect.sceneId === sceneId && effect.zone.kind === kind)
+    .sort((left, right) => left.effectId.localeCompare(right.effectId));
 }
 
 /** The modifiers on a target, in a stable order. */
@@ -513,6 +592,45 @@ export function planModifierEffect(state: AuthoritativeWorldState, input: {
   };
   if (!isModifierEffectRecord(effectRecord) || state.combatRuntime.effects[effectRecord.effectId] !== undefined) {
     return { kind: "rejected", message: "The modifier effect identity is invalid." };
+  }
+  return { kind: "applied", effectRecord };
+}
+
+/** SPEC 0012 §10.1: the zone a frozen Ability fills, a sphere around the
+ * area origin it was cast at. It keeps its caster's clock. */
+export function planZoneEffect(state: AuthoritativeWorldState, input: {
+  rootActionId: string;
+  sourceRef: string;
+  sourceDefinitionRef: string;
+  effect: unknown;
+  index: number;
+  sceneId: string;
+  origin: unknown;
+  radiusInches: unknown;
+}): { kind: "applied"; effectRecord: ZoneEffectRecord } | { kind: "rejected"; message: string } {
+  const definition = zoneEffectDefinition(input.effect);
+  const now = entityInstant(state, input.sourceRef);
+  if (definition === undefined || now === undefined
+    || ![input.rootActionId, input.sourceRef, input.sourceDefinitionRef, input.sceneId].every(isNonEmptyString)
+    || !Number.isSafeInteger(input.index) || input.index < 0
+    || !registeredEffectMatches(state, input.sourceDefinitionRef, definition)) {
+    return { kind: "rejected", message: "The zone effect or its caster is unavailable." };
+  }
+  const expiresAt = expiryFor(state, input.sourceRef, input.sourceRef, definition.duration, now, input.rootActionId);
+  if (expiresAt === undefined) return { kind: "rejected", message: "The effect duration has no authoritative subject." };
+  const origin = isRecord(input.origin) ? { x: String(input.origin.x), y: String(input.origin.y), elevation: String(input.origin.elevation) } : undefined;
+  const effectRecord: ZoneEffectRecord = {
+    schema: ZONE_EFFECT_SCHEMA,
+    effectId: `effect:${canonicalSha256({ rootActionId: input.rootActionId, sourceRef: input.sourceRef,
+      sourceDefinitionRef: input.sourceDefinitionRef, zone: true, index: input.index }).slice("sha256:".length)}`,
+    kind: "zone", zone: definition.zone, sourceRef: input.sourceRef, sourceDefinitionRef: input.sourceDefinitionRef,
+    targetEntityId: input.sourceRef, sceneId: input.sceneId, origin: origin!, radiusInches: String(input.radiusInches),
+    duration: definition.duration, startedAtFictionMicros: now, pausedMicros: "0", suspension: null, expiresAt,
+    visibilityPolicyId: "visibility:scene-observers", visibilityFactId: null,
+    ...(definition.lifecycle === undefined ? {} : { lifecycle: definition.lifecycle }),
+  };
+  if (origin === undefined || !isZoneEffectRecord(effectRecord) || state.combatRuntime.effects[effectRecord.effectId] !== undefined) {
+    return { kind: "rejected", message: "The zone effect's place or identity is invalid." };
   }
   return { kind: "applied", effectRecord };
 }
@@ -759,6 +877,18 @@ export function applyWorldEffectEvent(state: AuthoritativeWorldState, event: Eve
     }
     state.combatRuntime.effects[effect.effectId] = structuredClone(effect);
     synchronizeWorldEffectSuspensions(state, effect.targetEntityId);
+    return true;
+  }
+  if (event.eventType === "EffectApplied" && isRecord(payload.effect) && payload.effect.schema === ZONE_EFFECT_SCHEMA) {
+    const effect = payload.effect;
+    if (!isZoneEffectRecord(effect) || state.combatRuntime.effects[effect.effectId] !== undefined
+      || entityInstant(state, effect.sourceRef) !== effect.startedAtFictionMicros
+      || !sameCanonical(effect.expiresAt, expiryFor(state,
+        effect.sourceRef, effect.sourceRef, effect.duration, effect.startedAtFictionMicros, event.rootActionId))
+      || !registeredEffectMatches(state, effect.sourceDefinitionRef, zoneRecordDefinition(effect))) {
+      throw new RulesValidationError("Zone effect does not match its frozen authoritative caster.");
+    }
+    state.combatRuntime.effects[effect.effectId] = structuredClone(effect);
     return true;
   }
   if (event.eventType === "EffectApplied" && isRecord(payload.effect) && payload.effect.schema === MODIFIER_EFFECT_SCHEMA) {

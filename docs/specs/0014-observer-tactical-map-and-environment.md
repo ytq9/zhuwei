@@ -49,6 +49,7 @@ gates:
   - "tests/product/map/tactical-places.test.mjs"
   - "tests/product/map/combat-controls-read-model.test.mjs"
   - "tests/kp/combat/area-preview.room.test.ts"
+  - "tests/kp/combat/spell-zone-effects.test.mjs"
 ---
 # SPEC 0014：观察者战术地图、权威环境与空间意图
 
