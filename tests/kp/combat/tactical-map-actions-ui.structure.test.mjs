@@ -123,11 +123,11 @@ async function withTable(snap, run, respond = () => ({ action: "committed", narr
       const send = renderer.root.findByProps({ "aria-label": "发送行动" });
       await act(async () => { send.props.onClick(); await settle(); });
     };
-    const key = async (name) => {
+    const key = async (name, { shiftKey = false } = {}) => {
       const svg = map().find((node) => node.type === "svg" && node.props.role === "group");
       const target = {};
       await act(async () => {
-        svg.props.onKeyDown({ key: name, target, currentTarget: target, preventDefault() {} });
+        svg.props.onKeyDown({ key: name, shiftKey, target, currentTarget: target, preventDefault() {} });
         await settle();
       });
     };
@@ -616,5 +616,31 @@ test("picking shows the range ring and the area's shape as a sketch", async () =
     assert.equal(cube.props["data-tactical-area-tentative"], "false");
     // 15 feet from the actor (120, 180) toward the picked square on its right.
     assert.equal(cube.props.points, "120,270 300,270 300,90 120,90");
+  });
+});
+
+// SPEC 0014 §2.1: only the display snaps. A picked point lands on a quarter
+// cell (2.5 feet); an arrow moves the cursor a cell and Shift a quarter.
+test("a picked point snaps to a quarter cell and Shift moves the keyboard cursor a quarter cell", async () => {
+  const { mapGestures } = await import("../../../app/_runtime/components/tactical-task.ts");
+  const { tacticalProjectionFixture } = await import("../../support/fixtures/tactical-map-v2.mjs");
+  const projection = tacticalProjectionFixture();
+  projection.encounter = null;
+  let task = { kind: "idle" };
+  const interaction = { task, setTask: (next) => { task = next; }, cursor: null, setCursor() {} };
+  mapGestures(projection, interaction, () => {}).pickPoint({ x: 166, y: 196 });
+  assert.deepEqual(task, { kind: "destination", point: { x: 180, y: 210 } });
+
+  const { compileSheet } = await import("../../../app/_runtime/lib/dnd/compute.ts");
+  await withTable(snapFor(compileSheet, { combat: false }), async ({ calls, one, press, key }) => {
+    await press({ "data-tactical-disclosure-trigger": "desktop" });
+    await key("ArrowRight", { shiftKey: true });
+    await key("ArrowDown", { shiftKey: true });
+    await key("Enter");
+    // The destination is drawn the size of the player's own space.
+    const destination = one({ "data-tactical-destination": "150,210" });
+    assert.equal(destination.props.width, 60);
+    await press({ "data-tactical-destination-submit": true });
+    assert.deepEqual(calls.at(-1).data.destination, { kind: "point", x: "150", y: "210" });
   });
 });

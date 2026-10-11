@@ -7,6 +7,7 @@ import {
   type TacticalKnownFeature,
   type TacticalKnownPlace,
   type TacticalLandform,
+  type TacticalMaterial,
   type TacticalPosition,
   type TacticalProjection,
   type TacticalZone,
@@ -21,6 +22,7 @@ import {
   entitySelectionKey,
   inches,
   mapGestures,
+  pickStep,
   playerEncounter,
   sceneBounds,
   selfPoint,
@@ -32,13 +34,98 @@ import {
 import { CONDITION_LABEL } from "@/lib/dnd/condition-labels";
 import { cn } from "@/lib/utils";
 
+/** SPEC 0014 §8: each kind drawn as what it is -- a wall as solid masonry,
+ * a door as a leaf in its opening, an object as a small solid piece, ground
+ * as a tint over the floor. The material, when the map names it, sets the
+ * colour of a wall, door or object. */
 const FEATURE_STYLE: Record<TacticalKnownFeature["kind"], string> = {
-  barrier: "fill-stone-500/45 stroke-stone-200",
-  terrain: "fill-brass/20 stroke-amber-300",
-  interactable: "fill-primary/15 stroke-primary/80",
-  destructible: "fill-danger/35 stroke-red-200",
-  portal: "fill-moss/45 stroke-emerald-100",
+  barrier: "fill-stone-500 stroke-stone-200",
+  terrain: "fill-amber-200/10 stroke-amber-200/50",
+  interactable: "fill-amber-300/80 stroke-amber-50",
+  destructible: "fill-amber-800 stroke-amber-300",
+  portal: "fill-amber-700 stroke-amber-200",
 };
+
+const MATERIAL_STYLE: Record<TacticalMaterial, string> = {
+  brick: "fill-red-900 stroke-red-200",
+  earth: "fill-amber-950 stroke-amber-500",
+  metal: "fill-slate-500 stroke-slate-100",
+  mud: "fill-yellow-950 stroke-yellow-600",
+  rope: "fill-amber-600 stroke-amber-100",
+  stone: "fill-stone-500 stroke-stone-200",
+  wood: "fill-amber-800 stroke-amber-200",
+};
+
+/** Ground without a landform: rubble, mud, or a plain patch. */
+function terrainStyle(feature: TacticalKnownFeature): string {
+  if (feature.terrain === "rubble") return "fill-stone-600/40 stroke-stone-400/70";
+  if (feature.material === "mud") return "fill-yellow-950/60 stroke-yellow-700/70";
+  if (feature.material === "earth") return "fill-amber-950/50 stroke-amber-700/60";
+  if (feature.material === "stone") return "fill-stone-500/25 stroke-stone-400/60";
+  return FEATURE_STYLE.terrain;
+}
+
+function featureStyle(feature: TacticalKnownFeature): string {
+  if (feature.landform !== undefined) return LANDFORM_STYLE[feature.landform];
+  if (feature.kind === "terrain") return terrainStyle(feature);
+  if (feature.kind === "portal" && feature.state === "open") return "fill-emerald-300/10 stroke-emerald-200";
+  if (feature.state === "destroyed") return "fill-stone-700/40 stroke-stone-400";
+  return feature.material === undefined ? FEATURE_STYLE[feature.kind] : MATERIAL_STYLE[feature.material];
+}
+
+/** The surface inside a feature: coursed stones on a wall, planks on wood,
+ * bars on metal, scattered stones on rubble and ripples on mud. */
+const FEATURE_TEXTURE = {
+  masonry: { size: 20, path: "M 0 0.5 H 20 M 0 10.5 H 20 M 5 0 V 10 M 15 10 V 20", className: "stroke-black/30 stroke-[1.5]" },
+  planks: { size: 14, path: "M 0 7 H 14", className: "stroke-black/30 stroke-[1.5]" },
+  bars: { size: 12, path: "M 6 0 V 12", className: "stroke-black/40 stroke-[2]" },
+  rubble: { size: 22, path: "M 3 4 l 4 1 -2 3 z M 13 12 l 5 2 -3 3 z M 6 16 l 3 0 -1 3 z", className: "fill-stone-300/50 stroke-none" },
+  mud: { size: 24, path: "M 2 8 q 4 -3 8 0 M 13 18 q 4 -3 8 0", className: "stroke-yellow-600/50 stroke-[1.5]" },
+} as const;
+type FeatureTexture = keyof typeof FEATURE_TEXTURE;
+const FEATURE_TEXTURES = Object.keys(FEATURE_TEXTURE) as FeatureTexture[];
+
+function featureTexture(feature: TacticalKnownFeature): FeatureTexture | null {
+  if (feature.landform !== undefined) return null;
+  if (feature.terrain === "rubble" || feature.state === "destroyed") return "rubble";
+  if (feature.kind === "terrain") return feature.material === "mud" ? "mud" : null;
+  if (feature.kind === "portal" && feature.state === "open") return null;
+  if (feature.material === "metal") return feature.kind === "interactable" ? null : "bars";
+  if (feature.material === "wood") return "planks";
+  if (feature.kind === "barrier") return "masonry";
+  if (feature.kind === "portal" || feature.kind === "destructible") return "planks";
+  return null;
+}
+
+/** The order features lie on the map, bottom to top: the ground (terrain,
+ * ditches, water, steps), objects standing on it, then what walls a space
+ * in (walls, doors, low walls, cliffs). Within a layer the larger shape lies
+ * beneath, so a small object on a large patch stays in view. */
+const FEATURE_LAYER = { ground: 0, object: 1, structure: 2 } as const;
+
+type LayeredFeature = Pick<TacticalKnownFeature, "id" | "kind" | "landform" | "polygon">;
+
+function featureLayer(feature: LayeredFeature): keyof typeof FEATURE_LAYER {
+  if (feature.landform === "ditch" || feature.landform === "water" || feature.landform === "step") return "ground";
+  if (feature.landform === "lowWall" || feature.landform === "cliff") return "structure";
+  if (feature.kind === "terrain") return "ground";
+  return feature.kind === "barrier" || feature.kind === "portal" ? "structure" : "object";
+}
+
+function polygonArea(points: Array<{ x: string; y: string }>): number {
+  let twice = 0;
+  points.forEach((point, index) => {
+    const next = points[(index + 1) % points.length];
+    twice += inches(point.x) * inches(next.y) - inches(next.x) * inches(point.y);
+  });
+  return Math.abs(twice) / 2;
+}
+
+function layeredFeatures<Feature extends LayeredFeature>(features: Feature[]): Feature[] {
+  return [...features].sort((left, right) => FEATURE_LAYER[featureLayer(left)] - FEATURE_LAYER[featureLayer(right)]
+    || polygonArea(right.polygon) - polygonArea(left.polygon)
+    || left.id.localeCompare(right.id));
+}
 
 const RELATION_STYLE: Record<TacticalEntity["relation"], string> = {
   self: "fill-brass/80 stroke-white",
@@ -47,7 +134,7 @@ const RELATION_STYLE: Record<TacticalEntity["relation"], string> = {
   neutral: "fill-stone-500/75 stroke-stone-100",
 };
 
-const ZONE_STYLE = "fill-violet-600/25 stroke-violet-200";
+const ZONE_STYLE = "fill-violet-500/20 stroke-violet-200";
 
 /** SPEC 0014 §4 (ADR 0098): a feature with a landform is drawn as that
  * ground -- each its own fill, edge and texture -- whatever its kind. */
@@ -333,50 +420,68 @@ function featureSelectionKey(featureId: string): string {
   return `feature:${featureId}`;
 }
 
-type FeatureCaption = { text: string; x: number; y: number };
+type FeatureCaption = { text: string; x: number; y: number; size: number };
 
-/** Display-only label placement: keep names apart and off the visible
- * creature tokens. These rectangles never participate in movement. */
-function featureCaptions(projection: TacticalProjection, selectedKey: string | null): Map<string, FeatureCaption> {
+/** How large map text is drawn, in scene inches, so names read at about
+ * the same size on a small room and a wide yard. */
+function mapTextScale(viewWidth: number, viewHeight: number): number {
+  return Math.max(0.5, Math.max(viewWidth, viewHeight) / 1200);
+}
+
+/** The cover mark's radius at this text scale. */
+function coverMarkRadius(scale: number): number {
+  return 13 * scale;
+}
+
+/** Display-only label placement: every known feature is named where its
+ * name fits clear of the creature tokens, the cover marks and the names
+ * already placed; doors and objects are placed first and the selected
+ * feature is always named. These rectangles never participate in movement. */
+function featureCaptions(projection: TacticalProjection, selectedKey: string | null, scale: number): Map<string, FeatureCaption> {
   const bounds = sceneBounds(projection);
+  const size = 26 * scale;
+  const pad = 6 * scale;
   const occupied = [projection.self, ...projection.visibleEntities].map(entity => ({
-    left: inches(entity.position.x) - inches(entity.footprint.width) / 2 - 12,
-    right: inches(entity.position.x) + inches(entity.footprint.width) / 2 + 12,
-    top: inches(entity.position.y) - inches(entity.footprint.depth) / 2 - 12,
-    bottom: inches(entity.position.y) + inches(entity.footprint.depth) / 2 + 12,
+    left: inches(entity.position.x) - inches(entity.footprint.width) / 2 - pad,
+    right: inches(entity.position.x) + inches(entity.footprint.width) / 2 + pad,
+    top: inches(entity.position.y) - inches(entity.footprint.depth) / 2 - pad,
+    bottom: inches(entity.position.y) + inches(entity.footprint.depth) / 2 + pad,
   }));
+  const mark = coverMarkRadius(scale);
   for (const feature of projection.knownFeatures) if (COVER_MARK[feature.cover]) {
     const center = polygonCenter(feature.polygon);
-    occupied.push({ left: center.x - 24, right: center.x + 24, top: center.y - 24, bottom: center.y + 24 });
+    occupied.push({ left: center.x - mark, right: center.x + mark, top: center.y - mark, bottom: center.y + mark });
   }
+  const priority = (feature: TacticalKnownFeature) => featureSelectionKey(feature.id) === selectedKey ? 0
+    : feature.kind === "portal" || feature.kind === "interactable" ? 1 : 2;
+  const features = [...projection.knownFeatures].sort((left, right) => priority(left) - priority(right)
+    || polygonArea(left.polygon) - polygonArea(right.polygon));
   const result = new Map<string, FeatureCaption>();
-  const features = projection.knownFeatures.filter(feature => featureSelectionKey(feature.id) === selectedKey
-    || feature.kind === "portal" || feature.kind === "interactable");
   for (const feature of features) {
     const chars = Array.from(feature.label);
     const text = chars.slice(0, 8).join("") + (chars.length > 8 ? "…" : "");
-    const halfWidth = Array.from(text).length * 16 + 8;
+    const halfWidth = (Array.from(text).length * size) / 2 + pad;
     const center = polygonCenter(feature.polygon);
     const xs = feature.polygon.map(p => inches(p.x)), ys = feature.polygon.map(p => inches(p.y));
+    const inside = Math.max(...xs) - Math.min(...xs) > halfWidth * 2 && Math.max(...ys) - Math.min(...ys) > size * 1.4;
     const points = [
-      { x: center.x, y: Math.min(...ys) - 14 },
-      { x: center.x, y: Math.max(...ys) + 34 },
-      { x: center.x, y: center.y + 12 },
-      { x: Math.min(...xs) - halfWidth - 12, y: center.y + 12 },
-      { x: Math.max(...xs) + halfWidth + 12, y: center.y + 12 },
-      { x: center.x, y: Math.min(...ys) - 54 },
-      { x: center.x, y: Math.max(...ys) + 74 },
+      ...(inside ? [{ x: center.x, y: center.y + size * 0.35 }] : []),
+      { x: center.x, y: Math.min(...ys) - pad },
+      { x: center.x, y: Math.max(...ys) + size + pad },
+      { x: Math.min(...xs) - halfWidth - pad, y: center.y + size * 0.35 },
+      { x: Math.max(...xs) + halfWidth + pad, y: center.y + size * 0.35 },
     ].map(point => {
-      const x = Math.max(bounds.minX + halfWidth + 8, Math.min(bounds.maxX - halfWidth - 8, point.x));
-      const y = Math.max(bounds.minY + 38, Math.min(bounds.maxY - 12, point.y));
-      const box = { left: x - halfWidth, right: x + halfWidth, top: y - 34, bottom: y + 10 };
+      const x = Math.max(bounds.minX + halfWidth, Math.min(bounds.maxX - halfWidth, point.x));
+      const y = Math.max(bounds.minY + size + pad, Math.min(bounds.maxY - pad, point.y));
+      const box = { left: x - halfWidth, right: x + halfWidth, top: y - size, bottom: y + pad };
       const collisions = occupied.filter(other => box.left < other.right && box.right > other.left
         && box.top < other.bottom && box.bottom > other.top).length;
-      return { x, y, box, score: collisions * 1_000_000 + Math.hypot(x - center.x, y - center.y) };
+      return { x, y, box, collisions, distance: Math.hypot(x - center.x, y - center.y) };
     });
-    const best = points.sort((a, b) => a.score - b.score)[0];
+    const best = points.sort((a, b) => a.collisions - b.collisions || a.distance - b.distance)[0];
+    if (best.collisions > 0 && priority(feature) !== 0) continue;
     occupied.push(best.box);
-    result.set(feature.id, { text, x: best.x, y: best.y });
+    result.set(feature.id, { text, x: best.x, y: best.y, size });
   }
   return result;
 }
@@ -429,6 +534,7 @@ function TacticalEntityMark({
   currentActor,
   selected,
   elevationLabel,
+  textScale,
   targeted = false,
   passThrough = false,
   onSelect,
@@ -438,6 +544,7 @@ function TacticalEntityMark({
   selected: boolean;
   /** The height beside the token (tokenElevationLabel). */
   elevationLabel: string | null;
+  textScale: number;
   targeted?: boolean;
   /** While the player picks a point, a pointer click reaches the ground. */
   passThrough?: boolean;
@@ -527,16 +634,62 @@ function TacticalEntityMark({
       {elevationLabel ? (
         <text
           data-elevation-label
-          x={x + width / 2 + 10}
-          y={y - depth / 2 - 8}
+          x={x + width / 2 + 4 * textScale}
+          y={y - depth / 2 - 4 * textScale}
+          fontSize={20 * textScale}
           textAnchor="start"
-          className="pointer-events-none fill-primary stroke-black/80 text-[20px] font-semibold [paint-order:stroke] [stroke-width:5px]"
+          className="pointer-events-none fill-primary stroke-black/80 font-semibold [paint-order:stroke] [stroke-width:4px]"
         >
           {elevationLabel}
         </text>
       ) : null}
     </g>
   );
+}
+
+/** The long axis of a feature's bounding box: a door's leaf runs along it. */
+function featureBox(points: Array<{ x: string; y: string }>) {
+  const xs = points.map((point) => inches(point.x));
+  const ys = points.map((point) => inches(point.y));
+  return { minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys) };
+}
+
+/** What sits inside a door or a crate: a closed door's leaf down the middle
+ * of its opening, a locked one's bolt across it, and a crate's brace. */
+function FeatureFittings({ feature }: { feature: TacticalKnownFeature }) {
+  const box = featureBox(feature.polygon);
+  const wide = box.maxX - box.minX >= box.maxY - box.minY;
+  const midX = (box.minX + box.maxX) / 2;
+  const midY = (box.minY + box.maxY) / 2;
+  if (feature.kind === "portal" && feature.landform === undefined && feature.state !== "open" && feature.state !== "destroyed") {
+    return (
+      <g data-feature-fitting="door" className="pointer-events-none">
+        <line
+          x1={wide ? box.minX : midX} y1={wide ? midY : box.minY}
+          x2={wide ? box.maxX : midX} y2={wide ? midY : box.maxY}
+          className="stroke-black/60 stroke-[2] [vector-effect:non-scaling-stroke]"
+        />
+        {feature.state === "locked" ? (
+          <line
+            data-feature-fitting="bolt"
+            x1={wide ? midX : box.minX} y1={wide ? box.minY : midY}
+            x2={wide ? midX : box.maxX} y2={wide ? box.maxY : midY}
+            className="stroke-black/70 stroke-[3] [vector-effect:non-scaling-stroke]"
+          />
+        ) : null}
+      </g>
+    );
+  }
+  if (feature.kind === "destructible" && feature.landform === undefined && feature.state !== "destroyed") {
+    return (
+      <path
+        data-feature-fitting="brace"
+        d={`M ${box.minX} ${box.minY} L ${box.maxX} ${box.maxY} M ${box.maxX} ${box.minY} L ${box.minX} ${box.maxY}`}
+        className="pointer-events-none fill-none stroke-black/45 stroke-[1.5] [vector-effect:non-scaling-stroke]"
+      />
+    );
+  }
+  return null;
 }
 
 function TacticalFeatureShape({
@@ -547,7 +700,7 @@ function TacticalFeatureShape({
   opaquePatternId,
   propagationPatternId,
   landformPatternId,
-  caption,
+  texturePatternId,
 }: {
   feature: TacticalKnownFeature;
   selected: boolean;
@@ -556,11 +709,10 @@ function TacticalFeatureShape({
   opaquePatternId: string;
   propagationPatternId: string;
   landformPatternId: (landform: TacticalLandform) => string;
-  caption?: FeatureCaption;
+  texturePatternId: (texture: FeatureTexture) => string;
 }) {
   const mechanics = featureMechanics(feature);
-  const center = polygonCenter(feature.polygon);
-  const coverMark = COVER_MARK[feature.cover];
+  const texture = featureTexture(feature);
   return (
     <g
       role="button"
@@ -570,6 +722,8 @@ function TacticalFeatureShape({
       data-feature-id={feature.id}
       data-feature-kind={feature.kind}
       data-feature-state={feature.state}
+      data-feature-layer={featureLayer(feature)}
+      data-feature-material={feature.material}
       data-impassable={String(feature.impassable)}
       data-opaque={String(feature.opaque)}
       data-cover={feature.cover}
@@ -580,7 +734,7 @@ function TacticalFeatureShape({
       data-height-inches={feature.height}
       data-selected={String(selected)}
       className={cn(
-        feature.landform === undefined ? FEATURE_STYLE[feature.kind] : LANDFORM_STYLE[feature.landform],
+        featureStyle(feature),
         "cursor-pointer outline-none focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-brass",
         passThrough && "pointer-events-none",
       )}
@@ -596,6 +750,14 @@ function TacticalFeatureShape({
           !feature.impassable && "[stroke-dasharray:5_3]",
         )}
       />
+      {texture !== null ? (
+        <polygon
+          points={polygonPoints(feature.polygon)}
+          data-texture-encoding={texture}
+          fill={`url(#${texturePatternId(texture)})`}
+          className="pointer-events-none stroke-none"
+        />
+      ) : null}
       {feature.landform !== undefined ? (
         <polygon
           points={polygonPoints(feature.polygon)}
@@ -604,6 +766,7 @@ function TacticalFeatureShape({
           className="pointer-events-none stroke-none"
         />
       ) : null}
+      <FeatureFittings feature={feature} />
       {feature.opaque ? (
         <polygon
           points={polygonPoints(feature.polygon)}
@@ -620,28 +783,6 @@ function TacticalFeatureShape({
           className="pointer-events-none stroke-none"
         />
       ) : null}
-      {coverMark ? (
-        <g
-          data-cover-encoding={feature.cover}
-          className="pointer-events-none"
-        >
-          <circle
-            cx={center.x}
-            cy={center.y}
-            r={20}
-            className="fill-[#0d0b0a] stroke-white/80 stroke-[1] [vector-effect:non-scaling-stroke]"
-          />
-          <text
-            x={center.x}
-            y={center.y}
-            textAnchor="middle"
-            dominantBaseline="middle"
-            className="fill-white text-[22px] font-semibold"
-          >
-            {coverMark}
-          </text>
-        </g>
-      ) : null}
       {selected ? (
         <polygon
           points={polygonPoints(feature.polygon)}
@@ -649,10 +790,50 @@ function TacticalFeatureShape({
           className="pointer-events-none stroke-white stroke-[2] [stroke-dasharray:5_3] [vector-effect:non-scaling-stroke]"
         />
       ) : null}
+    </g>
+  );
+}
+
+/** Above the tokens: a feature's cover mark and its name, so neither hides
+ * under a creature or a larger feature. */
+function FeatureAnnotation({
+  feature,
+  caption,
+  scale,
+}: {
+  feature: TacticalKnownFeature;
+  caption?: FeatureCaption;
+  scale: number;
+}) {
+  const coverMark = COVER_MARK[feature.cover];
+  const center = polygonCenter(feature.polygon);
+  const radius = coverMarkRadius(scale);
+  return (
+    <g data-feature-annotation={feature.id} className="pointer-events-none">
+      {coverMark ? (
+        <g data-cover-encoding={feature.cover}>
+          <circle
+            cx={center.x}
+            cy={center.y}
+            r={radius}
+            className="fill-[#0d0b0a]/85 stroke-white/70 stroke-[1] [vector-effect:non-scaling-stroke]"
+          />
+          <text
+            x={center.x}
+            y={center.y}
+            textAnchor="middle"
+            dominantBaseline="central"
+            fontSize={radius * 1.1}
+            className="fill-white font-semibold"
+          >
+            {coverMark}
+          </text>
+        </g>
+      ) : null}
       {caption ? (
-        <text x={caption.x} y={caption.y}
+        <text x={caption.x} y={caption.y} fontSize={caption.size}
           textAnchor="middle" data-feature-caption={feature.id}
-          className="pointer-events-none fill-stone-200 stroke-[#151411] text-[32px] [paint-order:stroke] [stroke-width:6px]">
+          className="fill-stone-100 stroke-[#151411] [paint-order:stroke] [stroke-width:4px]">
           {caption.text}
         </text>
       ) : null}
@@ -664,13 +845,16 @@ function TacticalZoneShape({
   zone,
   selected,
   passThrough = false,
+  textScale,
   onSelect,
 }: {
   zone: TacticalZone;
   selected: boolean;
   passThrough?: boolean;
+  textScale: number;
   onSelect: () => void;
 }) {
+  const center = polygonCenter(zone.geometry.points);
   return (
     <g
       role="button"
@@ -691,13 +875,26 @@ function TacticalZoneShape({
       onKeyDown={(event) => activateOnKeyboard(event, onSelect)}
     >
       <title>{`${zone.label}；状态 ${formatTacticalState(zone.state)}；高程 ${formatElevation(zone.geometry.elevation)}；高度 ${formatLength(zone.geometry.height)}`}</title>
+      {/* The zone lies over the features in it; only its edge and name take
+          a click, so a door inside a fog stays selectable. */}
       <polygon
         points={polygonPoints(zone.geometry.points)}
         className={cn(
-          "stroke-[6] [stroke-dasharray:18_12] [vector-effect:non-scaling-stroke]",
-          selected && "stroke-white stroke-[12]",
+          "[pointer-events:visibleStroke] stroke-[3] [stroke-dasharray:10_6] [vector-effect:non-scaling-stroke]",
+          selected && "stroke-white stroke-[4]",
         )}
       />
+      <text
+        data-zone-caption={zone.id}
+        x={center.x}
+        y={center.y}
+        fontSize={24 * textScale}
+        textAnchor="middle"
+        dominantBaseline="central"
+        className="fill-violet-100 stroke-[#151411] [paint-order:stroke] [stroke-width:4px]"
+      >
+        {zone.label}
+      </text>
     </g>
   );
 }
@@ -1240,9 +1437,10 @@ function StitchedPlaceShape({
         fill={`url(#${gridId})`}
         className="stroke-stone-300 stroke-[6] [stroke-dasharray:20_12] [vector-effect:non-scaling-stroke]"
       />
-      {place.features.map((feature) => (
+      {layeredFeatures(place.features).map((feature) => (
         <g key={feature.id} data-tactical-stitched-feature={feature.id}
-          className={feature.landform === undefined ? FEATURE_STYLE[feature.kind] : LANDFORM_STYLE[feature.landform]}>
+          className={feature.landform !== undefined ? LANDFORM_STYLE[feature.landform]
+            : feature.kind === "terrain" || feature.material === undefined ? FEATURE_STYLE[feature.kind] : MATERIAL_STYLE[feature.material]}>
           <polygon points={polygonPoints(feature.polygon)} className="stroke-[2] [vector-effect:non-scaling-stroke]" />
           {feature.landform !== undefined ? (
             <polygon points={polygonPoints(feature.polygon)} fill={`url(#${landformPatternId(feature.landform)})`} className="stroke-none" />
@@ -1300,7 +1498,6 @@ function TacticalMapCanvas({
   const minY = Math.min(...ys);
   const width = Math.max(projection.scene.gridInches, Math.max(...xs) - minX);
   const height = Math.max(projection.scene.gridInches, Math.max(...ys) - minY);
-  const captions = featureCaptions(projection, selectedKey);
   // SPEC 0014 §8 (ADR 0103 decision 5): a stitched map keeps the current
   // place's own coordinates and widens the view to the other chosen places
   // on the level shown, each where the site plan puts it. On another level
@@ -1320,10 +1517,15 @@ function TacticalMapCanvas({
   const viewWidth = viewBox.maxX - viewBox.minX;
   const viewHeight = viewBox.maxY - viewBox.minY;
   const labelSize = Math.max(28, Math.round(Math.max(viewWidth, viewHeight) / 24));
+  const textScale = mapTextScale(viewWidth, viewHeight);
+  const captions = featureCaptions(projection, selectedKey, textScale);
   const gridId = `tactical-grid-${instanceId}-${projection.scene.id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
   const opaquePatternId = `${gridId}-opaque`;
   const propagationPatternId = `${gridId}-propagation`;
   const landformPatternId = (landform: TacticalLandform) => `${gridId}-landform-${landform}`;
+  const texturePatternId = (texture: FeatureTexture) => `${gridId}-texture-${texture}`;
+  const quarterGridId = `${gridId}-quarter`;
+  const features = layeredFeatures(projection.knownFeatures);
   const entities = [projection.self, ...projection.visibleEntities];
   const task = interaction?.task ?? IDLE_TASK;
   const picking = onCurrentLevel && (gestures.groundPick || gestures.pointPick || gestures.aimPick);
@@ -1334,6 +1536,7 @@ function TacticalMapCanvas({
   const cursor = picking ? interaction?.cursor ?? null : null;
   const start = selfPoint(projection);
   const grid = projection.scene.gridInches;
+  const step = pickStep(projection);
   // A local hover point, only to show where a tentative area would sit; the
   // pick itself is still the click or the keyboard cursor (SPEC 0014 §8).
   const [hover, setHover] = useState<MapPoint | null>(null);
@@ -1343,10 +1546,12 @@ function TacticalMapCanvas({
     // Tokens and shapes handle their own keys.
     if (!picking || interaction === undefined || event.target !== event.currentTarget) return;
     const delta = CURSOR_KEYS[event.key];
-    const base = interaction.cursor ?? { x: snapToGrid(start.x, grid), y: snapToGrid(start.y, grid) };
+    const base = interaction.cursor ?? { x: snapToGrid(start.x, step), y: snapToGrid(start.y, step) };
     if (delta) {
       event.preventDefault();
-      interaction.setCursor(clampToScene({ x: base.x + delta[0] * grid, y: base.y + delta[1] * grid }, projection));
+      // An arrow moves a cell; with Shift, a quarter cell.
+      const distance = event.shiftKey ? step : grid;
+      interaction.setCursor(clampToScene({ x: base.x + delta[0] * distance, y: base.y + delta[1] * distance }, projection));
     } else if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       gestures.pickPoint(base);
@@ -1364,7 +1569,7 @@ function TacticalMapCanvas({
         role="group"
         aria-label={`${projection.scene.name}战术地图${stitch !== null && stitchedView
           ? `；拼合显示${tacticalLevelLabel(stitch.level)}${stitched.length > 0 ? `的${stitched.map(({ place }) => place.name).join("、")}` : ""}，只读`
-          : ""}${picking ? "；点地图或用方向键移动选点框、按回车选定位置" : ""}`}
+          : ""}${picking ? "；点地图或用方向键移动选点框（按住 Shift 每次移动四分之一格）、按回车选定位置" : ""}`}
         tabIndex={picking ? 0 : undefined}
         onKeyDown={onCanvasKey}
         width={viewWidth}
@@ -1384,9 +1589,29 @@ function TacticalMapCanvas({
             <path
               d={`M ${projection.scene.gridInches} 0 L 0 0 0 ${projection.scene.gridInches}`}
               fill="none"
-              className="stroke-white/12 stroke-[2]"
+              className="stroke-white/15 stroke-[1.5]"
             />
           </pattern>
+          <pattern
+            id={quarterGridId}
+            width={step}
+            height={step}
+            patternUnits="userSpaceOnUse"
+          >
+            <path d={`M ${step} 0 L 0 0 0 ${step}`} fill="none" className="stroke-white/10 stroke-[1] [stroke-dasharray:2_4]" />
+          </pattern>
+          {FEATURE_TEXTURES.map((texture) => (
+            <pattern
+              key={texture}
+              id={texturePatternId(texture)}
+              data-texture-pattern={texture}
+              width={FEATURE_TEXTURE[texture].size}
+              height={FEATURE_TEXTURE[texture].size}
+              patternUnits="userSpaceOnUse"
+            >
+              <path d={FEATURE_TEXTURE[texture].path} fill="none" className={FEATURE_TEXTURE[texture].className} />
+            </pattern>
+          ))}
           <pattern
             id={opaquePatternId}
             width="28"
@@ -1396,7 +1621,7 @@ function TacticalMapCanvas({
             <path
               d="M -7 7 L 7 -7 M 0 28 L 28 0 M 21 35 L 35 21"
               fill="none"
-              className="stroke-white/55 stroke-[4]"
+              className="stroke-white/30 stroke-[2.5]"
             />
           </pattern>
           <pattern
@@ -1405,8 +1630,8 @@ function TacticalMapCanvas({
             height="24"
             patternUnits="userSpaceOnUse"
           >
-            <circle cx="6" cy="6" r="3" className="fill-white/75" />
-            <circle cx="18" cy="18" r="3" className="fill-white/75" />
+            <circle cx="6" cy="6" r="2.5" className="fill-white/55" />
+            <circle cx="18" cy="18" r="2.5" className="fill-white/55" />
           </pattern>
           {LANDFORMS.map((landform) => (
             <pattern
@@ -1446,11 +1671,24 @@ function TacticalMapCanvas({
         {onCurrentLevel ? (
           <>
             <polygon
+              data-scene-floor
+              points={polygonPoints(projection.scene.boundary.points)}
+              className="fill-[#211d18] stroke-none"
+            />
+            <polygon
               data-scene-boundary={projection.scene.id}
               points={polygonPoints(projection.scene.boundary.points)}
               fill={`url(#${gridId})`}
               className="stroke-brass/80 stroke-[1.5] [vector-effect:non-scaling-stroke]"
             />
+            {picking ? (
+              <polygon
+                data-tactical-pick-grid={step}
+                points={polygonPoints(projection.scene.boundary.points)}
+                fill={`url(#${quarterGridId})`}
+                className="pointer-events-none stroke-none"
+              />
+            ) : null}
             {stitchedView ? <PlaceNameLabel name={projection.scene.name} x={minX} y={minY} size={labelSize} /> : null}
             {interaction ? (
               <rect
@@ -1469,30 +1707,17 @@ function TacticalMapCanvas({
                   if (!followsPointer) return;
                   const point = svgPointFromEvent(event);
                   setHover(point === null ? null
-                    : clampToScene({ x: snapToGrid(point.x, grid), y: snapToGrid(point.y, grid) }, projection));
+                    : clampToScene({ x: snapToGrid(point.x, step), y: snapToGrid(point.y, step) }, projection));
                 }}
                 onMouseLeave={() => setHover(null)}
               />
             ) : null}
-            {projection.knownZones.map((zone) => {
-              const key = zoneSelectionKey(zone.id);
-              return (
-                <TacticalZoneShape
-                  key={zone.id}
-                  zone={zone}
-                  selected={selectedKey === key}
-                  passThrough={picking}
-                  onSelect={() => onSelect(key)}
-                />
-              );
-            })}
-            {projection.knownFeatures.map((feature) => {
+            {features.map((feature) => {
               const key = featureSelectionKey(feature.id);
               return (
                 <TacticalFeatureShape
                   key={feature.id}
                   feature={feature}
-                  caption={captions.get(feature.id)}
                   selected={selectedKey === key}
                   // Ground terrain does not stop a click from picking where to go;
                   // an aimed attack can guess a point behind any feature.
@@ -1501,9 +1726,26 @@ function TacticalMapCanvas({
                   opaquePatternId={opaquePatternId}
                   propagationPatternId={propagationPatternId}
                   landformPatternId={landformPatternId}
+                  texturePatternId={texturePatternId}
                 />
               );
             })}
+            {projection.knownZones.map((zone) => {
+              const key = zoneSelectionKey(zone.id);
+              return (
+                <TacticalZoneShape
+                  key={zone.id}
+                  zone={zone}
+                  selected={selectedKey === key}
+                  passThrough={picking}
+                  textScale={textScale}
+                  onSelect={() => onSelect(key)}
+                />
+              );
+            })}
+            {interaction ? (
+              <TacticalTaskHints projection={projection} task={task} cursor={cursor} hover={followsPointer ? hover : null} textScale={textScale} />
+            ) : null}
             {entities.map((entity) => {
               const key = entitySelectionKey(entity.id);
               return (
@@ -1513,14 +1755,20 @@ function TacticalMapCanvas({
                   currentActor={entity.id === projection.encounter?.activeEntityId}
                   selected={selectedKey === key}
                   elevationLabel={tokenElevationLabel(entity, projection.knownFeatures)}
+                  textScale={textScale}
                   targeted={targetedIds.has(entity.id)}
                   passThrough={gestures.pointPick}
                   onSelect={() => gestures.activateEntity(entity)}
                 />
               );
             })}
+            <g data-tactical-annotations>
+              {features.map((feature) => (
+                <FeatureAnnotation key={feature.id} feature={feature} caption={captions.get(feature.id)} scale={textScale} />
+              ))}
+            </g>
             {interaction ? (
-              <TacticalTaskMarks projection={projection} task={task} cursor={cursor} hover={followsPointer ? hover : null} />
+              <TacticalTaskMarks projection={projection} task={task} cursor={cursor} textScale={textScale} />
             ) : null}
           </>
         ) : null}
@@ -1553,9 +1801,11 @@ function rangeOf(ability: CombatControlAbility): { feet: number; longFeet?: numb
 function RangeRings({
   projection,
   range,
+  textScale,
 }: {
   projection: TacticalProjection;
   range: { feet: number; longFeet?: number; reach: boolean };
+  textScale: number;
 }) {
   const center = selfPoint(projection);
   const half = Math.max(inches(projection.self.footprint.width), inches(projection.self.footprint.depth)) / 2;
@@ -1563,7 +1813,7 @@ function RangeRings({
   // The label sits on the ring where the ring crosses the map, so a long
   // range still shows its number.
   const bounds = sceneBounds(projection);
-  const margin = 40;
+  const margin = 30 * textScale;
   const middle = { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 };
   const label = Array.from({ length: 72 }, (_, step) => step * 5 * Math.PI / 180)
     .map((angle) => ({ x: center.x + radius * Math.cos(angle), y: center.y + radius * Math.sin(angle) }))
@@ -1592,9 +1842,10 @@ function RangeRings({
         <text
           data-tactical-range-label
           x={label.x}
-          y={label.y - 10}
+          y={label.y - 8 * textScale}
+          fontSize={22 * textScale}
           textAnchor="middle"
-          className="fill-brass text-[26px] [paint-order:stroke] stroke-[#151411] [stroke-width:5px]"
+          className="fill-brass [paint-order:stroke] stroke-[#151411] [stroke-width:4px]"
         >
           {range.reach ? "触及" : "射程"} {range.feet} 尺
         </text>
@@ -1676,39 +1927,68 @@ function AreaShape({
   return <polygon {...common} points={points.map((point) => `${point.x},${point.y}`).join(" ")} className={className} />;
 }
 
-function TacticalTaskMarks({
+/** Under the tokens: the reach or range ring of the ability being aimed and
+ * the sketch of its area. */
+function TacticalTaskHints({
   projection,
   task,
   cursor,
   hover,
+  textScale,
 }: {
   projection: TacticalProjection;
   task: MapTask;
   cursor: MapPoint | null;
   /** Where the pointer is, for a tentative area. */
   hover: MapPoint | null;
+  textScale: number;
 }) {
-  const grid = projection.scene.gridInches;
-  const start = selfPoint(projection);
   const ability = task.kind === "creatures" || task.kind === "area" || task.kind === "intent" ? task.ability : null;
   const range = ability === null ? null : rangeOf(ability);
   const area = areaShapeHint(projection, task, cursor ?? hover);
+  if (range === null && area === null) return null;
   return (
-    <g data-tactical-task-marks={task.kind} className="pointer-events-none">
-      {range ? <RangeRings projection={projection} range={range} /> : null}
+    <g data-tactical-task-hints={task.kind} className="pointer-events-none">
+      {range ? <RangeRings projection={projection} range={range} textScale={textScale} /> : null}
       {area ? (
         <AreaShape target={area.target} origin={area.origin} toward={area.toward} tentative={area.tentative} />
       ) : null}
+    </g>
+  );
+}
+
+/** Above the tokens: where the player's picks are -- the destination, the
+ * waypoints in order, an area's origin and direction, and the keyboard
+ * cursor. A destination or the cursor is drawn the size of the player's own
+ * space. These are the player's own picks, not a preview of the result. */
+function TacticalTaskMarks({
+  projection,
+  task,
+  cursor,
+  textScale,
+}: {
+  projection: TacticalProjection;
+  task: MapTask;
+  cursor: MapPoint | null;
+  textScale: number;
+}) {
+  const grid = projection.scene.gridInches;
+  const start = selfPoint(projection);
+  const width = inches(projection.self.footprint.width);
+  const depth = inches(projection.self.footprint.depth);
+  const marker = 12 * textScale;
+  return (
+    <g data-tactical-task-marks={task.kind} className="pointer-events-none">
       {task.kind === "destination" ? (
         <rect
           data-tactical-destination={`${task.point.x},${task.point.y}`}
-          x={task.point.x - grid / 2}
-          y={task.point.y - grid / 2}
-          width={grid}
-          height={grid}
-          rx={grid / 6}
+          x={task.point.x - width / 2}
+          y={task.point.y - depth / 2}
+          width={width}
+          height={depth}
+          rx={Math.min(width, depth) / 5}
           fill="none"
-          className="stroke-brass stroke-[6] [stroke-dasharray:14_8] [vector-effect:non-scaling-stroke]"
+          className="stroke-brass stroke-[2.5] [stroke-dasharray:6_4] [vector-effect:non-scaling-stroke]"
         />
       ) : null}
       {task.kind === "path" && task.waypoints.length > 0 ? (
@@ -1717,17 +1997,18 @@ function TacticalTaskMarks({
             data-tactical-path={[start, ...task.waypoints].map((point) => `${point.x},${point.y}`).join(" ")}
             points={[start, ...task.waypoints].map((point) => `${point.x},${point.y}`).join(" ")}
             fill="none"
-            className="stroke-brass stroke-[5] [stroke-dasharray:16_10] [vector-effect:non-scaling-stroke]"
+            className="stroke-brass stroke-[2.5] [stroke-dasharray:6_4] [vector-effect:non-scaling-stroke]"
           />
           {task.waypoints.map((point, index) => (
             <g key={`${point.x},${point.y},${index}`}>
-              <circle cx={point.x} cy={point.y} r={14} className="fill-brass stroke-black/70 stroke-[1] [vector-effect:non-scaling-stroke]" />
+              <circle cx={point.x} cy={point.y} r={marker} className="fill-brass stroke-black/70 stroke-[1] [vector-effect:non-scaling-stroke]" />
               <text
                 x={point.x}
                 y={point.y}
+                fontSize={marker * 1.2}
                 textAnchor="middle"
-                dominantBaseline="middle"
-                className="fill-black text-[16px] font-semibold"
+                dominantBaseline="central"
+                className="fill-black font-semibold"
               >
                 {index + 1}
               </text>
@@ -1742,7 +2023,7 @@ function TacticalTaskMarks({
           cy={task.point.y}
           r={grid / 3}
           fill="none"
-          className="stroke-danger stroke-[5] [stroke-dasharray:10_6] [vector-effect:non-scaling-stroke]"
+          className="stroke-danger stroke-[2.5] [stroke-dasharray:6_4] [vector-effect:non-scaling-stroke]"
         />
       ) : null}
       {task.kind === "area" && task.origin ? (
@@ -1751,7 +2032,7 @@ function TacticalTaskMarks({
             data-tactical-area-origin={`${task.origin.x},${task.origin.y}`}
             cx={task.origin.x}
             cy={task.origin.y}
-            r={16}
+            r={marker}
             className="fill-violet-300/80 stroke-white stroke-[1] [vector-effect:non-scaling-stroke]"
           />
           {task.direction ? (
@@ -1769,12 +2050,12 @@ function TacticalTaskMarks({
       {cursor ? (
         <rect
           data-tactical-cursor={`${cursor.x},${cursor.y}`}
-          x={cursor.x - grid / 2}
-          y={cursor.y - grid / 2}
-          width={grid}
-          height={grid}
+          x={cursor.x - width / 2}
+          y={cursor.y - depth / 2}
+          width={width}
+          height={depth}
           fill="none"
-          className="stroke-white stroke-[4] [vector-effect:non-scaling-stroke]"
+          className="stroke-white stroke-[2] [vector-effect:non-scaling-stroke]"
         />
       ) : null}
     </g>
@@ -1886,7 +2167,11 @@ function TacticalLegend() {
         <p><span className="mr-1 text-moss">■</span>盟友</p>
         <p><span className="mr-1 text-danger">■</span>敌对</p>
         <p><span className="mr-1 text-stone-400">■</span>中立</p>
-        <p><span className="mr-1 text-primary">□</span>可互动物</p>
+        <p><span className="mr-1 text-stone-400">▤</span>墙（石纹）</p>
+        <p><span className="mr-1 text-amber-600">▥</span>门（关着有门板，开着是虚框）</p>
+        <p><span className="mr-1 text-amber-300">■</span>可互动物</p>
+        <p><span className="mr-1 text-amber-700">⊠</span>可破坏物</p>
+        <p><span className="mr-1 text-yellow-700">▒</span>地面（泥地、碎石）</p>
         <p><span className="mr-1 text-violet-300">▧</span>区域效果</p>
         <p><span className="mr-1 text-brass">◌</span>射程或触及（示意）</p>
         <p><span className="mr-1 text-violet-200">◇</span>法术范围（示意）</p>
@@ -1894,9 +2179,10 @@ function TacticalLegend() {
       <div className="mt-2 space-y-1 border-t border-border pt-2 text-[11px] text-subtle">
         <p>实线边阻挡移动；虚线边可通过。</p>
         <p>斜纹阻挡视线；点纹阻断区域传播。</p>
-        <p>图形内 ½ / ¾ / 全 表示掩护等级。</p>
+        <p>圆标里的 ½ / ¾ / 全 表示掩护等级。</p>
         <p>沟、水域、矮墙、台阶、崖壁各有底色和纹理。</p>
         <p>人物旁的 −/+ 尺：在沟里、水里或高处时，是相对旁边地面的高差。</p>
+        <p>选点时按四分之一格（2.5 尺）吸附；方向键每次移动一格，按住 Shift 移动四分之一格。</p>
       </div>
     </details>
   );

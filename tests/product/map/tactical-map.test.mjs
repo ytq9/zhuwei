@@ -173,6 +173,54 @@ test("TacticalMap draws ditches, water, walls, steps and cliffs apart and labels
     /data-entity-id="character:alice".*?data-elevation-label="true"[^>]*>\+5 尺<\/text>/);
 });
 
+// SPEC 0014 §8: the ground lies under the objects on it and the walls and
+// doors above both, a smaller shape over a larger one in the same layer;
+// zones over the features, then the creatures, then the names and cover
+// marks, so none of them hides under a larger shape or a token.
+test("TacticalMap lays ground, objects and walls in order, with names and cover marks above the tokens", async () => {
+  const { TacticalMap } = await import("../../../app/_runtime/components/tactical-map.tsx");
+  const projection = tacticalProjectionFixture();
+  const rectangle = (x0, y0, x1, y1) => [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }];
+  const base = { state: "intact", elevation: "0", height: "36", opaque: false, impassable: false, cover: "none", propagation: "passes", terrain: "normal" };
+  projection.knownFeatures = [
+    // In id order the lever would come first and the yard's mud over it.
+    { ...base, id: "feature:a-lever", kind: "interactable", label: "警铃拉杆", polygon: rectangle("540", "540", "570", "570"), material: "metal" },
+    { ...base, id: "feature:b-wall", kind: "barrier", label: "钟楼石墙", polygon: rectangle("300", "60", "312", "660"),
+      height: "120", opaque: true, impassable: true, cover: "full", propagation: "blocks", material: "stone" },
+    { ...base, id: "feature:c-crate", kind: "destructible", label: "木箱", polygon: rectangle("600", "300", "660", "360"), impassable: true, cover: "half" },
+    { ...base, id: "feature:d-mud", kind: "terrain", label: "后院泥泞", polygon: rectangle("420", "420", "900", "780"), material: "mud" },
+    { ...base, id: "feature:e-gate", kind: "portal", label: "庭院铁门", state: "locked", polygon: rectangle("660", "60", "840", "72"),
+      height: "120", opaque: true, impassable: true, cover: "full", propagation: "blocks", material: "metal" },
+  ];
+  const html = renderToStaticMarkup(createElement(TacticalMap, { projection, defaultExpanded: true }));
+  const at = (pattern) => {
+    const index = html.search(pattern);
+    assert.notEqual(index, -1, `${pattern} must be drawn`);
+    return index;
+  };
+  // The crate is larger than the lever, so it lies under it; the wall
+  // covers more ground than the gate.
+  const order = ["feature:d-mud", "feature:c-crate", "feature:a-lever", "feature:b-wall", "feature:e-gate"]
+    .map((id) => at(new RegExp(`data-feature-id="${id}"`)));
+  assert.deepEqual([...order].sort((left, right) => left - right), order, "ground, then objects, then walls and doors");
+  assert.ok(at(/data-feature-id="feature:e-gate"/) < at(/data-zone-id="zone:fog-cloud"/), "zones lie over the features");
+  assert.ok(at(/data-zone-id="zone:fog-cloud"/) < at(/data-entity-id="character:alice"/), "creatures stand over zones");
+  const annotations = at(/data-tactical-annotations/);
+  assert.ok(at(/data-entity-id="npc:warden"/) < annotations, "names and cover marks come after the tokens");
+  assert.ok(at(/data-cover-encoding="full"/) > annotations);
+  assert.ok(at(/data-feature-caption="feature:a-lever"/) > annotations);
+  // Each kind is drawn as what it is: a stone wall coursed, a metal gate
+  // barred with a bolt across while locked, mud rippled, a crate braced.
+  assert.match(html, /data-feature-id="feature:b-wall"[^>]*data-feature-layer="structure"/);
+  assert.match(html, /data-feature-id="feature:d-mud"[^>]*data-feature-layer="ground"/);
+  assert.match(html, /data-feature-id="feature:a-lever"[^>]*data-feature-layer="object"/);
+  for (const texture of ["masonry", "bars", "mud"]) assert.match(html, new RegExp(`data-texture-encoding="${texture}"`));
+  assert.match(html, /data-feature-fitting="bolt"/);
+  assert.match(html, /data-feature-fitting="brace"/);
+  // The lever is drawn at its own 2.5-foot size, not a whole cell.
+  assert.match(html, /data-feature-id="feature:a-lever"[^>]*>(?:(?!<\/g>).)*?points="540,540 570,540 570,570 540,570"/);
+});
+
 test("TacticalMap is collapsible and keeps unavailable projections compact", async () => {
   const { TacticalMap } = await import("../../../app/_runtime/components/tactical-map.tsx");
   const projection = tacticalProjectionFixture();

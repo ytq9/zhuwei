@@ -68,6 +68,12 @@ export function snapToGrid(value: number, grid: number): number {
   return Math.round(value / grid) * grid;
 }
 
+/** A picked point snaps to a quarter cell: half a cell's side, 2.5 feet.
+ * Only the display snaps; Rules take any whole inch (SPEC 0014 §2.1). */
+export function pickStep(projection: TacticalProjection): number {
+  return projection.scene.gridInches / 2;
+}
+
 export function sceneBounds(projection: TacticalProjection) {
   const xs = projection.scene.boundary.points.map((point) => inches(point.x));
   const ys = projection.scene.boundary.points.map((point) => inches(point.y));
@@ -197,8 +203,8 @@ export function mapGestures(
 
   function pickPoint(raw: MapPoint) {
     if (interaction === undefined) return;
-    const grid = projection.scene.gridInches;
-    const point = clampToScene({ x: snapToGrid(raw.x, grid), y: snapToGrid(raw.y, grid) }, projection);
+    const step = pickStep(projection);
+    const point = clampToScene({ x: snapToGrid(raw.x, step), y: snapToGrid(raw.y, step) }, projection);
     if (task.kind === "creatures" && aimPick) {
       interaction.setTask({ ...task, refs: [], point });
       return;
