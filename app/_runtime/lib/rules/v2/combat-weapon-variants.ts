@@ -111,3 +111,30 @@ export function thrownWeaponReleaseDraft(state: AuthoritativeWorldState, sourceI
     authority: { kind: "actor" }, summary: "投出的物品落在目标位置。" },
     visibilityPolicyId: "visibility:room-authority-only", secrecy: "internal" };
 }
+
+/** SRD 5.1 Command ("Drop"): the creature lets go of what it holds in a
+ * hand, at its feet -- the first held entry of the main hand, then the off
+ * hand, one release at a time. Undefined when its hands are empty. */
+export function heldItemDropDraft(state: AuthoritativeWorldState, holderId: string, rootActionId: string): {
+    eventType: "InventoryOperationApplied"; payload: InventoryOperationAppliedPayload;
+    visibilityPolicyId: string; secrecy: "internal";
+  } | undefined {
+  const holder = state.entities[holderId], body = state.combatRuntime.entities[holderId];
+  const point = canonicalCombatPoint(body?.position);
+  if (holder === undefined || point === undefined) return undefined;
+  for (const slot of ["main", "off"] as const) {
+    const entryId = holder.loadout?.equipped[slot];
+    const entry = entryId === undefined ? undefined : state.campaignRuntime.itemSystem.entries[entryId];
+    if (entry === undefined || entry.disposition !== "held" || entry.holderRef !== holderId) continue;
+    const operation = { kind: "release" as const, entryRef: entry.entryId, quantity: entry.quantity,
+      sceneRef: holder.sceneId, releaseKind: "drop" as const, position: point };
+    const contextHash = canonicalSha256({ kind: "commanded-drop", rootActionId, holderId, operation });
+    const transition = planInventoryTransition(state, holderId, operation, rootActionId, contextHash, { kind: "actor" });
+    if ("error" in transition) continue;
+    return { eventType: "InventoryOperationApplied", payload: { actorCharacterId: holderId, operation, contextHash,
+      entryHashBefore: canonicalSha256(entry), itemSystemHashAfter: canonicalSha256(transition.itemSystem),
+      targetEntryId: transition.targetEntryId, authority: { kind: "actor" }, summary: "听从命令，放下了手中的物品。" },
+      visibilityPolicyId: "visibility:room-authority-only", secrecy: "internal" };
+  }
+  return undefined;
+}

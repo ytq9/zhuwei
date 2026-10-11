@@ -137,3 +137,22 @@ test('the roots of a weapon-hit rider, turn-start damage and breaking free are t
     parameters: { targetEntityId: PEER } }, { 'check:break-free:': 15 });
   assert.match(summaries(freed.claims), /挣开了束缚/u);
 });
+
+test('the roots of a command and the commanded turn Rules carries out are told in full from claims', () => {
+  const cleric = { classId: 'cleric', level: 3, cantripIds: [], preparedSpellIds: ['command'],
+    resources: { slot1: 4 }, resourceMaximums: { slot1: 4 },
+    characterBuild: { classId: 'cleric', raceId: 'human', cantrips: [], prepared: ['command'] } };
+  const f = createAuthoredProbeFixture('claims-command', { spawnPoints: [{ x: '100', y: '100', elevation: '0' }, { x: '280', y: '100', elevation: '0' }],
+    characterOverrides: { [ACTOR]: cleric } });
+  f.events = [];
+  f.acts = 0;
+  act(f, { kind: 'startEncounter', proposalAttemptId: 'proposal:claims-command:encounter',
+    encounterId: ENCOUNTER, sceneId: SCENE, participantEntityIds: [ACTOR, PEER], dynamicEntities: [], battlefieldFactIds: [],
+    initiativeGroups: [ACTOR, PEER].map((id) => ({ entryId: `initiative:${id}`, combatantEntityIds: [id] })),
+    hostilities: [{ fromEntityIds: [ACTOR], toEntityIds: [PEER] }, { fromEntityIds: [PEER], toEntityIds: [ACTOR] }] });
+  const commanded = cast(f, 'command', 1, { targetEntityId: PEER, command: 'approach' });
+  assert.match(summaries(commanded.claims), /下个回合服从命令「靠近」/u);
+  const obeyed = endTurn(f, ACTOR);
+  assert.match(summaries(obeyed.claims), /服从命令「靠近」/u);
+  assert.ok(obeyed.events.filter((event) => event.eventType === 'TurnEnded').length === 2);
+});

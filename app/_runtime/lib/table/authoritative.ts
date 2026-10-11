@@ -1533,6 +1533,11 @@ function safeCombatChoice(value: JsonRecord) {
     const answerOptions = safeCombatAnswerOptions(value.answerOptions);
     return answerOptions ? { choiceKind: "knockOut" as const, answerOptions } : undefined;
   }
+  // SRD 5.1 Command (ADR 0158): the word the caster speaks.
+  if (value.choiceKind === "commandWord") {
+    const answerOptions = safeCombatAnswerOptions(value.answerOptions);
+    return answerOptions ? { choiceKind: "commandWord" as const, answerOptions } : undefined;
+  }
   if (value.choiceKind === "initiativeTieOrder") {
     const orderedEntityIds = safeIdentifierList(value.orderedEntityIds, 2);
     return orderedEntityIds

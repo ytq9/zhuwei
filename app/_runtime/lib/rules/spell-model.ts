@@ -98,7 +98,8 @@ export type SpellModifier =
   | { kind: "hitPointMaximumBonus" }
   | { kind: "d20BonusDie"; sides: number; rolls: readonly ("attack" | "save" | "check")[] }
   | { kind: "weaponDamageDieFromSource"; sides: number }
-  | { kind: "weaponHitRider"; save: Ability; largerSaveAdvantage: boolean };
+  | { kind: "weaponHitRider"; save: Ability; largerSaveAdvantage: boolean }
+  | { kind: "commanded" };
 
 export type SpellEffectDefinition = {
   tag: string;

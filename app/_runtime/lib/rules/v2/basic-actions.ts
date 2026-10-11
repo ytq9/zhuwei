@@ -58,6 +58,8 @@ export const BUILTIN_ACTION_NAMES: Readonly<Record<string, string>> = Object.fre
   "action:stabilize": "急救",
   // SPEC 0012 §10.1: an action's check that frees a creature an effect holds.
   "action:break-free": "挣脱",
+  // SPEC 0012 §10.1 (SRD Command): a commanded creature's turn, carried out by Rules.
+  "action:obey-command": "服从命令",
 });
 
 /** What a built-in action looks like to those who see it, for a reply that

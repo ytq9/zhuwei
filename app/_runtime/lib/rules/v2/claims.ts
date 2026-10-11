@@ -2536,7 +2536,8 @@ function conditionEffectClaim(event: EventEnvelope, payload: JsonRecord, range: 
     if (effect.duration.kind === "turnBoundary") return `持续至${effect.duration.subject === "target" ? "目标" : "效果来源"}的下次回合${effect.duration.edge === "turnStart" ? "开始" : "结束"}。`;
     return undefined;
   };
-  const modifierLabel = effect.kind === "modifier" && isRecord(effect.modifier) ? modifierEffectLabel(effect.modifier) : undefined;
+  const modifierLabel = effect.kind === "modifier" && isRecord(effect.modifier)
+    ? modifierEffectLabel(effect.modifier, stringField(effect, "command")) : undefined;
   if (effect.kind === "condition" && typeof effect.condition === "string" && CONDITION_LABELS[effect.condition]) {
     const level = effect.condition === "exhaustion" && finiteNumber(effect.level) !== undefined ? ` ${finiteNumber(effect.level)} 级` : "";
     const lasting = durationText();
@@ -2563,7 +2564,8 @@ function conditionEffectClaim(event: EventEnvelope, payload: JsonRecord, range: 
 }
 const ZONE_LABELS: Readonly<Record<string, string>> = Object.freeze({ heavilyObscured: "浓雾（重度遮蔽）", silence: "沉默区域", spectralWeapon: "灵体武器" });
 const D20_ROLL_LABELS: Readonly<Record<string, string>> = Object.freeze({ attack: "攻击检定", check: "属性检定", save: "豁免检定" });
-function modifierEffectLabel(modifier: JsonRecord): string | undefined {
+const COMMAND_WORD_LABELS: Readonly<Record<string, string>> = Object.freeze({ approach: "靠近", drop: "放下", flee: "逃跑", grovel: "趴下", halt: "停止" });
+function modifierEffectLabel(modifier: JsonRecord, command?: string): string | undefined {
   const amount = finiteNumber(modifier.amount), sides = finiteNumber(modifier.sides);
   switch (modifier.kind) {
     case "armorClassBonus": return amount === undefined ? undefined : `护甲等级 +${amount}`;
@@ -2579,6 +2581,8 @@ function modifierEffectLabel(modifier: JsonRecord): string | undefined {
       : `${modifier.rolls.map((roll) => D20_ROLL_LABELS[String(roll)] ?? String(roll)).join("、")} +1d${sides}`;
     case "weaponDamageDieFromSource": return sides === undefined ? undefined : `被效果来源的武器命中时额外受到 1d${sides} 伤害`;
     case "weaponHitRider": return "下一次武器命中时让对方进行豁免，失败则被束缚";
+    case "commanded": return command === undefined || COMMAND_WORD_LABELS[command] === undefined ? undefined
+      : `下个回合服从命令「${COMMAND_WORD_LABELS[command]}」`;
     default: return undefined;
   }
 }

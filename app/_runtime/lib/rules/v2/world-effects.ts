@@ -89,7 +89,12 @@ export type EffectModifier =
   | { kind: "hitPointMaximumBonus"; amount: number }
   | { kind: "d20BonusDie"; sides: number; rolls: ("attack" | "check" | "save")[] }
   | { kind: "weaponDamageDieFromSource"; sides: number }
-  | { kind: "weaponHitRider"; save: string; largerSaveAdvantage: boolean };
+  | { kind: "weaponHitRider"; save: string; largerSaveAdvantage: boolean }
+  | { kind: "commanded" };
+/** SRD 5.1 Command: the closed set of one-word commands (user ruling: the
+ * five the spell describes). */
+export const COMMAND_WORDS = ["approach", "drop", "flee", "grovel", "halt"] as const;
+export type CommandWord = typeof COMMAND_WORDS[number];
 export type ModifierEffectDefinition = {
   kind: "grantModifier";
   modifier: EffectModifier;
@@ -113,6 +118,8 @@ export type ModifierEffectRecord = JsonRecord & {
   visibilityPolicyId: string;
   visibilityFactId: string | null;
   lifecycle?: WorldEffectLifecycle;
+  /** The word a `commanded` modifier's caster chose when it cast the spell. */
+  command?: CommandWord;
 };
 /** SPEC 0012 §10.1: an area an effect fills for its duration (SRD Fog Cloud,
  * Silence), a sphere frozen where it was cast. */
@@ -277,6 +284,7 @@ export function isEffectModifier(value: unknown): value is EffectModifier {
       && value.rolls.every((roll, index, all) => (D20_BONUS_ROLLS as readonly unknown[]).includes(roll)
         && (index === 0 || String(all[index - 1]) < String(roll)));
     case "weaponDamageDieFromSource": return hasExactKeys(value, ["kind", "sides"]) && [4, 6, 8, 10, 12].includes(Number(value.sides));
+    case "commanded": return hasExactKeys(value, ["kind"]);
     case "weaponHitRider": return hasExactKeys(value, ["kind", "largerSaveAdvantage", "save"])
       && (SAVE_ABILITIES as readonly unknown[]).includes(value.save) && typeof value.largerSaveAdvantage === "boolean";
     default: return false;
@@ -425,7 +433,8 @@ export function isModifierEffectRecord(value: unknown): value is ModifierEffectR
     "duration", "effectId", "expiresAt", "kind", "modifier", "pausedMicros", "schema",
     "sourceDefinitionRef", "sourceRef", "startedAtFictionMicros", "suspension", "targetEntityId",
     "visibilityFactId", "visibilityPolicyId",
-  ], ["lifecycle"]) || value.schema !== MODIFIER_EFFECT_SCHEMA || value.kind !== "modifier"
+  ], ["command", "lifecycle"]) || value.schema !== MODIFIER_EFFECT_SCHEMA || value.kind !== "modifier"
+    || (isRecord(value.modifier) && value.modifier.kind === "commanded") !== (COMMAND_WORDS as readonly unknown[]).includes(value.command)
     || ![value.effectId, value.sourceRef, value.sourceDefinitionRef, value.targetEntityId].every(isNonEmptyString)
     || !unsignedMicros(value.startedAtFictionMicros) || value.pausedMicros !== "0" || value.suspension !== null
     || !validExpiry(value.expiresAt)
@@ -459,6 +468,11 @@ export function isZoneEffectRecord(value: unknown): value is ZoneEffectRecord {
 
 export function isLastingEffectRecord(value: unknown): value is LastingEffectRecord {
   return isWorldEffectRecord(value) || isModifierEffectRecord(value) || isZoneEffectRecord(value);
+}
+
+/** SRD Command: the command a creature must follow on its turn, if any. */
+export function commandOn(state: AuthoritativeWorldState, targetEntityId: string): ModifierEffectRecord | undefined {
+  return modifierEffectsOn(state, targetEntityId).find((effect) => effect.modifier.kind === "commanded" && effect.command !== undefined);
 }
 
 /** SRD Ensnaring Strike: the conditions on a creature that hurt it as each
@@ -650,6 +664,8 @@ export function planModifierEffect(state: AuthoritativeWorldState, input: {
   targetEntityId: string;
   effect: unknown;
   index: number;
+  /** The word chosen for a `commanded` modifier (SRD Command). */
+  command?: string;
 }): { kind: "applied"; effectRecord: ModifierEffectRecord } | { kind: "rejected"; message: string } {
   const definition = modifierEffectDefinition(input.effect);
   const now = entityInstant(state, input.targetEntityId);
@@ -672,9 +688,10 @@ export function planModifierEffect(state: AuthoritativeWorldState, input: {
     startedAtFictionMicros: now, pausedMicros: "0", suspension: null, expiresAt,
     visibilityPolicyId: "visibility:scene-observers", visibilityFactId: null,
     ...(definition.lifecycle === undefined ? {} : { lifecycle: definition.lifecycle }),
+    ...(input.command === undefined ? {} : { command: input.command as CommandWord }),
   };
   if (!isModifierEffectRecord(effectRecord) || state.combatRuntime.effects[effectRecord.effectId] !== undefined) {
-    return { kind: "rejected", message: "The modifier effect identity is invalid." };
+    return { kind: "rejected", message: "The modifier effect identity, or the command it carries, is invalid." };
   }
   return { kind: "applied", effectRecord };
 }

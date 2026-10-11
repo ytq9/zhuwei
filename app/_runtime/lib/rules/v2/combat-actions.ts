@@ -37,7 +37,7 @@ import {
   conditionMovementPermission,
   conditionMovementCost,
 } from "./condition-mechanics";
-import { effectiveConditions, escapableEffects, grantedAbilityRefs, isWorldEffectRecord, modifierEffectDefinition, modifierEffectsOn, ownZoneOf, turnStartDamageEffects, planModifierEffect, planWorldEffect, planZoneEffect, zoneEffectDefinition, planWorldEffectEnd, repeatSaveEffects, worldEffectDefinition, worldEffectEndDefinition, worldEffectEndDrafts, worldEffectsEndingWhen } from "./world-effects";
+import { COMMAND_WORDS, commandOn, type CommandWord, effectiveConditions, escapableEffects, grantedAbilityRefs, isWorldEffectRecord, modifierEffectDefinition, modifierEffectsOn, ownZoneOf, turnStartDamageEffects, planModifierEffect, planWorldEffect, planZoneEffect, zoneEffectDefinition, planWorldEffectEnd, repeatSaveEffects, worldEffectDefinition, worldEffectEndDefinition, worldEffectEndDrafts, worldEffectsEndingWhen } from "./world-effects";
 import { castingSilenced, zoneBlocksSight } from "./zone-effects";
 import { attacksAgainstHaveAdvantage, d20BonusDie, effectiveArmorClass as modifiedArmorClass, reactionsBlocked, weaponDamageDieFrom, wearsBodyArmor } from "./effect-modifiers";
 import { combatPhaseExpiryAnchor, initiativePhaseOrder, phaseSlotForEntity } from "./effect-phase";
@@ -164,7 +164,7 @@ import {
 } from "./item-transitions";
 import { compileCanonicalCharacterCombat, playerResourceKeyForCombatPool } from "./character-abilities";
 import { footprintSizeRank } from "./contest";
-import { dragCostFactor, heldBodies, placeCarriedCreatures, sceneBoundary, type CarriedCreature } from "./carry";
+import { dragCostFactor, footprintInsidePolygon, heldBodies, placeCarriedCreatures, sceneBoundary, type CarriedCreature } from "./carry";
 import {
   basicActionKey,
   dashesThisTurn,
@@ -185,6 +185,7 @@ import {
   type PostureActionKey,
 } from "./basic-actions";
 import { grapplesEndedByPush, planCreaturePush, savePushFeet } from "./creature-push";
+import { heldItemDropDraft } from "./combat-weapon-variants";
 import { combatJumpKey, combatJumpOptions, type CombatJumpOption } from "./combat-jump";
 import { movementAfterTerrainMove } from "./terrain-movement";
 
@@ -2518,7 +2519,9 @@ function appendAbilityWorldEffects(
         }];
       } else if (effect.kind === "grantModifier") {
         const planned = planModifierEffect(result.state, {
-          rootActionId, sourceRef, sourceDefinitionRef: String(operation.abilityRef), targetEntityId, effect, index });
+          rootActionId, sourceRef, sourceDefinitionRef: String(operation.abilityRef), targetEntityId, effect, index,
+          ...(isRecord(effect.modifier) && effect.modifier.kind === "commanded" && isNonEmptyString(mechanicalResult.command)
+            ? { command: mechanicalResult.command } : {}) });
         if (planned.kind === "rejected") return rejected("invalidRulesInput", planned.message);
         if (planned.effectRecord.lifecycle?.concentration === true) heldByConcentration = true;
         drafts = [{ eventType: "EffectApplied", payload: { effect: planned.effectRecord },
@@ -3058,6 +3061,9 @@ export function combatPendingAnswerOptions(state: AuthoritativeWorldState, pendi
     { label: "力量（运动）", answer: { kind: "contestDefense", skill: "athletics" } },
     { label: "敏捷（体操）", answer: { kind: "contestDefense", skill: "acrobatics" } },
   ];
+  if (pending.choiceKind === "commandWord") return COMMAND_WORDS.map((command) => ({
+    label: `命令：${COMMAND_LABELS[command]}`, answer: { kind: "commandWord", command },
+  }));
   if (pending.choiceKind === "knockOut") return [
     { label: "非致命击昏", answer: { kind: "knockOut" } },
     { label: "造成致命伤害", answer: { kind: "dealLethalDamage" } },
@@ -3116,6 +3122,62 @@ function publicPending(pending: JsonRecord): JsonRecord {
     if (pending[key] !== undefined) result[key] = structuredClone(pending[key]);
   }
   return result;
+}
+
+/** SRD 5.1 Command: an Ability whose effect makes its target follow a word. */
+function carriesCommand(definition: JsonRecord): boolean {
+  return abilityWorldEffects(definition).some((effect) => effect.kind === "grantModifier"
+    && isRecord(effect.modifier) && effect.modifier.kind === "commanded");
+}
+
+const COMMAND_LABELS: Readonly<Record<CommandWord, string>> = { approach: "靠近", drop: "放下", flee: "逃跑", grovel: "趴下", halt: "停止" };
+
+function openCommandPending(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  root: string,
+  source: JsonRecord,
+  abilityRef: string,
+  parameters: JsonRecord,
+): StepResult {
+  const sourceId = entityId(source);
+  const pending = {
+    pendingInputId: `pending:${root}:command`,
+    rootActionId: root,
+    kind: source.kind === "player" ? "playerChoice" : "kpDecision",
+    choiceKind: "commandWord",
+    controllerEntityId: sourceId,
+    operation: { kind: "invokeAbility", sourceEntityId: sourceId, abilityRef, parameters: structuredClone(parameters) },
+  };
+  return sequence("awaitingInput", profiles, state, root, [{
+    eventType: "CombatPendingOpened", payload: { pending }, secrecy: "private",
+  }], { pending: publicPending(pending) });
+}
+
+function answerCommandPending(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  pending: JsonRecord,
+  answer: JsonRecord,
+): StepResult {
+  if (answer.kind === "cancel") return closeCancelledPending(profiles, state, pending, answer);
+  if (answer.kind !== "commandWord" || !hasExactKeys(answer, ["command", "kind"])
+    || !(COMMAND_WORDS as readonly unknown[]).includes(answer.command)
+    || !isRecord(pending.operation) || pending.operation.kind !== "invokeAbility"
+    || !isNonEmptyString(pending.operation.sourceEntityId) || !isNonEmptyString(pending.operation.abilityRef)
+    || !isRecord(pending.operation.parameters)) return rejected("invalidRulesInput", "The command is not one of the five words.");
+  const rootActionId = String(pending.rootActionId);
+  const closed = sequence("committed", profiles, state, rootActionId, [{
+    eventType: "CombatPendingClosed", payload: { pendingInputId: pending.pendingInputId }, secrecy: "private",
+  }]);
+  if (closed.kind !== "committed") return closed;
+  const resumed = invokeAbility(profiles, closed.state, continueCompoundRoot({
+    kind: "invokeAbility", rootActionId, sourceEntityId: pending.operation.sourceEntityId, abilityRef: pending.operation.abilityRef,
+    parameters: { ...structuredClone(pending.operation.parameters), command: answer.command },
+  }, rootActionId));
+  if (resumed.kind === "rejected") return resumed;
+  if (resumed.kind === "initialized") return rejected("invalidWorldState", "Command continuation unexpectedly initialized a new world.");
+  return { ...resumed, events: [...closed.events, ...resumed.events] };
 }
 
 function openTargetPending(
@@ -4448,6 +4510,8 @@ function prepareAbilityExecution(
   const mechanical: JsonRecord = {};
   const savingThrows: JsonRecord = {};
   if (isRecord(definition.save)) mechanical.savingThrows = savingThrows;
+  // SRD 5.1 Command: the word spoken is frozen with the cast.
+  if (carriesCommand(definition) && isNonEmptyString(parameters.command)) mechanical.command = parameters.command;
   let deferDamageForShield = false;
   if (isRecord(definition.target) && definition.target.kind === "area") {
     const origin = parameters.areaOrigin;
@@ -4743,6 +4807,14 @@ function invokeAbility(
   const selection = selectAbilityTargets(state, source, definition, submittedParameters);
   if ("kind" in selection) return selection;
   const parameters = selection.parameters;
+  // SRD 5.1 Command: the caster speaks one of the five words; without one,
+  // it is asked which before anything is spent.
+  if (carriesCommand(definition)) {
+    if (parameters.command === undefined) return openCommandPending(profiles, state, root, source, abilityRef, parameters);
+    if (!(COMMAND_WORDS as readonly unknown[]).includes(parameters.command)) {
+      return rejected("invalidRulesInput", "Command takes one of approach, drop, flee, grovel or halt.");
+    }
+  }
   if (encounter !== undefined && activation.kind === "actionSpell" && Number(activation.spellLevel) > 0
     && isRecord(source.turn)
     && (source.turn.bonusActionSpellCast === true || source.turn.leveledBonusActionSpell === true)) {
@@ -8648,7 +8720,23 @@ function turnStartAwareness(
       then: { kind: "turnStart", entityId: activeEntityId, openReady },
     }, perceptionDiceSpecs(specs));
   }
-  return openReady ? turnStartReadyBatch(profiles, state, rootActionId, activeEntityId) : undefined;
+  return withTurnStartCommand(profiles, state, rootActionId, activeEntityId,
+    openReady ? turnStartReadyBatch(profiles, state, rootActionId, activeEntityId) : undefined);
+}
+
+/** The last of a turn's start: a command the creature must follow (SRD
+ * Command), once whatever came before has committed. */
+function withTurnStartCommand(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  rootActionId: string,
+  activeEntityId: string,
+  before: StepResult | undefined,
+): StepResult | undefined {
+  if (before === undefined) return turnStartCommand(profiles, state, rootActionId, activeEntityId);
+  if (before.kind !== "committed") return before;
+  const command = turnStartCommand(profiles, before.state, rootActionId, activeEntityId);
+  return command === undefined ? before : appendTransitions(before, command);
 }
 
 function turnStartReadyBatch(
@@ -8703,7 +8791,8 @@ function resolveHiddenPerception(
   return afterDraftsOptional(profiles, state, root, drafts, (nextState) => {
     if (then === null) return undefined;
     if (then.kind === "turnStart" && isNonEmptyString(then.entityId)) {
-      return then.openReady === true ? turnStartReadyBatch(profiles, nextState, root, then.entityId) : undefined;
+      return withTurnStartCommand(profiles, nextState, root, then.entityId,
+        then.openReady === true ? turnStartReadyBatch(profiles, nextState, root, then.entityId) : undefined);
     }
     if (then.kind === "readyResponse" && isRecord(then.pending)) return continueAfterReadyResponse(profiles, nextState, then.pending);
     throw new RulesValidationError("Perception continuation names an unknown next step.");
@@ -8752,18 +8841,134 @@ function endTurn(
   // players are asked first whether the encounter ends.
   const offered = automaticConclusion(profiles, state, root, encounter, input);
   if (offered !== undefined) return offered;
+  return finishTurn(profiles, state, root, encounter, String(input.sourceEntityId));
+}
+
+/** The active creature's turn ends: its missed long-casting rounds, the end
+ * itself, its repeated saves, then the next turn or round. */
+function finishTurn(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  root: string,
+  encounter: JsonRecord,
+  sourceEntityId: string,
+): StepResult {
+  const encounterId = String(encounter.encounterId);
   const drafts: Draft[] = [
-    ...missedLongSpellcastingDrafts(state, encounter, String(input.sourceEntityId)),
-    { eventType: "TurnEnded", payload: { encounterId: input.encounterId, sourceEntityId: input.sourceEntityId } },
+    ...missedLongSpellcastingDrafts(state, encounter, sourceEntityId),
+    { eventType: "TurnEnded", payload: { encounterId, sourceEntityId } },
   ];
   // SPEC 0012 §10.1: a creature repeats its saving throws against the
   // conditions it is under at the end of its own turn, before the next turn
   // starts. They are read after the turn's own endings have committed.
-  if (repeatSaveEffects(state, String(input.sourceEntityId)).length > 0) {
+  if (repeatSaveEffects(state, sourceEntityId).length > 0) {
     return afterDrafts(profiles, state, root, drafts, (nextState) =>
-      beginTurnEndRepeatSaves(profiles, nextState, root, String(input.encounterId), String(input.sourceEntityId)));
+      beginTurnEndRepeatSaves(profiles, nextState, root, encounterId, sourceEntityId));
   }
-  return continueAfterTurnEnded(profiles, state, root, String(input.encounterId), drafts);
+  return continueAfterTurnEnded(profiles, state, root, encounterId, drafts);
+}
+
+/** SPEC 0012 §10.1 (SRD 5.1 Command, user ruling: Rules carries it out): when
+ * the commanded creature's turn has started, it obeys -- spending its action
+ * and bonus action -- and its turn ends. A creature that cannot act cannot
+ * follow it, and the spell ends. A move the command makes may still draw a
+ * reaction; the turn then stays open for its controller to end. */
+function turnStartCommand(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  root: string,
+  entityIdValue: string,
+): StepResult | undefined {
+  const command = commandOn(state, entityIdValue);
+  const encounter = activeEncounter(state, entityIdValue);
+  const body = combatEntity(state, entityIdValue);
+  if (command === undefined || command.command === undefined || encounter === undefined
+    || encounter.activeEntityId !== entityIdValue || body === undefined) return undefined;
+  if (!conditionMechanics(state, entityIdValue).canAct) {
+    return sequence("committed", profiles, state, root, worldEffectEndDrafts(state, [command.effectId], "cannotFollowCommand"));
+  }
+  const word = command.command;
+  const patch = structuredClone(body);
+  const turn = isRecord(patch.turn) ? patch.turn : {};
+  turn.action = "0";
+  turn.bonusAction = "0";
+  // "Flee": the fastest available means is a Dash.
+  if (word === "flee") turn.dashes = String(dashesThisTurn(patch) + 1);
+  patch.turn = turn;
+  // "Halt", "Drop", "Grovel": no move this turn.
+  const walk = isRecord(body.speedInches) && typeof body.speedInches.walk === "string" ? body.speedInches.walk : "0";
+  if (word === "halt" || word === "drop" || word === "grovel") {
+    patch.movement = { spentMilliInches: turnMovementLimitMilliInches(patch, conditionSpeed(state, entityIdValue, walk).speed).toString() };
+  }
+  const prone = isRecord(body.conditions) && body.conditions.prone === true;
+  let result: StepResult = sequence("committed", profiles, state, root, [
+    { eventType: "AbilityInvoked", payload: { sourceEntityId: entityIdValue, abilityRef: "action:obey-command",
+      mechanicalResult: { command: word, commandedBy: command.sourceRef, summary: `服从命令「${COMMAND_LABELS[word]}」。` }, sourcePatch: patch } },
+    ...(word === "grovel" && !prone ? [{ eventType: "ConditionChanged", payload: { entityId: entityIdValue,
+      conditions: { ...(isRecord(body.conditions) ? body.conditions : {}), prone: true } } } as Draft] : []),
+    ...worldEffectEndDrafts(state, [command.effectId], "commandObeyed"),
+  ]);
+  if (word === "drop") {
+    for (let hand = 0; hand < 2 && result.kind === "committed"; hand += 1) {
+      const dropped = heldItemDropDraft(result.state, entityIdValue, root);
+      if (dropped === undefined) break;
+      result = appendTransitions(result, sequence("committed", profiles, result.state, root, [dropped]));
+    }
+  }
+  if ((word === "approach" || word === "flee") && result.kind === "committed") {
+    const moved = commandedMove(profiles, result.state, root, entityIdValue, command.sourceRef, word);
+    if (moved !== undefined) {
+      result = appendTransitions(result, moved);
+      if (moved.kind !== "committed") return result;
+    }
+  }
+  if (result.kind !== "committed") return result;
+  const after = result.state.combatRuntime.encounters[String(encounter.encounterId)];
+  return after === undefined || after.activeEntityId !== entityIdValue ? result
+    : appendTransitions(result, finishTurn(profiles, result.state, root, after, entityIdValue));
+}
+
+/** SRD 5.1 Command: "Approach" walks straight toward the caster, stopping
+ * once within 5 feet of it; "Flee" walks straight away as far as it can.
+ * The farthest such stop the movement step accepts is taken, in 5-foot
+ * steps back from it. */
+function commandedMove(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  root: string,
+  entityIdValue: string,
+  casterId: string,
+  word: "approach" | "flee",
+): StepResult | undefined {
+  const mover = combatEntity(state, entityIdValue), caster = combatEntity(state, casterId);
+  const encounter = activeEncounter(state, entityIdValue);
+  const from = mover === undefined ? undefined : canonicalCombatPoint(mover.position);
+  const toward = caster === undefined ? undefined : canonicalCombatPoint(caster.position);
+  if (mover === undefined || caster === undefined || encounter === undefined || from === undefined || toward === undefined
+    || mover.sceneId !== caster.sceneId || (word === "approach" && entitiesWithinRange(mover, caster, "60"))) return undefined;
+  const walk = isRecord(mover.speedInches) && typeof mover.speedInches.walk === "string" ? mover.speedInches.walk : "0";
+  const speed = conditionSpeed(state, entityIdValue, walk);
+  const spent = isRecord(mover.movement) ? BigInt(String(mover.movement.spentMilliInches ?? "0")) : 0n;
+  const budget = Number((turnMovementLimitMilliInches(mover, speed.canMove ? speed.speed : "0") - spent) / 1000n);
+  const dx = Number(toward.x) - Number(from.x), dy = Number(toward.y) - Number(from.y), distance = Math.hypot(dx, dy);
+  if (budget < 60 || distance === 0) return undefined;
+  const sign = word === "approach" ? 1 : -1;
+  const at = (reach: number) => ({ x: String(Math.round(Number(from.x) + sign * dx * reach / distance)),
+    y: String(Math.round(Number(from.y) + sign * dy * reach / distance)), elevation: from.elevation });
+  const steps = Array.from({ length: Math.floor(budget / 60) }, (_, index) => (index + 1) * 60);
+  // Approach stops at the first step that ends within 5 feet of the caster.
+  const close = word === "approach" ? steps.find((reach) => reach <= distance
+    && entitiesWithinRange({ ...mover, position: at(reach) }, caster, "60")) : undefined;
+  // The scene's edge stops it, as it stops any planned walk.
+  const boundary = sceneBoundary(state.combatRuntime.scenes[String(mover.sceneId)]);
+  const reaches = steps.filter((reach) => (close === undefined ? (word === "flee" || reach <= distance) : reach <= close)
+    && (boundary === undefined || footprintInsidePolygon(at(reach), mover, boundary))).reverse();
+  for (const reach of reaches) {
+    const moved = moveCombatant(profiles, state, continueCompoundRoot({ kind: "moveCombatant", rootActionId: root,
+      encounterId: encounter.encounterId, sourceEntityId: entityIdValue, movementMode: "walk", path: [from, at(reach)] }, root));
+    if (moved.kind !== "rejected" && moved.kind !== "initialized") return moved;
+  }
+  return undefined;
 }
 
 /** After the active creature's turn has ended: the next creature's turn
@@ -10339,6 +10544,7 @@ function answerPendingInput(
     case "triggerOrder": return answerTriggerOrder(profiles, state, pending, input.answer);
     case "contestDefense": return answerContestDefense(profiles, state, pending, input.answer);
     case "target": return answerTargetPending(profiles, state, pending, input.answer);
+    case "commandWord": return answerCommandPending(profiles, state, pending, input.answer);
     case "knockOut": return answerKnockOut(profiles, state, pending, input.answer);
     case "reaction": return answerReaction(profiles, state, pending, input.answer);
     case "encounterConclusion": return answerConclusion(profiles, state, pending, input.answer);

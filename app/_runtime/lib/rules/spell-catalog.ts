@@ -214,7 +214,8 @@ export const SPELL_DEFINITIONS = {
   command: {
     id: "command", level: 1, components: ["V"], actionCost: "action", castingSeconds: 6,
     range: feet(60), targets: targets("creature", 1, { perSlotAbove: 1 }), duration: timed(6, { turnBoundary: "targetEnd" }),
-    resolution: save("wis", "negates-status", { effects: [effect("commanded", "下回合执行一个不直接有害的单词命令", "condition")] }),
+    resolution: save("wis", "negates-status", { effects: [{ ...effect("commanded", "下回合执行一个不直接有害的单词命令", "condition"),
+      modifier: { kind: "commanded" } }] }),
   },
   "detect-evil": {
     id: "detect-evil", level: 1, components: ["V", "S"], actionCost: "action", castingSeconds: 6,
