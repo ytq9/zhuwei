@@ -8115,7 +8115,7 @@ function turnStartFollowups(
 ): StepResult | undefined {
   const encounter = activeEncounter(state, activeEntityId);
   if (encounter !== undefined && conclusionControllers(state, encounter).length === 0
-    && !encounterHasUnsettledDying(state, encounter) && encounterConflictStopped(state, encounter)) {
+    && !deathSavesHoldEncounter(state, encounter) && encounterConflictStopped(state, encounter)) {
     // The preceding round already advanced time; no new turn was taken.
     return finishEncounter(profiles, state, rootActionId, encounter, "noLivingPlayerConflictRemaining", {}, [], "0");
   }
@@ -8346,7 +8346,13 @@ function resolveDeathSavesAndRound(
       );
 }
 
-function encounterHasUnsettledDying(state: AuthoritativeWorldState, encounter: JsonRecord): boolean {
+/** SPEC 0012 §§12.1、13 (ADR 0126): with every player character down or gone,
+ * a creature still making death saves holds the encounter in initiative until
+ * it is stable or dead. While a player character can still fight, a dying
+ * creature counts as one that cannot (ADR 0112): the players are asked whether
+ * the fight ends, and a refusal leaves them the turn to tend it. */
+function deathSavesHoldEncounter(state: AuthoritativeWorldState, encounter: JsonRecord): boolean {
+  if (encounterParticipantsAbleToFight(state, encounter).some(id => state.combatRuntime.entities[id]?.kind === "player")) return false;
   return (Array.isArray(encounter.participantEntityIds) ? encounter.participantEntityIds : []).some(id =>
     isNonEmptyString(id) && medicineCanStabilize(state.combatRuntime.entities[id] ?? {}));
 }
@@ -8369,7 +8375,7 @@ function proposeEncounterConclusion(
     return rejected("pendingInputUnresolved", "Encounter conclusion cannot bypass an unresolved combat phase.");
   }
   const controllerEntityIds = conclusionControllers(state, encounter);
-  if (encounterHasUnsettledDying(state, encounter)) return rejected("pendingInputUnresolved", "Death saves must settle before leaving initiative.");
+  if (deathSavesHoldEncounter(state, encounter)) return rejected("pendingInputUnresolved", "Death saves must settle before leaving initiative.");
   if (controllerEntityIds.length === 0) return encounterConflictStopped(state, encounter)
     ? finishEncounter(profiles, state, root, encounter, "noLivingPlayerConflictRemaining")
     : rejected("invalidRulesInput", "The remaining creatures are still fighting.");
@@ -8452,7 +8458,7 @@ function automaticConclusion(
   encounter: JsonRecord,
   input: JsonRecord,
 ): StepResult | undefined {
-  if (encounter.status === "concluded" || encounterHasUnsettledDying(state, encounter)) return undefined;
+  if (encounter.status === "concluded" || deathSavesHoldEncounter(state, encounter)) return undefined;
   if (conclusionControllers(state, encounter).length === 0 && encounterConflictStopped(state, encounter)
     && Object.keys(state.combatRuntime.pendingInputs).length === 0
     && Object.keys(state.combatRuntime.randomnessResolutions).length === 0) {

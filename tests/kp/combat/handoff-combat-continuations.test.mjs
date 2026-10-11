@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createAuthoredProbeFixture, PROBE_ACTOR as ACTOR, PROBE_TARGET as PEER, PROBE_SCENE as SCENE } from '../../../tools/lib/vnext-authored-probe-fixture.mjs';
+import { createAuthoredProbeFixture, PROBE_ACTOR as ACTOR, PROBE_TARGET as PEER, PROBE_SCENE as SCENE, PROBE_SOURCE as SOURCE } from '../../../tools/lib/vnext-authored-probe-fixture.mjs';
 import { authoritativeModuleProfile } from '../../../app/_runtime/lib/module/authoritative.ts';
 import { combatDepartureOptions } from '../../../app/_runtime/lib/rules/v2/places.ts';
 
@@ -155,6 +155,43 @@ test('SPEC 0012 §§12,13: all players down retain their death saves; actual dea
   assert.equal(f.events.filter(event => event.eventType === 'EncounterConcluded').length, 1);
   assert.equal(f.events.find(event => event.eventType === 'EncounterConcluded').payload.fictionAdvanceMicros, '0');
   assert.equal(f.events.some(event => /StoryConcluded|ChapterConcluded/u.test(event.eventType)), false);
+});
+
+// ADR 0126 against ADR 0112: a foe at 0 HP cannot fight, but with the one
+// player down too, no one is asked to end the fight; both keep making death
+// saves. (With a player standing, the players are asked:
+// combat-map-reply.room.test.ts.)
+test('SPEC 0012 §§12,13: a downed player is not asked to end the fight while a downed foe still makes death saves', () => {
+  const GUARD = 'npc:handoff:guard';
+  const f = createAuthoredProbeFixture('handoff-both-dying', { npcCharacters: [{ id: GUARD, name: '守卫', mechanical: false }],
+    characterOverrides: { [ACTOR]: { hitPoints: { current: 0, maximum: 20 } } } });
+  f.events = [];
+  const guard = f.state.combatRuntime.entities[GUARD];
+  const started = settle(f, apply(f, { kind: 'startEncounter', rootActionId: 'root:handoff:both-dying', proposalAttemptId: 'proposal:handoff:both-dying',
+    encounterId: 'encounter:both-dying', sceneId: guard.sceneId, participantEntityIds: [ACTOR], battlefieldFactIds: [],
+    dynamicEntities: [{ entityId: GUARD, name: '守卫', placement: { position: structuredClone(guard.position) }, initialState: { hitPointsCurrent: '0' },
+      mechanics: { kind: 'bespokeDefinition', definition: {
+        definitionId: 'npc-template:handoff:guard', revision: '1', definitionKind: 'npcMechanicalTemplate',
+        rulesBasis: 'srd5.1-2014', causalBasisRefs: [SOURCE], visibilityPolicyRef: 'visibility:scene-observers',
+        content: { schema: 'zhuwei.npc-mechanical-template/v1', label: '守卫', footprint: structuredClone(guard.footprint),
+          stats: { str: '12', dex: '12', con: '10', int: '10', wis: '10', cha: '10' }, proficiencyBonus: '2',
+          armorClass: '12', armorClassModel: { kind: 'higherOfBaseAndEquipment', baseArmorClass: '12', shieldBonus: '0' },
+          hitPointsMaximum: '11', speedInches: { walk: '360' }, resourceMaximums: {}, deathPolicy: 'deathSaves',
+          intrinsicAbilities: [], itemDefinitions: [], itemDefinitionRefs: [], initialLoadout: { entries: [] } } } } }],
+    initiativeGroups: [ACTOR, GUARD].map(id => ({ entryId: `initiative:${id}`, combatantEntityIds: [id] })),
+    hostilities: [{ fromEntityIds: [ACTOR], toEntityIds: [GUARD] }, { fromEntityIds: [GUARD], toEntityIds: [ACTOR] }] }));
+  assert.equal(started.kind, 'committed', JSON.stringify(started).slice(0, 1500));
+  const encounter = () => f.state.combatRuntime.encounters['encounter:both-dying'];
+  assert.equal(encounter().activeEntityId, ACTOR);
+  for (const id of [ACTOR, GUARD]) {
+    const ended = settle(f, apply(f, { kind: 'endTurn', encounterId: 'encounter:both-dying', sourceEntityId: id,
+      rootActionId: `root:both-dying-turn:${f.events.length}` }), () => 2);
+    assert.equal(ended.kind, 'committed', JSON.stringify(ended).slice(0, 1500));
+  }
+  assert.equal(f.events.some(event => event.eventType === 'EncounterConclusionProposed'), false);
+  assert.notEqual(encounter().status, 'concluded');
+  assert.deepEqual([ACTOR, GUARD].map(id => f.state.combatRuntime.entities[id].lifeState), ['unconscious', 'unconscious']);
+  assert.deepEqual([ACTOR, GUARD].map(id => f.state.combatRuntime.entities[id].deathSaves.failures > 0), [true, true]);
 });
 
 
