@@ -325,8 +325,9 @@ test("Rules projects the player's own combat controls outside the actor's delta 
   const { view, state } = playerView(genesis());
   assert.deepEqual(Object.keys(view.combatControls).sort(),
     ["abilities", "hidden", "jumps", "movement", "offers", "prone", "turn", "vitals", "withinFiveFeetRefs"]);
+  // SPEC 0012 §10.1 (ADR 0155): the armor class attacks are rolled against.
   assert.deepEqual(view.combatControls.vitals, {
-    temporaryHitPoints: "0", concentration: null, lifeState: "alive", deathSaves: { successes: "0", failures: "0" },
+    temporaryHitPoints: "0", armorClass: "12", concentration: null, lifeState: "alive", deathSaves: { successes: "0", failures: "0" },
   });
   assert.equal(view.combatControls.prone, false);
   assert.equal(view.combatControls.hidden, false);
@@ -620,6 +621,7 @@ test("the table shows the actor's temporary hit points, concentration and condit
   const { view } = playerView(genesis({ concentrating: true, grappled: true }));
   assert.deepEqual(view.combatControls.vitals, {
     temporaryHitPoints: "5",
+    armorClass: "12",
     concentration: { abilityRef: "ability:alice:spell:sleep", sourceSpellId: "sleep" },
     lifeState: "alive",
     deathSaves: { successes: "0", failures: "0" },
@@ -627,7 +629,7 @@ test("the table shows the actor's temporary hit points, concentration and condit
   const projected = projectAuthoritativeTableObservation({ userId: "principal:alice", members: ["principal:alice"], locationLabels: {},
     observation: { readModel: view, delivery: { kind: "none" } } });
   assert.deepEqual(projected.combatControls.vitals, {
-    temporaryHitPoints: 5, concentration: { name: "睡眠术" }, lifeState: "alive", deathSaves: { successes: 0, failures: 0 },
+    temporaryHitPoints: 5, armorClass: 12, concentration: { name: "睡眠术" }, lifeState: "alive", deathSaves: { successes: 0, failures: 0 },
   });
   assert.deepEqual(projected.controlledCharacter.conditions, [{ id: "grappled" }]);
 

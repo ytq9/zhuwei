@@ -971,7 +971,8 @@ export function PlayTable({
     sheet: myCard.sheet,
     level: controlledCharacter?.level,
     hitPoints: controlledCharacter?.hitPoints,
-    armorClass: controlledCharacter?.loadout?.armorClass,
+    // SPEC 0012 §10.1: the armor class attacks are rolled against, effects included.
+    armorClass: snap.state.authoritative?.combatControls?.vitals?.armorClass ?? controlledCharacter?.loadout?.armorClass,
     speedFeet: controlledCharacter?.loadout?.speedFeet,
     conditions: controlledCharacter?.conditions,
     combat: snap.state.authoritative?.combatControls?.vitals,

@@ -36,6 +36,7 @@ import {
   type TacticalEncounterSummary,
   type TacticalKnownFeature,
   type TacticalProjection,
+  type TacticalZone,
 } from "../tactical-projection";
 import type {
   AuthoritativeWorldState,
@@ -63,7 +64,8 @@ import {
   spatialRecordVisibleTo,
 } from "./spatial-visibility";
 import { characterTimelineId } from "./timeline";
-import { effectiveConditions, effectiveConditionEntity } from "./world-effects";
+import { effectiveConditions, effectiveConditionEntity, zoneEffectsIn, type ZoneEffectRecord } from "./world-effects";
+import { effectiveArmorClass as modifiedArmorClass } from "./effect-modifiers";
 import { projectRestRecoveryOptions } from "./character-rest";
 import {
   itemPolicyVisibleToViewer,
@@ -417,14 +419,38 @@ function safeConversationThreadFor(
   return projected;
 }
 
+/** SPEC 0012 §10.1: the armor class attacks are rolled against, read from
+ * the same derivation the mechanics use. */
 function projectedArmorClass(state: AuthoritativeWorldState, entity: JsonRecord): number | undefined {
-  const base = Number(entity.armorClass);
-  if (!Number.isFinite(base)) return undefined;
-  const shieldBonus = Object.values(state.combatRuntime.effects)
-    .filter((effect) => effect.kind === "shield"
-      && effect.targetEntityId === entity.id)
-    .reduce((maximum, effect) => Math.max(maximum, Number(effect.armorClassBonus ?? 0)), 0);
-  return base + shieldBonus;
+  return Number.isFinite(Number(entity.armorClass)) ? modifiedArmorClass(state, entity) : undefined;
+}
+
+const ZONE_LABELS: Readonly<Record<ZoneEffectRecord["zone"]["kind"], string>> = { heavilyObscured: "浓雾（重度遮蔽）", silence: "沉默区域" };
+
+/** SPEC 0014 §§6、9.3 (ADR 0155): the zones an effect fills in the scene, a
+ * sphere drawn as a sixteen-sided ring at its ground, as high as it reaches. */
+function projectedZones(state: AuthoritativeWorldState, sceneId: string): TacticalZone[] {
+  return (["heavilyObscured", "silence"] as const).flatMap((kind) => zoneEffectsIn(state, sceneId, kind)).map((zone) => {
+    const radius = Number(zone.radiusInches), x = Number(zone.origin.x), y = Number(zone.origin.y);
+    return {
+      id: zone.effectId,
+      label: ZONE_LABELS[zone.zone.kind],
+      sourceRef: zone.sourceRef,
+      state: "active",
+      geometry: {
+        kind: "polygon" as const,
+        points: Array.from({ length: 16 }, (_, index) => ({
+          x: String(Math.round(x + radius * Math.cos((index * Math.PI) / 8))),
+          y: String(Math.round(y + radius * Math.sin((index * Math.PI) / 8))),
+        })),
+        elevation: String(Number(zone.origin.elevation) - radius),
+        height: String(2 * radius),
+      },
+      effectTags: [zone.zone.kind],
+      startsAtMicros: zone.startedAtFictionMicros,
+      expiresAtMicros: zone.expiresAt?.kind === "fictionTime" ? zone.expiresAt.dueMicros : null,
+    };
+  }).sort((left, right) => left.id.localeCompare(right.id));
 }
 
 function observerSafeCombatEntity(
@@ -800,6 +826,7 @@ function projectTacticalScene(
     ? projectTacticalPlaces(state, character.id, scene.id, sceneFeatures)
     : { knownFeatures: sceneFeatures };
   const knownFeatures = places.knownFeatures;
+  const knownZones = projectedZones(state, scene.id);
   const entityReadout = visibleEntities.map((entity) => {
     const milliInches = BigInt(pathLengthMilliInches([
       self.position,
@@ -840,7 +867,7 @@ function projectTacticalScene(
     self,
     visibleEntities,
     knownFeatures,
-    knownZones: [] as const,
+    knownZones,
     encounter,
   };
   const result: TacticalProjection = {
@@ -849,7 +876,7 @@ function projectTacticalScene(
     self: viewerSafeSpatialPayload.self,
     visibleEntities: viewerSafeSpatialPayload.visibleEntities,
     knownFeatures: viewerSafeSpatialPayload.knownFeatures,
-    knownZones: [],
+    knownZones: viewerSafeSpatialPayload.knownZones,
     // Stitching only changes what the map shows, so the known places stay
     // out of the spatial revision a move is checked against.
     ...(places.knownPlaces === undefined ? {} : { knownPlaces: places.knownPlaces }),
@@ -1460,8 +1487,11 @@ function controlledVitals(state: AuthoritativeWorldState, entity: JsonRecord) {
   const sourceSpellId = definition !== undefined && isNonEmptyString(definition.sourceSpellId)
     ? definition.sourceSpellId : undefined;
   const deathSaves = isRecord(entity.deathSaves) ? entity.deathSaves : {};
+  const armorClass = projectedArmorClass(state, entity);
   return {
     temporaryHitPoints: count(isRecord(entity.hitPoints) ? entity.hitPoints.temporary : undefined),
+    // SPEC 0012 §10.1: the panel shows the armor class attacks are rolled against.
+    ...(armorClass === undefined || !Number.isSafeInteger(armorClass) || armorClass < 0 ? {} : { armorClass: String(armorClass) }),
     concentration: concentration === undefined ? null : {
       ...(abilityRef === undefined ? {} : { abilityRef }),
       ...(sourceSpellId === undefined ? {} : { sourceSpellId }),

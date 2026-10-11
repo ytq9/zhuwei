@@ -74,6 +74,10 @@ test('Fog Cloud fills a 20-foot sphere that blocks sight both ways, so attacks t
   assert.deepEqual([fog.zone, fog.origin, fog.radiusInches, fog.lifecycle, fog.sourceRef],
     [{ kind: 'heavilyObscured' }, point(130), '240', { concentration: true }, ACTOR]);
   assert.equal(f.state.combatRuntime.entities[ACTOR].concentration.linkedEffects, true);
+  // The map draws it from the same record (SPEC 0014 §§6、9.3).
+  const [drawn] = f.runtime.project(f.profiles, f.state, f.viewer).tacticalProjection.knownZones;
+  assert.deepEqual([drawn.id, drawn.effectTags, drawn.geometry.points.length, drawn.geometry.points[0], drawn.geometry.height],
+    [fog.effectId, ['heavilyObscured'], 16, { x: '370', y: '100' }, '480']);
   // The armed peer cannot see the caster leave its reach.
   const left = apply(f, { kind: 'moveCombatant', rootActionId: 'root:leave-fog', encounterId: ENCOUNTER, sourceEntityId: ACTOR,
     movementMode: 'walk', path: [point(100), point(20)] });

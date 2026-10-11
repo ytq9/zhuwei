@@ -37,6 +37,7 @@ npm run spec:trace
 | 2026-10-11 | [ADR 0146：地图与行动列表组成的句子放进输入框，行动集中到角色栏](../adr/0146-picked-sentences-go-into-the-composer.md) | [SPEC 0014 §§4、8](./0014-observer-tactical-map-and-environment.md) |
 | 2026-10-11 | [ADR 0147：删除无调用者的桌面按钮接口与旧面板](../adr/0147-retire-unused-table-buttons-and-legacy-panels.md) | 条款不变；验收门改查现役入口：[SPEC 0004](./0004-kp-and-noncombat-mechanics.md)、[SPEC 0011](./0011-reliability-correction-observability-and-evaluation.md) |
 | 2026-10-11 | [ADR 0148：地图分层绘制、四分之一格选点与 Rules 的射程和范围预览](../adr/0148-map-layers-quarter-cell-picks-and-rules-area-preview.md) | 条款不变；实现 [SPEC 0014 §7](./0014-observer-tactical-map-and-environment.md) 的区域预览与射程列表 |
+| 2026-10-11 | [ADR 0155：投影读取法术修正后的 AC，并画出持续区域](../adr/0155-projection-reads-effective-armor-class-and-zones.md) | 条款不变；实现 [SPEC 0012 §10.1](./0012-part-b-abilities-damage-and-conclusion.md) 的同一有效值来源与 [SPEC 0014 §§6、9.3](./0014-observer-tactical-map-and-environment.md) 的已知区域 |
 | 2026-10-11 | [ADR 0154：云雾术与沉默术的持续区域，以及法术成分](../adr/0154-fog-and-silence-zones-and-spell-components.md) | [SPEC 0012 §10.1](./0012-part-b-abilities-damage-and-conclusion.md)；实现 [SPEC 0014 §9.3](./0014-observer-tactical-map-and-environment.md) 的持续区域 |
 | 2026-10-11 | [ADR 0153：猎人印记的额外伤害随武器伤害一起掷](../adr/0153-hunters-mark-damage-rolls-with-the-weapon.md) | [SPEC 0012 §10.1](./0012-part-b-abilities-damage-and-conclusion.md) |
 | 2026-10-11 | [ADR 0152：祝福术与神导术的加值骰随所加的掷骰一起请求](../adr/0152-bonus-dice-are-asked-with-the-roll-they-add-to.md) | [SPEC 0012 §10.1](./0012-part-b-abilities-damage-and-conclusion.md) |

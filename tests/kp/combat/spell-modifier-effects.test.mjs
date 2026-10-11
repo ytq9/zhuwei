@@ -96,6 +96,10 @@ test('Mage Armor sets an unarmored target\'s base armor class to 13 plus Dexteri
   assert.equal(armored.kind, 'committed', JSON.stringify(armored));
   assert.deepEqual(effectsOn(f, PEER).map((effect) => [effect.modifier, effect.lifecycle]),
     [[{ kind: 'unarmoredArmorClass', base: 13 }, { endsWhen: ['targetDonsArmor'] }]]);
+  // The target's own panel reads the same armor class (SPEC 0012 §10.1).
+  const peerView = f.runtime.project(f.profiles, f.state, { kind: 'player', principalId: 'principal:probe-target',
+    seatId: 'seat:probe-target', sessionVersion: 1, characterId: PEER });
+  assert.equal(peerView.combatControls.vitals.armorClass, '13');
   endTurn(f, ACTOR);
   endTurn(f, PEER);
   const bolt = cast(f, 'fire-bolt', 0, { targetEntityId: PEER }, { 'attack:': 10 });

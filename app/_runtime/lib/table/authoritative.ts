@@ -526,6 +526,8 @@ export type CombatControls = {
  * controls. A concentration Rules cannot name keeps a null name. */
 export type CombatVitals = {
   temporaryHitPoints: number;
+  /** SPEC 0012 §10.1: the armor class attacks are rolled against, effects included. */
+  armorClass?: number;
   concentration: { name: string | null } | null;
   lifeState: "alive" | "unconscious" | "dead";
   deathSaves: { successes: number; failures: number };
@@ -806,7 +808,8 @@ function closedCombatVitals(value: unknown, definitions: Record<string, unknown>
     }
     return Number(candidate);
   };
-  if (!isRecord(value) || !hasExactKeys(value, ["concentration", "deathSaves", "lifeState", "temporaryHitPoints"])
+  if (!isRecord(value) || !(hasExactKeys(value, ["concentration", "deathSaves", "lifeState", "temporaryHitPoints"])
+      || hasExactKeys(value, ["armorClass", "concentration", "deathSaves", "lifeState", "temporaryHitPoints"]))
     || (value.lifeState !== "alive" && value.lifeState !== "unconscious" && value.lifeState !== "dead")
     || !isRecord(value.deathSaves) || !hasExactKeys(value.deathSaves, ["failures", "successes"])
     || (value.concentration !== null && !isRecord(value.concentration))) {
@@ -823,8 +826,11 @@ function closedCombatVitals(value: unknown, definitions: Record<string, unknown>
         ?? null,
     };
   }
+  const armorClass = value.armorClass === undefined ? undefined : count(value.armorClass);
+  if (armorClass !== undefined && (armorClass < 1 || armorClass > 99)) throw new TypeError("Authoritative combat vitals are invalid.");
   return {
     temporaryHitPoints: count(value.temporaryHitPoints),
+    ...(armorClass === undefined ? {} : { armorClass }),
     concentration,
     lifeState: value.lifeState,
     deathSaves: { successes: count(value.deathSaves.successes), failures: count(value.deathSaves.failures) },
