@@ -138,6 +138,7 @@ export function tacticalAreaPreview(
     entities.find((entity) => entity.id === id)?.relation === "ally");
   const readout = [
     others.length === 0 ? "范围内没有你看得见的人。" : `范围内你看得见的：${others.map(nameOf).join("、")}。`,
+    ...(friendly.length === 0 ? [] : [`其中是同伴的：${friendly.map(nameOf).join("、")}。`]),
     ...(knownAffectedEntityIds.includes(tactical.self.id) ? ["你自己也在范围内。"] : []),
     ...(blocker === undefined ? [] : [`${blocker.label}挡在前面，范围从墙前展开。`]),
   ];

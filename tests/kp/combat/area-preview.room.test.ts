@@ -83,6 +83,7 @@ it("the map's area pick is previewed by Rules through the table and Room, names 
   expect(answered.preview.knownAffectedEntityIds).toContain(`character:${guest}`);
   expect(answered.preview.knownFriendlyEntityIds).toContain(`character:${guest}`);
   expect(answered.preview.readout[0]).toContain(companion!.name);
+  expect(answered.preview.readout).toContain(`其中是同伴的：${companion!.name}。`);
   // The same question gets the same answer, and asking changed nothing.
   expect(await previewArea({ userId: host, data: { code, query } })).toEqual(answered);
   const after = await fetchTable({ userId: host, data: code }) as Data;
