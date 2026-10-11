@@ -448,6 +448,9 @@ const VNEXT_NON_RENDERABLE_LEDGER_EVENT_TYPES = new Set([
   "EntityMaterialized", "InitiativeRequested", "InitiativeTieOrdered",
   // SPEC 0012 §3.4: actual departure is rendered by its paired CharacterMoved.
   "CombatantDeparted",
+  // SPEC 0012 §10.1 (ADR 0156): a spectral weapon moving beside its target is
+  // told by the attack it makes there.
+  "EffectZoneMoved",
 ]);
 
 /** SPEC 0014 §4 (ADR 0104): how a claims root accounts for an event type --
@@ -2543,7 +2546,7 @@ function conditionEffectClaim(event: EventEnvelope, payload: JsonRecord, range: 
     viewerRefs: [targetRef], materialVisibilityPolicyRef: stringField(effect, "visibilityPolicyId"),
   }), kind: "mechanicalOutcome", targetRefs: [targetRef], outcomeCode: ended ? "effectEnded" : "effectApplied", summary: description };
 }
-const ZONE_LABELS: Readonly<Record<string, string>> = Object.freeze({ heavilyObscured: "浓雾（重度遮蔽）", silence: "沉默区域" });
+const ZONE_LABELS: Readonly<Record<string, string>> = Object.freeze({ heavilyObscured: "浓雾（重度遮蔽）", silence: "沉默区域", spectralWeapon: "灵体武器" });
 const D20_ROLL_LABELS: Readonly<Record<string, string>> = Object.freeze({ attack: "攻击检定", check: "属性检定", save: "豁免检定" });
 function modifierEffectLabel(modifier: JsonRecord): string | undefined {
   const amount = finiteNumber(modifier.amount), sides = finiteNumber(modifier.sides);

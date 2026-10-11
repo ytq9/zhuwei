@@ -284,7 +284,8 @@ export const SPELL_DEFINITIONS = {
   spiritual: {
     id: "spiritual", level: 2, components: ["V", "S"], actionCost: "bonusAction", castingSeconds: 6,
     range: feet(60), targets: targets("creature", 1, { requiresSight: true }), duration: timed(60),
-    resolution: attack("melee", dice(1, 8, "casting", 1, 2), "force", [effect("spiritual-weapon", "每回合可用附赠动作移动 20 尺并再次攻击", "summon")]),
+    resolution: attack("melee", dice(1, 8, "casting", 1, 2), "force", [{ ...effect("spiritual-weapon", "每回合可用附赠动作移动 20 尺并再次攻击", "summon"),
+      summon: { kind: "spectralWeapon", moveFeet: 20, reachFeet: 5 } }]),
   },
   aid: {
     id: "aid", level: 2, components: ["V", "S", "M"], actionCost: "action", castingSeconds: 6,

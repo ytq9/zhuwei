@@ -64,7 +64,7 @@ import {
   spatialRecordVisibleTo,
 } from "./spatial-visibility";
 import { characterTimelineId } from "./timeline";
-import { effectiveConditions, effectiveConditionEntity, zoneEffectsIn, type ZoneEffectRecord } from "./world-effects";
+import { effectiveConditions, effectiveConditionEntity, grantedAbilityRefs, ownZoneOf, zoneEffectsIn, type ZoneEffectRecord } from "./world-effects";
 import { effectiveArmorClass as modifiedArmorClass } from "./effect-modifiers";
 import { projectRestRecoveryOptions } from "./character-rest";
 import {
@@ -425,12 +425,12 @@ function projectedArmorClass(state: AuthoritativeWorldState, entity: JsonRecord)
   return Number.isFinite(Number(entity.armorClass)) ? modifiedArmorClass(state, entity) : undefined;
 }
 
-const ZONE_LABELS: Readonly<Record<ZoneEffectRecord["zone"]["kind"], string>> = { heavilyObscured: "浓雾（重度遮蔽）", silence: "沉默区域" };
+const ZONE_LABELS: Readonly<Record<ZoneEffectRecord["zone"]["kind"], string>> = { heavilyObscured: "浓雾（重度遮蔽）", silence: "沉默区域", spectralWeapon: "灵体武器" };
 
 /** SPEC 0014 §§6、9.3 (ADR 0155): the zones an effect fills in the scene, a
  * sphere drawn as a sixteen-sided ring at its ground, as high as it reaches. */
 function projectedZones(state: AuthoritativeWorldState, sceneId: string): TacticalZone[] {
-  return (["heavilyObscured", "silence"] as const).flatMap((kind) => zoneEffectsIn(state, sceneId, kind)).map((zone) => {
+  return (["heavilyObscured", "silence", "spectralWeapon"] as const).flatMap((kind) => zoneEffectsIn(state, sceneId, kind)).map((zone) => {
     const radius = Number(zone.radiusInches), x = Number(zone.origin.x), y = Number(zone.origin.y);
     return {
       id: zone.effectId,
@@ -1169,8 +1169,11 @@ function projectAuthoritative(
   }
   const controlledCombatEntity = state.combatRuntime.entities[character.id];
   const hiddenItems = hiddenItemPresentation(state, character.id);
+  // SRD Spiritual Weapon (ADR 0156): an ability an effect grants is listed
+  // while that effect lasts.
   const controlledAbilityRefs = Array.isArray(controlledCombatEntity?.abilityRefs)
-    ? controlledCombatEntity.abilityRefs.filter(isNonEmptyString).filter(ref => !hiddenItems.abilityRefs.has(ref)).sort()
+    ? [...new Set([...controlledCombatEntity.abilityRefs, ...grantedAbilityRefs(state, character.id)])]
+      .filter(isNonEmptyString).filter(ref => !hiddenItems.abilityRefs.has(ref)).sort()
     : [];
   const controlledCombat = controlledCombatEntity === undefined
     ? undefined
@@ -1437,9 +1440,10 @@ function controlledCombatControls(
         .map((key) => [key, structuredClone(definition[key])])),
       // SPEC 0012 §6.3 (ADR 0097 decision 4): an attack roll can be aimed at a point.
       ...(aimableAttack(definition) ? { attackRoll: true } : {}),
-      // SPEC 0014 §7 (ADR 0148): who it can reach now, of the creatures seen.
+      // SPEC 0014 §7 (ADR 0148): who it can reach now, of the creatures seen,
+      // from where a summon is when it strikes from there (ADR 0156).
       ...((inRange) => inRange === undefined ? {} : { targetsInRange: inRange })(
-        creatureTargetsInRange(entity, seen, definition.target)),
+        creatureTargetsInRange(summonOrigin(state, characterId, entity, definition), seen, definition.target)),
     }]];
   }));
   for (const exit of combatDepartureOptions(state, characterId)) abilities[exit.abilityRef] = {
@@ -1471,6 +1475,14 @@ function controlledCombatControls(
         && entityOccupiesSpace(other) && entitiesWithinRange(entity, other, "60")).map(([id]) => id).sort()
       : [],
   };
+}
+
+/** Where an ability measures its reach from: its user, or the summon it
+ * strikes from (SRD Spiritual Weapon). */
+function summonOrigin(state: AuthoritativeWorldState, characterId: string, entity: JsonRecord, definition: JsonRecord): JsonRecord {
+  const from = isRecord(definition.target) ? definition.target.fromZoneOf : undefined;
+  const zone = isNonEmptyString(from) ? ownZoneOf(state, characterId, from) : undefined;
+  return zone === undefined ? entity : { ...entity, position: structuredClone(zone.origin), footprint: { width: "60", depth: "60", height: "60" } };
 }
 
 /** SPEC 0010 §7: the actor's own temporary hit points, what it concentrates

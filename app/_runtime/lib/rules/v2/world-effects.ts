@@ -108,13 +108,15 @@ export type ModifierEffectRecord = JsonRecord & {
 };
 /** SPEC 0012 §10.1: an area an effect fills for its duration (SRD Fog Cloud,
  * Silence), a sphere frozen where it was cast. */
-export const ZONE_KINDS = ["heavilyObscured", "silence"] as const;
+export const ZONE_KINDS = ["heavilyObscured", "silence", "spectralWeapon"] as const;
 export type ZoneKind = typeof ZONE_KINDS[number];
 export type ZoneEffectDefinition = {
   kind: "createZone";
   zone: { kind: ZoneKind };
   duration: WorldEffectDuration;
   lifecycle?: WorldEffectLifecycle;
+  /** Abilities its caster may use while it lasts (SRD Spiritual Weapon). */
+  grants?: string[];
 };
 export const ZONE_EFFECT_SCHEMA = "zhuwei.zone-effect/v1" as const;
 /** A zone keeps time and ends by its caster: `targetEntityId` is the caster. */
@@ -137,6 +139,7 @@ export type ZoneEffectRecord = JsonRecord & {
   visibilityPolicyId: string;
   visibilityFactId: string | null;
   lifecycle?: WorldEffectLifecycle;
+  grants?: string[];
 };
 /** A granted condition, a modifier or a zone: the effects with a duration, a
  * concentration link and early endings. */
@@ -280,7 +283,9 @@ function modifierRecordDefinition(effect: ModifierEffectRecord): ModifierEffectD
 }
 
 export function zoneEffectDefinition(value: unknown): ZoneEffectDefinition | undefined {
-  if (!isRecord(value) || !hasOnlyKeys(value, ["duration", "kind", "zone"], ["label", "lifecycle", "tag"])
+  if (!isRecord(value) || !hasOnlyKeys(value, ["duration", "kind", "zone"], ["grants", "label", "lifecycle", "tag"])
+    || !(value.grants === undefined || (Array.isArray(value.grants) && value.grants.length > 0 && value.grants.length <= 4
+      && value.grants.every((ref, index, all) => isNonEmptyString(ref) && (index === 0 || String(all[index - 1]) < ref))))
     || value.kind !== "createZone" || !isRecord(value.zone) || !hasExactKeys(value.zone, ["kind"])
     || !(ZONE_KINDS as readonly unknown[]).includes(value.zone.kind)
     || !isWorldEffectDuration(value.duration)
@@ -294,7 +299,8 @@ export function zoneEffectDefinition(value: unknown): ZoneEffectDefinition | und
 
 function zoneRecordDefinition(effect: ZoneEffectRecord): ZoneEffectDefinition {
   return { kind: "createZone", zone: effect.zone, duration: effect.duration,
-    ...(effect.lifecycle === undefined ? {} : { lifecycle: effect.lifecycle }) };
+    ...(effect.lifecycle === undefined ? {} : { lifecycle: effect.lifecycle }),
+    ...(effect.grants === undefined ? {} : { grants: effect.grants }) };
 }
 
 export function isWorldEffectRecordCandidate(value: unknown): boolean {
@@ -417,7 +423,7 @@ export function isZoneEffectRecord(value: unknown): value is ZoneEffectRecord {
     "duration", "effectId", "expiresAt", "kind", "origin", "pausedMicros", "radiusInches", "sceneId", "schema",
     "sourceDefinitionRef", "sourceRef", "startedAtFictionMicros", "suspension", "targetEntityId",
     "visibilityFactId", "visibilityPolicyId", "zone",
-  ], ["lifecycle"]) || value.schema !== ZONE_EFFECT_SCHEMA || value.kind !== "zone"
+  ], ["grants", "lifecycle"]) || value.schema !== ZONE_EFFECT_SCHEMA || value.kind !== "zone"
     || ![value.effectId, value.sourceRef, value.sourceDefinitionRef, value.targetEntityId, value.sceneId].every(isNonEmptyString)
     || value.targetEntityId !== value.sourceRef
     || !isRecord(value.origin) || !hasExactKeys(value.origin, ["elevation", "x", "y"])
@@ -433,6 +439,40 @@ export function isZoneEffectRecord(value: unknown): value is ZoneEffectRecord {
 
 export function isLastingEffectRecord(value: unknown): value is LastingEffectRecord {
   return isWorldEffectRecord(value) || isModifierEffectRecord(value) || isZoneEffectRecord(value);
+}
+
+/** SRD Spiritual Weapon: the abilities a creature may use because an effect
+ * it made still lasts, in a stable order. */
+export function grantedAbilityRefs(state: AuthoritativeWorldState, entityId: string): string[] {
+  return [...new Set(Object.values(state.combatRuntime.effects).flatMap((effect) =>
+    isZoneEffectRecord(effect) && effect.sourceRef === entityId && effect.grants !== undefined ? effect.grants : []))].sort();
+}
+
+/** The zone a creature's own frozen Ability made, if it still lasts. */
+export function ownZoneOf(state: AuthoritativeWorldState, sourceRef: string, sourceDefinitionRef: string): ZoneEffectRecord | undefined {
+  return Object.values(state.combatRuntime.effects).find((effect): effect is ZoneEffectRecord => isZoneEffectRecord(effect)
+    && effect.sourceRef === sourceRef && effect.sourceDefinitionRef === sourceDefinitionRef);
+}
+
+/** SRD Spiritual Weapon: the weapon moved to a new place. */
+export type EffectZoneMovedPayload = { effectId: string; sourceRef: string; origin: { x: string; y: string; elevation: string } };
+
+export function isEffectZoneMovedPayload(value: unknown): value is EffectZoneMovedPayload {
+  return isRecord(value) && hasExactKeys(value, ["effectId", "origin", "sourceRef"])
+    && isNonEmptyString(value.effectId) && isNonEmptyString(value.sourceRef)
+    && isRecord(value.origin) && hasExactKeys(value.origin, ["elevation", "x", "y"])
+    && [value.origin.x, value.origin.y, value.origin.elevation].every(integerString);
+}
+
+export function applyEffectZoneMovedEvent(state: AuthoritativeWorldState, event: EventEnvelope): boolean {
+  if (event.eventType !== "EffectZoneMoved") return false;
+  const payload: unknown = event.payload;
+  if (!isEffectZoneMovedPayload(payload)) throw new RulesValidationError("Only a lasting spectral weapon moves.");
+  const effect = state.combatRuntime.effects[payload.effectId];
+  if (!isZoneEffectRecord(effect) || effect.sourceRef !== payload.sourceRef
+    || effect.zone.kind !== "spectralWeapon") throw new RulesValidationError("Only a lasting spectral weapon moves.");
+  effect.origin = structuredClone(payload.origin);
+  return true;
 }
 
 /** The zones of a kind in a scene, in a stable order. */
@@ -628,6 +668,7 @@ export function planZoneEffect(state: AuthoritativeWorldState, input: {
     duration: definition.duration, startedAtFictionMicros: now, pausedMicros: "0", suspension: null, expiresAt,
     visibilityPolicyId: "visibility:scene-observers", visibilityFactId: null,
     ...(definition.lifecycle === undefined ? {} : { lifecycle: definition.lifecycle }),
+    ...(definition.grants === undefined ? {} : { grants: definition.grants }),
   };
   if (origin === undefined || !isZoneEffectRecord(effectRecord) || state.combatRuntime.effects[effectRecord.effectId] !== undefined) {
     return { kind: "rejected", message: "The zone effect's place or identity is invalid." };

@@ -125,3 +125,58 @@ test('Silence deafens and protects from thunder a creature entirely inside, and 
     abilityRef: spell(f, 'fire-bolt', 0), parameters: { targetEntityId: PEER } });
   assert.deepEqual([refused.kind, refused.rejection?.message], ['rejected', 'spell:verbal-component-silenced']);
 });
+
+// A cleric who knows Spiritual Weapon, 15 feet from the peer.
+function clericFixture(name) {
+  const cleric = { classId: 'cleric', level: 3, cantripIds: ['sacred-flame'], preparedSpellIds: ['spiritual'],
+    resources: { slot1: 4, slot2: 2 }, resourceMaximums: { slot1: 4, slot2: 2 },
+    characterBuild: { classId: 'cleric', raceId: 'human', cantrips: ['sacred-flame'], prepared: ['spiritual'] } };
+  const f = createAuthoredProbeFixture(name, { spawnPoints: [{ x: '100', y: '100', elevation: '0' }, { x: '280', y: '100', elevation: '0' }],
+    characterOverrides: { [ACTOR]: cleric } });
+  f.events = [];
+  const participants = [ACTOR, PEER];
+  assert.equal(settle(f, apply(f, { kind: 'startEncounter', rootActionId: `root:${name}:encounter`, proposalAttemptId: `proposal:${name}:encounter`,
+    encounterId: ENCOUNTER, sceneId: SCENE, participantEntityIds: participants, dynamicEntities: [], battlefieldFactIds: [],
+    initiativeGroups: participants.map((id) => ({ entryId: `initiative:${id}`, combatantEntityIds: [id] })),
+    hostilities: [{ fromEntityIds: [ACTOR], toEntityIds: [PEER] }, { fromEntityIds: [PEER], toEntityIds: [ACTOR] }] })).kind, 'committed');
+  return f;
+}
+const listed = (f) => Object.keys(f.runtime.project(f.profiles, f.state, f.viewer).combatControls.abilities);
+
+test('Spiritual Weapon strikes beside its target and grants a bonus-action strike from where the weapon is while it lasts', () => {
+  const f = clericFixture('spiritual-weapon');
+  const cast2 = spell(f, 'spiritual', 2);
+  const strikeRef = `${cast2}:strike`;
+  assert.equal(listed(f).includes(strikeRef), false, 'the strike is not offered before the weapon exists');
+  const summoned = cast(f, 'spiritual', 2, { targetEntityId: PEER }, { 'attack:': 15 });
+  assert.equal(summoned.kind, 'committed', JSON.stringify(summoned));
+  const attack = summoned.events.find((event) => event.eventType === 'AbilityInvoked').payload.mechanicalResult.attack;
+  // A melee spell attack from beside the target, not a ranged one.
+  assert.equal(attack.disadvantageReasons.includes('hostileWithinFiveFeet2014'), false);
+  const [weapon] = zones(f);
+  assert.deepEqual([weapon.zone, weapon.origin, weapon.grants, weapon.lifecycle], [{ kind: 'spectralWeapon' }, point(280), [strikeRef], undefined]);
+  assert.equal(listed(f).includes(strikeRef), true);
+
+  // The peer steps 10 feet away; the weapon follows it and strikes again.
+  settle(f, apply(f, { kind: 'endTurn', rootActionId: 'root:spiritual:end-1', encounterId: ENCOUNTER, sourceEntityId: ACTOR }));
+  assert.equal(apply(f, { kind: 'moveCombatant', rootActionId: 'root:spiritual:peer-steps', encounterId: ENCOUNTER, sourceEntityId: PEER,
+    movementMode: 'walk', path: [point(280), point(400)] }).kind, 'committed');
+  settle(f, apply(f, { kind: 'endTurn', rootActionId: 'root:spiritual:end-2', encounterId: ENCOUNTER, sourceEntityId: PEER }));
+  const strike = settle(f, apply(f, { kind: 'invokeAbility', rootActionId: 'root:spiritual:strike', sourceEntityId: ACTOR,
+    abilityRef: strikeRef, parameters: { targetEntityId: PEER } }), { 'attack:': 15, 'damage:': 4 });
+  assert.equal(strike.kind, 'committed', JSON.stringify(strike));
+  assert.equal(f.state.combatRuntime.entities[ACTOR].turn.bonusAction, '0');
+  assert.deepEqual(zones(f)[0].origin, point(400));
+  assert.deepEqual(strike.events.filter((event) => event.eventType === 'EffectZoneMoved').map((event) => event.payload.origin), [point(400)]);
+
+  // Ten rounds later the weapon is gone, and so is the strike.
+  for (let round = 0; round < 10; round += 1) {
+    settle(f, apply(f, { kind: 'endTurn', rootActionId: `root:spiritual:a${round}`, encounterId: ENCOUNTER, sourceEntityId: ACTOR }));
+    settle(f, apply(f, { kind: 'endTurn', rootActionId: `root:spiritual:p${round}`, encounterId: ENCOUNTER, sourceEntityId: PEER }));
+  }
+  assert.deepEqual(zones(f), []);
+  assert.equal(listed(f).includes(strikeRef), false);
+  const refused = apply(f, { kind: 'invokeAbility', rootActionId: 'root:spiritual:late', sourceEntityId: ACTOR,
+    abilityRef: strikeRef, parameters: { targetEntityId: PEER } });
+  assert.equal(refused.kind, 'rejected');
+});

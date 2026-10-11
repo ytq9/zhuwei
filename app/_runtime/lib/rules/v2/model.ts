@@ -1337,6 +1337,8 @@ export type EventPayloadByType = {
   HiddenPerceptionRolled: import("./hiding").HiddenPerceptionRolledPayload;
   /** SPEC 0012 §10.1: a target repeated its saving throw against a condition at the end of its turn. */
   EffectSaveRepeated: import("./effect-repeat-saves").EffectSaveRepeatedPayload;
+  /** SRD Spiritual Weapon: the spectral weapon moved beside the creature it attacked. */
+  EffectZoneMoved: import("./world-effects").EffectZoneMovedPayload;
   /** SPEC 0014 §4 (ADR 0098): the actor climbed or swam down, up or across. */
   CharacterClimbed: import("./terrain-traversal").CharacterClimbedPayload;
   /** SPEC 0014 §4 (ADR 0098): the actor made a high jump onto a raised feature. */

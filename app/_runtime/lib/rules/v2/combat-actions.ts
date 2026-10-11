@@ -37,7 +37,7 @@ import {
   conditionMovementPermission,
   conditionMovementCost,
 } from "./condition-mechanics";
-import { effectiveConditions, isWorldEffectRecord, modifierEffectDefinition, planModifierEffect, planWorldEffect, planZoneEffect, zoneEffectDefinition, planWorldEffectEnd, repeatSaveEffects, worldEffectDefinition, worldEffectEndDefinition, worldEffectEndDrafts, worldEffectsEndingWhen } from "./world-effects";
+import { effectiveConditions, grantedAbilityRefs, isWorldEffectRecord, modifierEffectDefinition, ownZoneOf, planModifierEffect, planWorldEffect, planZoneEffect, zoneEffectDefinition, planWorldEffectEnd, repeatSaveEffects, worldEffectDefinition, worldEffectEndDefinition, worldEffectEndDrafts, worldEffectsEndingWhen } from "./world-effects";
 import { castingSilenced, zoneBlocksSight } from "./zone-effects";
 import { attacksAgainstHaveAdvantage, d20BonusDie, effectiveArmorClass as modifiedArmorClass, reactionsBlocked, weaponDamageDieFrom, wearsBodyArmor } from "./effect-modifiers";
 import { combatPhaseExpiryAnchor, initiativePhaseOrder, phaseSlotForEntity } from "./effect-phase";
@@ -1955,13 +1955,15 @@ function legalCreatureCandidates(
   const candidateIds = encounter === undefined || !harmful
     ? Object.keys(state.combatRuntime.entities)
     : hostileCandidates(state, sourceId);
+  const origin = abilityOrigin(state, source, definition);
+  if (origin === undefined) return [];
   return [...new Set(candidateIds)]
     .filter((candidateId) => {
       const target = state.combatRuntime.entities[candidateId];
-      if (target === undefined || !creatureTargetInRange(source, target, definition)) return false;
+      if (target === undefined || !creatureTargetInRange(origin, target, definition)) return false;
       if (candidateId === sourceId) return true;
       return spatialRecordVisibleTo(state, target, sourceId)
-        && targetCover(state, source, target) !== "full";
+        && targetCover(state, origin, target) !== "full";
     });
 }
 
@@ -2401,7 +2403,7 @@ function appendTransitions(prefix: StepResult, next: StepResult): StepResult {
 function abilityWorldEffects(definition: JsonRecord): JsonRecord[] {
   return [definition.effect, ...(Array.isArray(definition.effects) ? definition.effects : [])]
     .filter((effect): effect is JsonRecord => isRecord(effect)
-      && ["createZone", "endEffect", "grantEffect", "grantModifier"].includes(String(effect.kind)));
+      && ["createZone", "endEffect", "grantEffect", "grantModifier", "moveZone"].includes(String(effect.kind)));
 }
 
 /** SPEC 0012 §10.1: what one use of an Ability ends besides its own
@@ -2467,20 +2469,33 @@ function appendAbilityWorldEffects(
   let heldByConcentration = false;
   // SPEC 0012 §10.1 (SRD Fog Cloud, Silence): a zone is filled once, around
   // where the area was cast.
+  // A summon appears beside the first creature it struck, and moves there
+  // to strike again (SRD Spiritual Weapon); a summon takes a 5-foot space.
+  const struck = targetIds.length === 0 ? undefined : combatEntity(result.state, targetIds[0]);
   for (const [index, effect] of abilityWorldEffects(definition).entries()) {
-    if (effect.kind !== "createZone" || result.kind !== "committed") continue;
+    if ((effect.kind !== "createZone" && effect.kind !== "moveZone") || result.kind !== "committed") continue;
+    const source = combatEntity(result.state, sourceRef);
+    if (effect.kind === "moveZone") {
+      const zone = ownZoneOf(result.state, sourceRef, String(effect.zoneOf));
+      if (zone === undefined || !isRecord(struck?.position)) return rejected("invalidRulesInput", "The summon is no longer there.");
+      append([{ eventType: "EffectZoneMoved", payload: { effectId: zone.effectId, sourceRef, origin: canonicalPointOf(struck.position) },
+        visibilityPolicyId: "visibility:room-authority-only", secrecy: "internal" }]);
+      continue;
+    }
+    const summoned = isRecord(effect.zone) && effect.zone.kind === "spectralWeapon";
     const area = isRecord(mechanicalResult.area) ? mechanicalResult.area : undefined;
     const shape = isRecord(definition.target) && isRecord(definition.target.shape) ? definition.target.shape : undefined;
-    const source = combatEntity(result.state, sourceRef);
     const planned = planZoneEffect(result.state, { rootActionId, sourceRef, sourceDefinitionRef: String(operation.abilityRef),
-      effect, index, sceneId: String(source?.sceneId), origin: area?.origin, radiusInches: shape?.radiusInches });
+      effect, index, sceneId: String(source?.sceneId),
+      origin: summoned ? (isRecord(struck?.position) ? canonicalPointOf(struck.position) : undefined) : area?.origin,
+      radiusInches: summoned ? "30" : shape?.radiusInches });
     if (planned.kind === "rejected") return rejected("invalidRulesInput", planned.message);
     if (planned.effectRecord.lifecycle?.concentration === true) heldByConcentration = true;
     append([{ eventType: "EffectApplied", payload: { effect: planned.effectRecord },
       visibilityPolicyId: "visibility:room-authority-only", secrecy: "internal" }]);
   }
   for (const [index, effect] of abilityWorldEffects(definition).entries()) {
-    if (effect.kind === "createZone") continue;
+    if (effect.kind === "createZone" || effect.kind === "moveZone") continue;
     for (const targetEntityId of targetIds) {
       const attack = isRecord(mechanicalResult.attacks)
         ? mechanicalResult.attacks[targetEntityId] : mechanicalResult.attack;
@@ -2985,6 +3000,22 @@ function markedTargetDamage(state: AuthoritativeWorldState, source: JsonRecord, 
     const sides = weaponDamageDieFrom(state, targetId, entityId(source));
     return sides === undefined ? [] : [[targetId, [{ type: first.type, formula: `1d${sides}` }]]];
   }));
+}
+
+/** A position as its three canonical coordinates. */
+function canonicalPointOf(position: JsonRecord): { x: string; y: string; elevation: string } {
+  return { x: String(position.x), y: String(position.y), elevation: String(position.elevation ?? "0") };
+}
+
+/** SRD Spiritual Weapon: an ability that reaches from its user's summon
+ * measures range, reach and cover from the summon's 5-foot space. Undefined
+ * when the summon is gone; any other ability measures from its user. */
+function abilityOrigin(state: AuthoritativeWorldState, source: JsonRecord, definition: JsonRecord): JsonRecord | undefined {
+  const from = isRecord(definition.target) ? definition.target.fromZoneOf : undefined;
+  if (!isNonEmptyString(from)) return source;
+  const zone = ownZoneOf(state, entityId(source), from);
+  return zone === undefined ? undefined : { ...source, position: structuredClone(zone.origin),
+    footprint: { width: "60", depth: "60", height: "60" } };
 }
 
 /** The damage a hit on `targetId` rolls: the definition's own components,
@@ -3900,9 +3931,13 @@ function abilityEffectsExecutable(definition: JsonRecord, specCount: number): bo
   const savePush = abilitySavePush(definition);
   if (savePush !== undefined) executableEffects.add(savePush.effect);
   const concentration = isRecord(definition.effect) && definition.effect.kind === "concentration";
-  // SPEC 0012 §10.1: a zone needs a sphere cast at a point.
-  if (worldEffects.some((effect) => effect.kind === "createZone") && !(isRecord(definition.target)
-    && definition.target.kind === "area" && isRecord(definition.target.shape) && isNonEmptyString(definition.target.shape.radiusInches))) return false;
+  // SPEC 0012 §10.1: an area zone needs a sphere cast at a point; a summon
+  // appears beside the creature it strikes, and strikes again from its zone.
+  const target = isRecord(definition.target) ? definition.target : {};
+  if (worldEffects.some((effect) => effect.kind === "createZone" && (isRecord(effect.zone) && effect.zone.kind === "spectralWeapon"
+    ? target.kind !== "creature"
+    : !(target.kind === "area" && isRecord(target.shape) && isNonEmptyString(target.shape.radiusInches))))) return false;
+  if (worldEffects.some((effect) => effect.kind === "moveZone" && (target.fromZoneOf !== effect.zoneOf || target.kind !== "creature"))) return false;
   // SPEC 0012 §10: a condition held by concentration needs the spell's
   // concentration, and a repeated save needs the save it repeats.
   if (worldEffects.some((effect) => isRecord(effect.lifecycle)
@@ -4413,18 +4448,21 @@ function prepareAbilityExecution(
       if (target === undefined) return rejected("privateOrUnknownReference", "Ability target is unavailable.");
       if (unarmoredOnly && wearsBodyArmor(state, targetId)) return rejected("invalidRulesInput", "The target wears armor.");
       if (isRecord(definition.attack)) {
-        const attack = attackMode(state, source, target, definition);
+        // SRD Spiritual Weapon: a summon's strike is made from where it is.
+        const origin = abilityOrigin(state, source, definition);
+        if (origin === undefined) return rejected("privateOrUnknownReference", "The summon is no longer there.");
+        const attack = attackMode(state, origin, target, definition);
         if (!attack.allowed || attack.requiredContext.length > 0) {
           return rejected("invalidRulesInput", "The creature's condition prevents this attack or requires its source context.");
         }
         const mode = attack.mode;
-        const cover = targetCover(state, source, target);
+        const cover = targetCover(state, origin, target);
         const baseArmorClass = Number(target.armorClass ?? 10);
         const activeArmorClass = effectiveArmorClass(state, target);
         const coverBonus = cover === "half" ? 2 : cover === "threeQuarters" ? 5 : 0;
         const frozenAttack = { ...attack, cover, baseArmorClass, activeArmorClass,
           criticalIfHit: ("criticalIfHit" in attack && attack.criticalIfHit === true)
-            || (entitiesWithinRange(source, target, "60") && (condition(state, target, "unconscious") || condition(state, target, "paralyzed"))),
+            || (entitiesWithinRange(origin, target, "60") && (condition(state, target, "unconscious") || condition(state, target, "paralyzed"))),
           effectiveArmorClass: activeArmorClass + coverBonus,
           ...(selection.aimedPoint === undefined ? {} : { aimedPoint: structuredClone(selection.aimedPoint) }) };
         if (manyAttacks) attacks[targetId] = frozenAttack;
@@ -4537,7 +4575,8 @@ function invokeAbility(
   const definition = builtinDefinition ?? state.combatRuntime.definitions[abilityRef];
   if (definition === undefined
     || definition.rulesBasis !== "srd5.1-2014"
-    || (builtinDefinition === undefined && !abilityRefs(source).includes(abilityRef))) {
+    || (builtinDefinition === undefined && !abilityRefs(source).includes(abilityRef)
+      && !grantedAbilityRefs(state, entityId(source)).includes(abilityRef))) {
     return rejected("privateOrUnknownReference", "AbilityDefinition is unavailable.");
   }
   const activation = definition.activation;
@@ -7912,7 +7951,8 @@ function readyAction(
   const builtinDefinition = builtinSpecialMeleeDefinition(abilityRef);
   const definition = builtinDefinition ?? state.combatRuntime.definitions[abilityRef];
   if (definition === undefined
-    || (builtinDefinition === undefined && !abilityRefs(source).includes(abilityRef))) {
+    || (builtinDefinition === undefined && !abilityRefs(source).includes(abilityRef)
+      && !grantedAbilityRefs(state, entityId(source)).includes(abilityRef))) {
     return rejected("privateOrUnknownReference", "Readied ability is unavailable.");
   }
   if (!isSpellDefinition(definition)) {

@@ -119,6 +119,9 @@ export type SpellEffectDefinition = {
   modifier?: SpellModifier;
   /** The area the effect fills for the spell's duration (SPEC 0012 §10.1). */
   zone?: { kind: "heavilyObscured" | "silence" };
+  /** A thing the spell makes that attacks again later (SRD Spiritual Weapon):
+   * how far it moves and reaches for each later attack. */
+  summon?: { kind: "spectralWeapon"; moveFeet: number; reachFeet: number };
 };
 
 export type SpellResolution = {

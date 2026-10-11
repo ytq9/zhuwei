@@ -369,8 +369,18 @@ function spellEffectDuration(source: SpellDefinition, slotLevel: number): JsonRe
 /** SPEC 0012 §10.1: a catalog effect Rules can carry out becomes its frozen
  * mechanic, keeping its tag and label for narration; any other stays a
  * descriptive record, which Rules refuses to cast. */
-function compiledSpellEffect(source: SpellDefinition, effect: SpellEffectDefinition, slotLevel: number): JsonRecord {
+/** The ability a spell's summon grants its caster while it lasts (SRD
+ * Spiritual Weapon): the summon moves and attacks again as a bonus action. */
+function spellSummonStrikeId(spellDefinitionId: string): string {
+  return `${spellDefinitionId}:strike`;
+}
+
+function compiledSpellEffect(source: SpellDefinition, effect: SpellEffectDefinition, slotLevel: number, spellDefinitionId: string): JsonRecord {
   const duration = spellEffectDuration(source, slotLevel);
+  if (effect.summon !== undefined && duration !== undefined) {
+    return { kind: "createZone", tag: effect.tag, label: effect.label, zone: { kind: effect.summon.kind }, duration,
+      grants: [spellSummonStrikeId(spellDefinitionId)] };
+  }
   const lifecycle = (repeats: boolean): JsonRecord => ({
     ...(source.duration.kind !== "instant" && source.duration.concentration === true ? { concentration: true } : {}),
     ...(repeats && source.resolution.save?.repeats === "turnEnd" ? { repeatSave: { edge: "turnEnd" } } : {}),
@@ -480,9 +490,38 @@ function compileSpell(
     };
   }
   if (Array.isArray(resolution.effects) && resolution.effects.length > 0) {
-    compiled.effects = resolution.effects.map((effect) => compiledSpellEffect(source, effect, slotLevel));
+    compiled.effects = resolution.effects.map((effect) => compiledSpellEffect(source, effect, slotLevel, definitionId));
+  }
+  // SRD Spiritual Weapon: the weapon appears within the spell's range and
+  // strikes a creature within its reach, a melee spell attack from there.
+  const summon = resolution.effects?.find((effect) => effect.summon !== undefined)?.summon;
+  if (summon !== undefined && isRecord(compiled.target) && compiled.target.kind === "creature" && compiled.target.rangeInches !== undefined) {
+    const { rangeInches, ...rest } = compiled.target;
+    compiled.target = { ...rest, reachInches: String(Number(rangeInches) + summon.reachFeet * 12) };
   }
   return compiled;
+}
+
+/** SRD Spiritual Weapon: the bonus-action strike its summon grants -- the
+ * same attack and damage, reaching from where the weapon is as far as it
+ * moves and then reaches. Registered with the spell, listed only while the
+ * summon lasts. */
+function compileSpellSummonStrike(spell: JsonRecord, spellId: string): JsonRecord | undefined {
+  const summon = spellDefinition(spellId)?.resolution.effects?.find((effect) => effect.summon !== undefined)?.summon;
+  if (summon === undefined || !isRecord(spell.attack) || !Array.isArray(spell.damage)) return undefined;
+  const spellDefinitionId = String(spell.definitionId);
+  return {
+    definitionId: spellSummonStrikeId(spellDefinitionId),
+    revision: "1",
+    rulesBasis: "srd5.1-2014",
+    mechanicalKey: `spell:${spellId}:strike`,
+    sourceSpellId: spellId,
+    activation: { kind: "bonusAction" },
+    target: { kind: "creature", count: "1", reachInches: String((summon.moveFeet + summon.reachFeet) * 12), fromZoneOf: spellDefinitionId },
+    attack: structuredClone(spell.attack),
+    damage: structuredClone(spell.damage),
+    effects: [{ kind: "moveZone", tag: `${spellId}-strike`, label: "移到目标身边再次攻击", zoneOf: spellDefinitionId }],
+  };
 }
 
 /** Stable source identity shared by compilation and frozen-catalog lookup. */
@@ -711,6 +750,8 @@ export function compileStaticCharacterCombat(
     ...canonicalStrings(build.cantrips),
     ...canonicalStrings(build.prepared),
   ])].sort();
+  // Registered with the character but used only while an effect grants them.
+  const grantedOnly = new Set<string>();
   for (const spellId of spellIds) {
     const source = spellDefinition(spellId);
     if (source === undefined) continue;
@@ -719,6 +760,11 @@ export function compileStaticCharacterCombat(
     for (const slotLevel of slots.sort((a, b) => a - b)) {
       const compiled = compileSpell(character, build, spellId, slotLevel);
       if (compiled !== undefined) definitions[String(compiled.definitionId)] = compiled;
+      const strike = compiled === undefined ? undefined : compileSpellSummonStrike(compiled, spellId);
+      if (strike !== undefined) {
+        definitions[String(strike.definitionId)] = strike;
+        grantedOnly.add(String(strike.definitionId));
+      }
     }
   }
 
@@ -780,7 +826,7 @@ export function compileStaticCharacterCombat(
   return {
     definitions,
     abilityRefs: [...new Set([
-      ...Object.keys(definitions),
+      ...Object.keys(definitions).filter((definitionId) => !grantedOnly.has(definitionId)),
       ...portableEquippedAbilityRefs,
     ])].sort(),
     ...(castingAbility === undefined || castingModifier === undefined ? {} : {
