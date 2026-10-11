@@ -91,9 +91,21 @@ test('duplicate dictionary keys reject before construction, including identical 
       assert.deepEqual(wire, before);
     }
   }
-  const wire = encodeVNextStrictToolBundle(bundle(source(true)));
-  const raw = JSON.stringify(wire).replace('"key":"resource:focus"', '"key":"resource:focus","key":"resource:focus"');
-  assert.throws(() => parseSubmitKpProposalBundleCandidateArguments(raw), VNextProposalBundleOutputError);
+  // SPEC 0016 §7.2 (ADR 0139): a JSON member written twice inside one entry is
+  // read once when both values are the same; with two values the server does
+  // not choose between them. A repeated dictionary entry above stays refused.
+  const wire = encodeVNextStrictToolBundle(bundle(source(true))), member = '"key":"resource:focus"';
+  const repeated = value => JSON.stringify(wire).replace(member, `${member},"key":"${value}"`);
+  const once = parseSubmitKpProposalBundleCandidateArguments(repeated('resource:focus'));
+  assert.equal(once.kind, 'accepted', JSON.stringify(once));
+  assert.deepEqual(once.bundle, parse(wire).bundle);
+  const index = wire.steps.materializeNpc[0].source.mechanicalTemplate.resourceMaximums.findIndex(entry => entry.key === 'resource:focus');
+  assert.throws(() => parseSubmitKpProposalBundleCandidateArguments(repeated('resource:ink')), error => {
+    assert.ok(error instanceof VNextProposalBundleOutputError);
+    assert.ok(error.diagnostics.some(d => d.constraint === 'json:duplicate-object-member' && JSON.stringify(d.path)
+      === JSON.stringify(['steps', 'materializeNpc', 0, 'source', 'mechanicalTemplate', 'resourceMaximums', index, 'key'])), JSON.stringify(error.diagnostics));
+    return true;
+  });
 });
 
 test('missing optional declarations, padded sentinels, raw maps and extra entry fields are never cleaned into valid input', () => {
