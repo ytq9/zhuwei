@@ -92,12 +92,12 @@ export const SPELL_DEFINITIONS = {
   "ray-frost": {
     id: "ray-frost", level: 0, actionCost: "action", castingSeconds: 6,
     range: feet(60), targets: targets("creature", 1), duration: timed(6, { turnBoundary: "casterStart" }),
-    resolution: attack("ranged", dice(1, 8), "cold", [effect("speed-10", "速度 −10 尺", "modifier", -10)]),
+    resolution: attack("ranged", dice(1, 8), "cold", [{ ...effect("speed-10", "速度 −10 尺", "modifier", -10), modifier: { kind: "speedBonus" } }]),
   },
   shocking: {
     id: "shocking", level: 0, actionCost: "action", castingSeconds: 6,
     range: touch, targets: targets("creature", 1), duration: timed(6, { turnBoundary: "targetStart" }),
-    resolution: attack("melee", dice(1, 8), "lightning", [effect("no-reactions", "不能使用反应", "condition")]),
+    resolution: attack("melee", dice(1, 8), "lightning", [{ ...effect("no-reactions", "不能使用反应", "condition"), modifier: { kind: "noReactions" } }]),
   },
   "minor-illusion": {
     id: "minor-illusion", level: 0, actionCost: "action", castingSeconds: 6,
@@ -127,7 +127,8 @@ export const SPELL_DEFINITIONS = {
   "mage-armor": {
     id: "mage-armor", level: 1, actionCost: "action", castingSeconds: 6,
     range: touch, targets: targets("willing-creature", 1), duration: timed(8 * 60 * 60),
-    resolution: { mode: "automatic", effects: [effect("mage-armor", "基础 AC 13＋敏捷调整值", "modifier", 13)] },
+    resolution: { mode: "automatic", effects: [{ ...effect("mage-armor", "基础 AC 13＋敏捷调整值", "modifier", 13),
+      modifier: { kind: "unarmoredArmorClass" }, endsWhen: ["targetDonsArmor"] }] },
   },
   shield: {
     id: "shield", level: 1, actionCost: "reaction", castingSeconds: 0,
@@ -195,7 +196,8 @@ export const SPELL_DEFINITIONS = {
   "guiding-bolt": {
     id: "guiding-bolt", level: 1, actionCost: "action", castingSeconds: 6,
     range: feet(120), targets: targets("creature", 1), duration: timed(6, { turnBoundary: "casterEnd" }),
-    resolution: attack("ranged", dice(4, 6, undefined, 1), "radiant", [effect("guiding-bolt-advantage", "下一次对目标的攻击具有优势", "modifier")]),
+    resolution: attack("ranged", dice(4, 6, undefined, 1), "radiant", [{ ...effect("guiding-bolt-advantage", "下一次对目标的攻击具有优势", "modifier"),
+      modifier: { kind: "advantageOnNextAttackAgainst" }, endsWhen: ["targetAttacked"] }]),
   },
   inflict: {
     id: "inflict", level: 1, actionCost: "action", castingSeconds: 6,
@@ -205,7 +207,7 @@ export const SPELL_DEFINITIONS = {
   "shield-faith": {
     id: "shield-faith", level: 1, actionCost: "bonusAction", castingSeconds: 6,
     range: feet(60), targets: targets("creature", 1, { requiresSight: true }), duration: timed(10 * 60, { concentration: true }),
-    resolution: { mode: "automatic", effects: [effect("shield-of-faith", "AC +2", "modifier", 2)] },
+    resolution: { mode: "automatic", effects: [{ ...effect("shield-of-faith", "AC +2", "modifier", 2), modifier: { kind: "armorClassBonus" } }] },
   },
   command: {
     id: "command", level: 1, actionCost: "action", castingSeconds: 6,
@@ -284,7 +286,7 @@ export const SPELL_DEFINITIONS = {
   aid: {
     id: "aid", level: 2, actionCost: "action", castingSeconds: 6,
     range: feet(30), targets: targets("creature", 3), duration: timed(8 * 60 * 60),
-    resolution: { mode: "automatic", effects: [effect("aid", "当前与最大生命值增加", "modifier", 5, 5)] },
+    resolution: { mode: "automatic", effects: [{ ...effect("aid", "当前与最大生命值增加", "modifier", 5, 5), modifier: { kind: "hitPointMaximumBonus" } }] },
   },
   "lesser-restoration": {
     id: "lesser-restoration", level: 2, actionCost: "action", castingSeconds: 6,

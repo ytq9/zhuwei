@@ -4,6 +4,7 @@ import { effectiveConditions, isWorldEffectRecord, type ConditionId } from "./wo
 import { isNonEmptyString, isRecord } from "./validation";
 import { movementApproachesEntity, pathLengthMilliInches } from "../profiles/combat-geometry";
 import { armorRollDisadvantage } from "./armor-proficiency";
+import { hitPointMaximumBonus, speedModifierInches } from "./effect-modifiers";
 
 /** SRD 5.1, Appendix PH-A, pp. 358–359 (2014 conditions). These are
  * read-only consequences. The action/event owner commits HP, death, dropped
@@ -237,8 +238,11 @@ export function conditionMovementPermission(
 export function conditionSpeed(state: AuthoritativeWorldState, entityId: string, unconditionedSpeed: string) {
   if (!/^(0|[1-9][0-9]*)$/.test(unconditionedSpeed)) throw new RulesValidationError("Speed must be a canonical non-negative integer.");
   const facts = conditionMechanics(state, entityId);
-  return { speed: facts.speedIsZero ? "0"
-    : (BigInt(unconditionedSpeed) / (facts.speedHalved ? 2n : 1n)).toString(),
+  // SPEC 0012 §10.1: an effect's speed change applies after halving and
+  // never takes speed below zero.
+  const halved = BigInt(unconditionedSpeed) / (facts.speedHalved ? 2n : 1n);
+  const modified = halved + speedModifierInches(state, entityId, !facts.cannotBenefitFromSpeedBonus);
+  return { speed: facts.speedIsZero ? "0" : (modified > 0n ? modified : 0n).toString(),
   canMove: facts.canMove, canBenefitFromSpeedBonus: !facts.cannotBenefitFromSpeedBonus,
   mustCrawl: facts.mustCrawl };
 }
@@ -257,7 +261,9 @@ export function conditionHitPointLimits(
   if (!Number.isSafeInteger(unconditionedMaximum) || unconditionedMaximum < 1
     || !Number.isSafeInteger(current) || current < 0) throw new RulesValidationError("HP inputs must be canonical non-negative integers.");
   const facts = conditionMechanics(state, entityId);
-  const maximum = facts.hitPointMaximumHalved ? Math.floor(unconditionedMaximum / 2) : unconditionedMaximum;
+  // SRD Aid raises the maximum; exhaustion halves what it then is.
+  const raised = unconditionedMaximum + hitPointMaximumBonus(state, entityId);
+  const maximum = facts.hitPointMaximumHalved ? Math.floor(raised / 2) : raised;
   return { maximum, current: Math.min(current, maximum), diesFromExhaustion: facts.exhaustion >= 6 };
 }
 

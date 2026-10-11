@@ -4,7 +4,8 @@ import { entitiesAffectedByArea, rectangularFeatureEntity, entitiesWithinRange, 
   canonicalCombatPoint, canonicalCombatDirection, freezeAreaOrigin, coverLevel } from "../profiles/combat-geometry";
 import { canonicalSha256, sameCanonical } from "../profiles/canonical";
 import { frozenRegisteredAbilityOperation } from "../profiles/ability-compiler";
-import { combatAttackBonus, attackArmorClass } from "../profiles/attack-resolution";
+import { combatAttackBonus } from "../profiles/attack-resolution";
+import { effectiveArmorClass } from "./effect-modifiers";
 import { WORLD_DAMAGE_PROFILE_REGISTRY } from "../profiles/world-interaction-registry";
 import type { RuntimeProfileManifest } from "../profiles/types";
 import type { AuthoritativeWorldState, JsonRecord } from "./model";
@@ -304,7 +305,7 @@ export function hazardDamageForTarget(mechanics:HazardMechanics,key:string,targe
     if(condition.requiredContext.length>0)throw new RulesValidationError("Current hazard attack condition context is unavailable.");
     const roll=conditionRollFace(attackFaces,condition.mode),target=worldDamageTarget(currentState,targetRef);
     if(target===undefined||!canonicalNumber(attackSpec.frozenParameters.coverBonus))throw new RulesValidationError("Current hazard target or frozen cover is unavailable.");
-    const armorClass=attackArmorClass(target,Object.values(currentState.combatRuntime.effects))+Number(attackSpec.frozenParameters.coverBonus);
+    const armorClass=effectiveArmorClass(currentState,target)+Number(attackSpec.frozenParameters.coverBonus);
     // Actor permission is checked at action entry. A passive source may lose
     // its ability to attack within this transaction; only its consequence stops.
     hit=condition.allowed&&attackSpec.frozenParameters.blocked!==true&&(roll===20||(roll!==1&&roll+Number(attackSpec.frozenParameters.modifier)>=armorClass));

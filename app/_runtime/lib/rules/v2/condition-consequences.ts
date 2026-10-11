@@ -3,10 +3,11 @@ import { canonicalSha256 } from "../profiles/canonical";
 import type { AuthoritativeWorldState, EventEnvelope, JsonRecord } from "./model";
 import { conditionHitPointLimits, conditionMechanics } from "./condition-mechanics";
 import { releaseItemQuantity } from "./item-transitions";
-import { concentrationLinkedEffectIds, dueWorldEffectDrafts, worldEffectEndDrafts, worldEffectsEndingWhen } from "./world-effects";
+import { concentrationLinkedEffectIds, dueWorldEffectDrafts, isModifierEffectRecord, worldEffectEndDrafts, worldEffectsEndingWhen } from "./world-effects";
+import { hitPointMaximumBonus, wearsBodyArmor } from "./effect-modifiers";
 import { grappledBy, withoutGrapple } from "./contest";
 import { helpRecords, isDodging, withoutDodge, withoutHelpFrom } from "./basic-actions";
-import { hasExactKeys, isNonEmptyString, isRecord, isSha256 } from "./validation";
+import { hasExactKeys, hasOnlyKeys, isNonEmptyString, isRecord, isSha256 } from "./validation";
 
 export type ConditionStateSynchronizedPayload = {
   characterId:string;
@@ -15,20 +16,25 @@ export type ConditionStateSynchronizedPayload = {
   droppedEntryRefs:string[];
   fallsProne:boolean;
   itemSystemHash:string;
+  /** SRD Aid: current hit points rose with the maximum. */
+  raisedWithMaximum?:true;
 };
 
 /** Consequences are derived from active conditions and canonical ItemEntries.
  * No model can supply a patch or elect to keep holding an object while unconscious. */
-export function planConditionStateSynchronization(state:AuthoritativeWorldState,characterId:string) {
+export function planConditionStateSynchronization(state:AuthoritativeWorldState,characterId:string,raiseCurrentWithMaximum=false) {
   const character=state.entities[characterId];
   if(character?.hitPoints===undefined)return undefined;
   const combat=state.combatRuntime.entities[characterId];
   const facts=conditionMechanics(state,characterId);
   const priorBase=combat?.unconditionedHitPointMaximum;
   const base=Number(priorBase??character.hitPoints.maximum);
-  const limits=conditionHitPointLimits(state,characterId,base,character.hitPoints.current);
+  // SRD Aid: when the maximum rises, current hit points rise by as much.
+  const rise=raiseCurrentWithMaximum?Math.max(0,conditionHitPointLimits(state,characterId,base,0).maximum-character.hitPoints.maximum):0;
+  const raisedCurrent=character.hitPoints.current+rise;
+  const limits=conditionHitPointLimits(state,characterId,base,raisedCurrent);
   const after={current:limits.diesFromExhaustion?0:limits.current,maximum:limits.maximum};
-  const unconditionedMaximum=facts.hitPointMaximumHalved?base:null;
+  const unconditionedMaximum=facts.hitPointMaximumHalved||hitPointMaximumBonus(state,characterId)>0?base:null;
   const fallsProne=facts.conditions.unconscious===true
     && (!isRecord(combat?.conditions)||combat.conditions.prone!==true);
   let itemSystem=state.campaignRuntime.itemSystem;
@@ -44,12 +50,13 @@ export function planConditionStateSynchronization(state:AuthoritativeWorldState,
   if(!fallsProne&&droppedEntryRefs.length===0&&after.current===character.hitPoints.current&&after.maximum===character.hitPoints.maximum
     &&(priorBase??null)===unconditionedMaximum)return undefined;
   const payload:ConditionStateSynchronizedPayload={characterId,hitPoints:{before:{...character.hitPoints},after},
-    unconditionedMaximum,droppedEntryRefs,fallsProne,itemSystemHash:canonicalSha256(itemSystem)};
+    unconditionedMaximum,droppedEntryRefs,fallsProne,itemSystemHash:canonicalSha256(itemSystem),...(rise>0?{raisedWithMaximum:true as const}:{})};
   return {payload,itemSystem};
 }
 
 export function isConditionStateSynchronizedPayload(value:unknown):value is ConditionStateSynchronizedPayload {
-  if(!isRecord(value)||!hasExactKeys(value,["characterId","hitPoints","unconditionedMaximum","droppedEntryRefs","fallsProne","itemSystemHash"])
+  if(!isRecord(value)||!hasOnlyKeys(value,["characterId","hitPoints","unconditionedMaximum","droppedEntryRefs","fallsProne","itemSystemHash"],["raisedWithMaximum"])
+    ||!(value.raisedWithMaximum===undefined||value.raisedWithMaximum===true)
     ||!isNonEmptyString(value.characterId)||!isRecord(value.hitPoints)||!hasExactKeys(value.hitPoints,["before","after"])
     ||typeof value.fallsProne!=="boolean"
     ||!(value.unconditionedMaximum===null||Number.isSafeInteger(value.unconditionedMaximum)&&Number(value.unconditionedMaximum)>=0)
@@ -89,7 +96,25 @@ function emptyConcentrationDrafts(state:AuthoritativeWorldState):FollowupDraft[]
   }).map(id=>({eventType:"ConcentrationEnded",payload:{entityId:id,reason:"spellEnded"},
     visibilityPolicyId:"visibility:room-authority-only",secrecy:"internal"}));
 }
+/** SRD Mage Armor: it ends once its target dons armor. Read after every
+ * event, since an item can be put on through several kinds of step. */
+function armorDonnedDrafts(state:AuthoritativeWorldState):FollowupDraft[] {
+  const donned=Object.values(state.combatRuntime.effects).filter(effect=>isModifierEffectRecord(effect)
+    &&effect.lifecycle?.endsWhen?.includes("targetDonsArmor")===true&&wearsBodyArmor(state,effect.targetEntityId));
+  return worldEffectEndDrafts(state,donned.map(effect=>String(effect.effectId)),"targetDonnedArmor");
+}
 export function conditionFollowupDrafts(state:AuthoritativeWorldState,event:EventEnvelope, scope: { timelineId?: string } = {}):FollowupDraft[] {
+  const ending=new Set<string>();
+  // An effect two followups would end ends once.
+  return [...armorDonnedDrafts(state),...eventFollowupDrafts(state,event,scope)].filter(draft=>{
+    if(draft.eventType!=="EffectEnded")return true;
+    const effectId=String(draft.payload.effectId);
+    if(ending.has(effectId))return false;
+    ending.add(effectId);
+    return true;
+  });
+}
+function eventFollowupDrafts(state:AuthoritativeWorldState,event:EventEnvelope, scope: { timelineId?: string }):FollowupDraft[] {
   if(event.eventType==="ConcentrationEnded")return concentrationLinkEndDrafts(state,String((event.payload as JsonRecord).entityId));
   // SPEC 0012 §10.1: a countered spell was still cast.
   if(event.eventType==="SpellCountered") {
@@ -123,7 +148,9 @@ export function conditionFollowupDrafts(state:AuthoritativeWorldState,event:Even
   if(!isNonEmptyString(ref)||state.entities[ref]===undefined)return [...lostDodge,...spellEnded,...(event.eventType==="EffectEnded"?dueWorldEffectDrafts(state,scope):[])];
   const policy={visibilityPolicyId:"visibility:room-authority-only",secrecy:"internal" as const};
   const drafts:FollowupDraft[]=[...lostDodge];
-  const sync=planConditionStateSynchronization(state,ref);
+  const raised=event.eventType==="EffectApplied"&&isRecord(payload.effect)&&isModifierEffectRecord(payload.effect)
+    &&payload.effect.modifier.kind==="hitPointMaximumBonus";
+  const sync=planConditionStateSynchronization(state,ref,raised);
   if(sync!==undefined)drafts.push({eventType:"ConditionStateSynchronized",payload:sync.payload,...policy});
   const facts=conditionMechanics(state,ref);
   if(facts.concentrationMustEnd&&isRecord(state.combatRuntime.entities[ref]?.concentration))drafts.push({

@@ -16,7 +16,7 @@ export type WorldEffectDuration =
   | { kind: "untilEnded" }
   | { kind: "turnBoundary"; subject: "source" | "target"; edge: "turnStart" | "turnEnd" };
 /** SPEC 0012 §10.1: how a granted condition can end besides its duration. */
-export const WORLD_EFFECT_ENDINGS = ["harmedBySourceSide", "targetAttacksOrCasts"] as const;
+export const WORLD_EFFECT_ENDINGS = ["harmedBySourceSide", "targetAttacked", "targetAttacksOrCasts", "targetDonsArmor"] as const;
 export type WorldEffectEnding = typeof WORLD_EFFECT_ENDINGS[number];
 export type WorldEffectLifecycle = {
   /** Ends when its source's concentration ends (SPEC 0012 §10.2). */
@@ -71,6 +71,44 @@ export type WorldEffectRecord = JsonRecord & {
   visibilityFactId: string | null;
   lifecycle?: WorldEffectRecordLifecycle;
 };
+/** SPEC 0012 §10.1: a modifier a lasting effect puts on its target's
+ * effective values. Effects of one kind do not stack: the strongest holds. */
+export type EffectModifier =
+  | { kind: "armorClassBonus"; amount: number }
+  | { kind: "unarmoredArmorClass"; base: number }
+  | { kind: "speedBonus"; feet: number }
+  | { kind: "noReactions" }
+  | { kind: "advantageOnNextAttackAgainst" }
+  | { kind: "hitPointMaximumBonus"; amount: number }
+  | { kind: "d20BonusDie"; sides: number; rolls: ("attack" | "check" | "save")[] }
+  | { kind: "weaponDamageDieFromSource"; sides: number };
+export type ModifierEffectDefinition = {
+  kind: "grantModifier";
+  modifier: EffectModifier;
+  duration: WorldEffectDuration;
+  lifecycle?: WorldEffectLifecycle;
+};
+export const MODIFIER_EFFECT_SCHEMA = "zhuwei.modifier-effect/v1" as const;
+export type ModifierEffectRecord = JsonRecord & {
+  schema: typeof MODIFIER_EFFECT_SCHEMA;
+  effectId: string;
+  kind: "modifier";
+  sourceRef: string;
+  sourceDefinitionRef: string;
+  targetEntityId: string;
+  modifier: EffectModifier;
+  duration: WorldEffectDuration;
+  startedAtFictionMicros: string;
+  pausedMicros: "0";
+  suspension: null;
+  expiresAt: Expiry;
+  visibilityPolicyId: string;
+  visibilityFactId: string | null;
+  lifecycle?: WorldEffectLifecycle;
+};
+/** A granted condition or a modifier: the effects with a duration, a
+ * concentration link and early endings. */
+export type LastingEffectRecord = WorldEffectRecord | ModifierEffectRecord;
 export type WorldEffectEndDraft = {
   eventType: "EffectEnded";
   payload: { effectId: string; targetEntityId: string; reason: string };
@@ -167,13 +205,55 @@ export function worldEffectEndDefinition(value: unknown): WorldEffectEndDefiniti
     ? structuredClone(value) as WorldEffectEndDefinition : undefined;
 }
 
+const D20_BONUS_ROLLS = ["attack", "check", "save"] as const;
+const boundedInteger = (value: unknown, minimum: number, maximum: number): boolean =>
+  Number.isSafeInteger(value) && Number(value) >= minimum && Number(value) <= maximum;
+
+export function isEffectModifier(value: unknown): value is EffectModifier {
+  if (!isRecord(value)) return false;
+  switch (value.kind) {
+    case "armorClassBonus":
+    case "hitPointMaximumBonus": return hasExactKeys(value, ["amount", "kind"]) && boundedInteger(value.amount, 1, 99);
+    case "unarmoredArmorClass": return hasExactKeys(value, ["base", "kind"]) && boundedInteger(value.base, 1, 99);
+    case "speedBonus": return hasExactKeys(value, ["feet", "kind"]) && boundedInteger(value.feet, -1000, 1000)
+      && value.feet !== 0 && Number(value.feet) % 5 === 0;
+    case "noReactions":
+    case "advantageOnNextAttackAgainst": return hasExactKeys(value, ["kind"]);
+    case "d20BonusDie": return hasExactKeys(value, ["kind", "rolls", "sides"]) && [4, 6, 8, 10, 12].includes(Number(value.sides))
+      && Array.isArray(value.rolls) && value.rolls.length > 0
+      && value.rolls.every((roll, index, all) => (D20_BONUS_ROLLS as readonly unknown[]).includes(roll)
+        && (index === 0 || String(all[index - 1]) < String(roll)));
+    case "weaponDamageDieFromSource": return hasExactKeys(value, ["kind", "sides"]) && [4, 6, 8, 10, 12].includes(Number(value.sides));
+    default: return false;
+  }
+}
+
+/** The Ability Effect family's modifier shape. Like a condition, a spell's
+ * modifier carries its catalog tag and label, which the frozen mechanic
+ * leaves out; a modifier repeats no save. */
+export function modifierEffectDefinition(value: unknown): ModifierEffectDefinition | undefined {
+  if (!isRecord(value) || !hasOnlyKeys(value, ["duration", "kind", "modifier"], ["label", "lifecycle", "tag"])
+    || value.kind !== "grantModifier" || !isEffectModifier(value.modifier)
+    || !isWorldEffectDuration(value.duration)
+    || !(value.tag === undefined || isNonEmptyString(value.tag))
+    || !(value.label === undefined || isNonEmptyString(value.label))
+    || !(value.lifecycle === undefined || (isWorldEffectLifecycle(value.lifecycle) && value.lifecycle.repeatSave === undefined))) return undefined;
+  const { tag: _tag, label: _label, ...mechanic } = structuredClone(value);
+  return mechanic as ModifierEffectDefinition;
+}
+
+function modifierRecordDefinition(effect: ModifierEffectRecord): ModifierEffectDefinition {
+  return { kind: "grantModifier", modifier: effect.modifier, duration: effect.duration,
+    ...(effect.lifecycle === undefined ? {} : { lifecycle: effect.lifecycle }) };
+}
+
 export function isWorldEffectRecordCandidate(value: unknown): boolean {
-  return isRecord(value) && value.schema === WORLD_EFFECT_SCHEMA;
+  return isRecord(value) && (value.schema === WORLD_EFFECT_SCHEMA || value.schema === MODIFIER_EFFECT_SCHEMA);
 }
 
 function registeredEffectMatches(
   state: AuthoritativeWorldState, sourceDefinitionRef: string,
-  definition: WorldEffectDefinition | WorldEffectEndDefinition,
+  definition: WorldEffectDefinition | WorldEffectEndDefinition | ModifierEffectDefinition,
 ): boolean {
   const source = state.campaignRuntime.definitions[sourceDefinitionRef]
     ?? state.combatRuntime.definitions[sourceDefinitionRef];
@@ -182,7 +262,7 @@ function registeredEffectMatches(
   return source.mechanicGraph.operations.some((operation) => {
     if (!isRecord(operation) || operation.family !== "Effect" || !isRecord(operation.input)) return false;
     const input = operation.input.effect ?? operation.input;
-    const frozen = worldEffectDefinition(input) ?? worldEffectEndDefinition(input);
+    const frozen = worldEffectDefinition(input) ?? worldEffectEndDefinition(input) ?? modifierEffectDefinition(input);
     return frozen !== undefined && sameCanonical(frozen, definition);
   });
 }
@@ -243,19 +323,51 @@ export function isWorldEffectRecord(value: unknown): value is WorldEffectRecord 
   }
   if (value.visibilityPolicyId === "visibility:hidden-until-evidence"
     && !isNonEmptyString(value.visibilityFactId)) return false;
-  if (definition.duration.kind === "untilEnded") return value.expiresAt === null;
+  return expiryMatchesDuration(value as LastingEffectRecord, definition.duration);
+}
+
+/** The stored expiry is the one its duration gives from its start. */
+function expiryMatchesDuration(value: LastingEffectRecord, duration: WorldEffectDuration): boolean {
+  if (duration.kind === "untilEnded") return value.expiresAt === null;
   if (value.expiresAt === null) return false;
-  if (definition.duration.kind === "timed") {
+  if (duration.kind === "timed") {
     return value.expiresAt.kind === "fictionTime"
       && value.expiresAt.entityId === value.targetEntityId
       && BigInt(value.expiresAt.dueMicros)
-        === BigInt(value.startedAtFictionMicros) + BigInt(definition.duration.durationMicros) + BigInt(value.pausedMicros);
+        === BigInt(value.startedAtFictionMicros) + BigInt(duration.durationMicros) + BigInt(value.pausedMicros);
   }
-  const expectedSubject = definition.duration.subject === "target"
+  const expectedSubject = duration.subject === "target"
     ? value.targetEntityId : value.sourceRef;
   return value.expiresAt.entityId === expectedSubject
-    && (value.expiresAt.kind === definition.duration.edge
+    && (value.expiresAt.kind === duration.edge
       || value.expiresAt.kind === "fictionTime");
+}
+
+export function isModifierEffectRecord(value: unknown): value is ModifierEffectRecord {
+  if (!isRecord(value) || !hasOnlyKeys(value, [
+    "duration", "effectId", "expiresAt", "kind", "modifier", "pausedMicros", "schema",
+    "sourceDefinitionRef", "sourceRef", "startedAtFictionMicros", "suspension", "targetEntityId",
+    "visibilityFactId", "visibilityPolicyId",
+  ], ["lifecycle"]) || value.schema !== MODIFIER_EFFECT_SCHEMA || value.kind !== "modifier"
+    || ![value.effectId, value.sourceRef, value.sourceDefinitionRef, value.targetEntityId].every(isNonEmptyString)
+    || !unsignedMicros(value.startedAtFictionMicros) || value.pausedMicros !== "0" || value.suspension !== null
+    || !validExpiry(value.expiresAt)
+    || spatialVisibilityPolicyKind(value.visibilityPolicyId) === undefined
+    || !(value.visibilityFactId === null || isNonEmptyString(value.visibilityFactId))
+    || (value.visibilityPolicyId === "visibility:hidden-until-evidence" && !isNonEmptyString(value.visibilityFactId))) return false;
+  const definition = modifierEffectDefinition(modifierRecordDefinition(value as ModifierEffectRecord));
+  return definition !== undefined && expiryMatchesDuration(value as LastingEffectRecord, definition.duration);
+}
+
+export function isLastingEffectRecord(value: unknown): value is LastingEffectRecord {
+  return isWorldEffectRecord(value) || isModifierEffectRecord(value);
+}
+
+/** The modifiers on a target, in a stable order. */
+export function modifierEffectsOn(state: AuthoritativeWorldState, targetEntityId: string): ModifierEffectRecord[] {
+  return Object.values(state.combatRuntime.effects)
+    .filter((effect): effect is ModifierEffectRecord => isModifierEffectRecord(effect) && effect.targetEntityId === targetEntityId)
+    .sort((left, right) => left.effectId.localeCompare(right.effectId));
 }
 
 export function entityConditionImmune(
@@ -298,6 +410,12 @@ function expiryFor(
   }
   const anchor = { ...combatPhaseExpiryAnchor(state, entityId, duration.edge, rootActionId),
     encounterId: String(encounter.encounterId) };
+  // "Until the end of its next turn": begun during the subject's own turn,
+  // the end of that turn is not the next one (SRD Guiding Bolt).
+  if (duration.edge === "turnEnd" && isRecord(anchor.createdAt) && anchor.createdAt.edge === "turnStart"
+    && anchor.createdAt.slotIndex === anchor.slotIndex && anchor.createdAt.roundIndex === anchor.targetRound) {
+    anchor.targetRound = Number(anchor.targetRound) + 1;
+  }
   return validExpiry(anchor) ? anchor : undefined;
 }
 
@@ -360,6 +478,44 @@ export function planWorldEffect(state: AuthoritativeWorldState, input: {
   return { kind: "applied", effectRecord };
 }
 
+/** SPEC 0012 §10.1: a modifier from a frozen Ability on its target, with
+ * the same duration and lifecycle rules as a granted condition. */
+export function planModifierEffect(state: AuthoritativeWorldState, input: {
+  rootActionId: string;
+  sourceRef: string;
+  sourceDefinitionRef: string;
+  targetEntityId: string;
+  effect: unknown;
+  index: number;
+}): { kind: "applied"; effectRecord: ModifierEffectRecord } | { kind: "rejected"; message: string } {
+  const definition = modifierEffectDefinition(input.effect);
+  const now = entityInstant(state, input.targetEntityId);
+  if (definition === undefined || now === undefined
+    || ![input.rootActionId, input.sourceRef, input.sourceDefinitionRef, input.targetEntityId].every(isNonEmptyString)
+    || !Number.isSafeInteger(input.index) || input.index < 0
+    || !registeredEffectMatches(state, input.sourceDefinitionRef, definition)
+    || (state.entities[input.targetEntityId] === undefined
+      && state.combatRuntime.entities[input.targetEntityId] === undefined)) {
+    return { kind: "rejected", message: "The modifier effect or its target is unavailable." };
+  }
+  const expiresAt = expiryFor(state, input.targetEntityId, input.sourceRef, definition.duration, now, input.rootActionId);
+  if (expiresAt === undefined) return { kind: "rejected", message: "The effect duration has no authoritative subject." };
+  const effectRecord: ModifierEffectRecord = {
+    schema: MODIFIER_EFFECT_SCHEMA,
+    effectId: `effect:${canonicalSha256({ rootActionId: input.rootActionId, sourceRef: input.sourceRef,
+      sourceDefinitionRef: input.sourceDefinitionRef, targetEntityId: input.targetEntityId, index: input.index }).slice("sha256:".length)}`,
+    kind: "modifier", sourceRef: input.sourceRef, sourceDefinitionRef: input.sourceDefinitionRef,
+    targetEntityId: input.targetEntityId, modifier: definition.modifier, duration: definition.duration,
+    startedAtFictionMicros: now, pausedMicros: "0", suspension: null, expiresAt,
+    visibilityPolicyId: "visibility:scene-observers", visibilityFactId: null,
+    ...(definition.lifecycle === undefined ? {} : { lifecycle: definition.lifecycle }),
+  };
+  if (!isModifierEffectRecord(effectRecord) || state.combatRuntime.effects[effectRecord.effectId] !== undefined) {
+    return { kind: "rejected", message: "The modifier effect identity is invalid." };
+  }
+  return { kind: "applied", effectRecord };
+}
+
 /** Effect records are the single source for granted conditions. Existing
  * native conditions remain independent: ending a grant never clears a fall,
  * injury, or another still-active source of the same condition. */
@@ -399,7 +555,7 @@ export function worldEffectIds(state: AuthoritativeWorldState, input: {
 /** SPEC 0012 §10.2: the granted conditions that end with `sourceRef`'s concentration. */
 export function concentrationLinkedEffectIds(state: AuthoritativeWorldState, sourceRef: string): string[] {
   return Object.values(state.combatRuntime.effects)
-    .filter((effect) => isWorldEffectRecord(effect) && effect.sourceRef === sourceRef
+    .filter((effect) => isLastingEffectRecord(effect) && effect.sourceRef === sourceRef
       && effect.lifecycle?.concentration === true)
     .map((effect) => String(effect.effectId)).sort();
 }
@@ -416,9 +572,9 @@ export function repeatSaveEffects(state: AuthoritativeWorldState, targetEntityId
 /** The effects on a target that a given kind of act ends. */
 export function worldEffectsEndingWhen(
   state: AuthoritativeWorldState, targetEntityId: string, ending: WorldEffectEnding,
-): WorldEffectRecord[] {
+): LastingEffectRecord[] {
   return Object.values(state.combatRuntime.effects)
-    .filter((effect): effect is WorldEffectRecord => isWorldEffectRecord(effect)
+    .filter((effect): effect is LastingEffectRecord => isLastingEffectRecord(effect)
       && effect.targetEntityId === targetEntityId && effect.lifecycle?.endsWhen?.includes(ending) === true)
     .sort((left, right) => left.effectId.localeCompare(right.effectId));
 }
@@ -437,7 +593,7 @@ export function worldEffectEndDrafts(
   if (!isNonEmptyString(reason)) throw new RulesValidationError("Effect ending requires a reason.");
   return [...new Set(effectIds)].sort().flatMap((effectId) => {
     const effect = state.combatRuntime.effects[effectId];
-    return !isWorldEffectRecord(effect) ? [] : [{
+    return !isLastingEffectRecord(effect) ? [] : [{
       eventType: "EffectEnded" as const,
       payload: { effectId, targetEntityId: effect.targetEntityId, reason },
       visibilityPolicyId: "visibility:room-authority-only", secrecy: "internal" as const,
@@ -469,7 +625,7 @@ export function planWorldEffectEnd(state: AuthoritativeWorldState, input: {
   return { kind: "ended", effectIds, drafts: worldEffectEndDrafts(state, effectIds, "abilityEffectEnded") };
 }
 
-function residualExpiryMicros(state: AuthoritativeWorldState, effect: WorldEffectRecord): string | undefined {
+function residualExpiryMicros(state: AuthoritativeWorldState, effect: LastingEffectRecord): string | undefined {
   if (effect.expiresAt === null || effect.expiresAt.kind === "fictionTime") return undefined;
   const tasks = state.combatRuntime.encounters[effect.expiresAt.encounterId]?.residualPhaseTasks;
   const task = Array.isArray(tasks) ? tasks.find((entry) => isRecord(entry) && entry.effectId === effect.effectId) : undefined;
@@ -552,7 +708,7 @@ export function scheduledWorldEffectDeadlines(state: AuthoritativeWorldState, in
   turn?: { entityId: string; edge: "turnStart" | "turnEnd"; round: number; encounterId: string };
 } = {}): { effectId: string; timelineId: string; dueMicros: string }[] {
   return Object.values(state.combatRuntime.effects).flatMap((effect) => {
-    if (!isWorldEffectRecord(effect) || effect.expiresAt === null || effect.suspension !== null) return [];
+    if (!isLastingEffectRecord(effect) || effect.expiresAt === null || effect.suspension !== null) return [];
     const expiry = effect.expiresAt;
     const timelineId = characterTimelineId(state, expiry.entityId);
     const now = timelineId === undefined ? undefined : state.fictionTimelines[timelineId]?.nowMicros;
@@ -587,7 +743,7 @@ export function dueWorldEffectDrafts(state: AuthoritativeWorldState, input: {
 /** Called before the combat-story guard, since effects can predate an Encounter. */
 export function applyWorldEffectEvent(state: AuthoritativeWorldState, event: EventEnvelope): boolean {
   const payload = event.payload as JsonRecord;
-  if (event.eventType === "EffectApplied" && isWorldEffectRecordCandidate(payload.effect)) {
+  if (event.eventType === "EffectApplied" && isRecord(payload.effect) && payload.effect.schema === WORLD_EFFECT_SCHEMA) {
     const effect = payload.effect;
     if (!isWorldEffectRecord(effect) || state.combatRuntime.effects[effect.effectId] !== undefined
       || effect.pausedMicros !== "0" || effect.suspension !== null
@@ -604,9 +760,23 @@ export function applyWorldEffectEvent(state: AuthoritativeWorldState, event: Eve
     synchronizeWorldEffectSuspensions(state, effect.targetEntityId);
     return true;
   }
+  if (event.eventType === "EffectApplied" && isRecord(payload.effect) && payload.effect.schema === MODIFIER_EFFECT_SCHEMA) {
+    const effect = payload.effect;
+    if (!isModifierEffectRecord(effect) || state.combatRuntime.effects[effect.effectId] !== undefined
+      || (state.entities[effect.targetEntityId] === undefined
+        && state.combatRuntime.entities[effect.targetEntityId] === undefined)
+      || entityInstant(state, effect.targetEntityId) !== effect.startedAtFictionMicros
+      || !sameCanonical(effect.expiresAt, expiryFor(state,
+        effect.targetEntityId, effect.sourceRef, effect.duration, effect.startedAtFictionMicros, event.rootActionId))
+      || !registeredEffectMatches(state, effect.sourceDefinitionRef, modifierRecordDefinition(effect))) {
+      throw new RulesValidationError("Modifier effect does not match its frozen authoritative target.");
+    }
+    state.combatRuntime.effects[effect.effectId] = structuredClone(effect);
+    return true;
+  }
   if (event.eventType === "EffectEnded") {
     const effect = state.combatRuntime.effects[String(payload.effectId)];
-    if (!isWorldEffectRecord(effect)) return false;
+    if (!isLastingEffectRecord(effect)) return false;
     if (payload.targetEntityId !== effect.targetEntityId || !isNonEmptyString(payload.reason)) {
       throw new RulesValidationError("Condition effect ending has a different target.");
     }

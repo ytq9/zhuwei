@@ -588,6 +588,9 @@ export function validateCampaignEventPayload(eventType: EventType, value: JsonRe
       && ["success", "failure", "abandoned"].includes(String(value.resolution)) && strings(value.longTermConsequences)
       && strings(value.basisRefs) && value.basisRefs.length > 0 && strings(value.participantCharacterIds) && value.participantCharacterIds.includes(String(value.actorCharacterId));
   }
+  // SPEC 0012 §10.1 (ADR 0151): a synchronization that raised current hit
+  // points with the maximum (SRD Aid) says so.
+  if (type === "ConditionStateSynchronized" && "raisedWithMaximum" in value) return isConditionStateSynchronizedPayload(value);
   if (!hasExactKeys(value, PAYLOAD_KEYS[type])) {
     return false;
   }
@@ -1274,7 +1277,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
     }
     case "ConditionStateSynchronized": {
       const payload=event.payload as EventPayloadByType["ConditionStateSynchronized"];
-      const planned=planConditionStateSynchronization(state,payload.characterId);
+      const planned=planConditionStateSynchronization(state,payload.characterId,payload.raisedWithMaximum===true);
       if(planned===undefined||!sameCanonical(planned.payload, payload))throw new RulesValidationError("Condition consequences do not match the authoritative state.");
       const character=state.entities[payload.characterId]!;
       character.hitPoints={...payload.hitPoints.after};

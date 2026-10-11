@@ -87,6 +87,18 @@ export type SpellSave = {
   advantageInCombat?: boolean;
 };
 
+/** The mechanic a modifier effect carries (SPEC 0012 §10.1); an amount comes
+ * from the effect's `value` at the slot it is cast with. */
+export type SpellModifier =
+  | { kind: "armorClassBonus" }
+  | { kind: "unarmoredArmorClass" }
+  | { kind: "speedBonus" }
+  | { kind: "noReactions" }
+  | { kind: "advantageOnNextAttackAgainst" }
+  | { kind: "hitPointMaximumBonus" }
+  | { kind: "d20BonusDie"; sides: number; rolls: readonly ("attack" | "save" | "check")[] }
+  | { kind: "weaponDamageDieFromSource"; sides: number };
+
 export type SpellEffectDefinition = {
   tag: string;
   label: string;
@@ -103,7 +115,8 @@ export type SpellEffectDefinition = {
   value?: number;
   perSlotAbove?: number;
   /** SRD acts that end the effect early on its target (SPEC 0012 §10.1). */
-  endsWhen?: readonly ("harmedBySourceSide" | "targetAttacksOrCasts")[];
+  endsWhen?: readonly ("harmedBySourceSide" | "targetAttacked" | "targetAttacksOrCasts" | "targetDonsArmor")[];
+  modifier?: SpellModifier;
 };
 
 export type SpellResolution = {

@@ -369,14 +369,30 @@ function spellEffectDuration(source: SpellDefinition, slotLevel: number): JsonRe
  * descriptive record, which Rules refuses to cast. */
 function compiledSpellEffect(source: SpellDefinition, effect: SpellEffectDefinition, slotLevel: number): JsonRecord {
   const duration = spellEffectDuration(source, slotLevel);
+  const lifecycle = (repeats: boolean): JsonRecord => ({
+    ...(source.duration.kind !== "instant" && source.duration.concentration === true ? { concentration: true } : {}),
+    ...(repeats && source.resolution.save?.repeats === "turnEnd" ? { repeatSave: { edge: "turnEnd" } } : {}),
+    ...(effect.endsWhen === undefined || effect.endsWhen.length === 0 ? {} : { endsWhen: [...effect.endsWhen].sort() }),
+  });
+  const value = spellEffectValueAtSlot(effect, source.level, slotLevel);
+  const modifier = effect.modifier === undefined ? undefined
+    : effect.modifier.kind === "armorClassBonus" || effect.modifier.kind === "hitPointMaximumBonus"
+      ? value === undefined ? undefined : { kind: effect.modifier.kind, amount: value }
+      : effect.modifier.kind === "unarmoredArmorClass" ? value === undefined ? undefined : { kind: effect.modifier.kind, base: value }
+        : effect.modifier.kind === "speedBonus" ? value === undefined ? undefined : { kind: effect.modifier.kind, feet: value }
+          : effect.modifier.kind === "d20BonusDie"
+            ? { kind: effect.modifier.kind, sides: effect.modifier.sides, rolls: [...effect.modifier.rolls].sort() }
+            : effect.modifier.kind === "weaponDamageDieFromSource" ? { kind: effect.modifier.kind, sides: effect.modifier.sides }
+              : { kind: effect.modifier.kind };
+  if (modifier !== undefined && duration !== undefined) {
+    const kept = lifecycle(false);
+    return { kind: "grantModifier", tag: effect.tag, label: effect.label, modifier, duration,
+      ...(Object.keys(kept).length === 0 ? {} : { lifecycle: kept }) };
+  }
   if (effect.kind === "condition" && (CONDITION_IDS as readonly string[]).includes(effect.tag) && duration !== undefined) {
-    const lifecycle = {
-      ...(source.duration.kind !== "instant" && source.duration.concentration === true ? { concentration: true } : {}),
-      ...(source.resolution.save?.repeats === "turnEnd" ? { repeatSave: { edge: "turnEnd" } } : {}),
-      ...(effect.endsWhen === undefined || effect.endsWhen.length === 0 ? {} : { endsWhen: [...effect.endsWhen].sort() }),
-    };
+    const kept = lifecycle(true);
     return { kind: "grantEffect", tag: effect.tag, label: effect.label, condition: effect.tag, duration,
-      ...(Object.keys(lifecycle).length === 0 ? {} : { lifecycle }) };
+      ...(Object.keys(kept).length === 0 ? {} : { lifecycle: kept }) };
   }
   return {
     tag: effect.tag,

@@ -37,7 +37,8 @@ import {
   conditionMovementPermission,
   conditionMovementCost,
 } from "./condition-mechanics";
-import { effectiveConditions, isWorldEffectRecord, planWorldEffect, planWorldEffectEnd, repeatSaveEffects, worldEffectDefinition, worldEffectEndDefinition, worldEffectEndDrafts, worldEffectsEndingWhen } from "./world-effects";
+import { effectiveConditions, isWorldEffectRecord, modifierEffectDefinition, planModifierEffect, planWorldEffect, planWorldEffectEnd, repeatSaveEffects, worldEffectDefinition, worldEffectEndDefinition, worldEffectEndDrafts, worldEffectsEndingWhen } from "./world-effects";
+import { attacksAgainstHaveAdvantage, effectiveArmorClass as modifiedArmorClass, reactionsBlocked, wearsBodyArmor } from "./effect-modifiers";
 import { combatPhaseExpiryAnchor, initiativePhaseOrder, phaseSlotForEntity } from "./effect-phase";
 
 import { canonicalSha256, sameCanonical } from "../profiles/canonical";
@@ -88,7 +89,6 @@ import {
   rectangularFeatureEntity,
 } from "../profiles/combat-geometry";
 import {
-  attackArmorClass,
   combatAttackBonus,
   resolveCombatAttackRoll,
 } from "../profiles/attack-resolution";
@@ -622,7 +622,8 @@ function canonicalAbilityDefinition(value: unknown): value is JsonRecord {
     }
   }
   if (value.effects !== undefined && (!Array.isArray(value.effects) || value.effects.length > 8
-    || !value.effects.every(effect => worldEffectDefinition(effect) !== undefined || worldEffectEndDefinition(effect) !== undefined))) return false;
+    || !value.effects.every(effect => worldEffectDefinition(effect) !== undefined || worldEffectEndDefinition(effect) !== undefined
+      || modifierEffectDefinition(effect) !== undefined))) return false;
   if (value.grants !== undefined
     && (!Array.isArray(value.grants)
       || !value.grants.every((grant) => isRecord(grant)
@@ -2372,7 +2373,7 @@ function appendTransitions(prefix: StepResult, next: StepResult): StepResult {
 function abilityWorldEffects(definition: JsonRecord): JsonRecord[] {
   return [definition.effect, ...(Array.isArray(definition.effects) ? definition.effects : [])]
     .filter((effect): effect is JsonRecord => isRecord(effect)
-      && (effect.kind === "grantEffect" || effect.kind === "endEffect"));
+      && (effect.kind === "grantEffect" || effect.kind === "endEffect" || effect.kind === "grantModifier"));
 }
 
 /** SPEC 0012 §10.1: what one use of an Ability ends besides its own
@@ -2395,7 +2396,14 @@ function abilityUseEndingDrafts(
   const harmed = harmful ? targetIds.flatMap((targetId) => worldEffectsEndingWhen(state, targetId, "harmedBySourceSide")
     .filter((effect) => !own.includes(effect.effectId) && sourceSideIncludes(state, effect.sourceRef, sourceRef))
     .map((effect) => effect.effectId)) : [];
-  return [...worldEffectEndDrafts(state, own, "targetAttackedOrCast"), ...worldEffectEndDrafts(state, harmed, "harmedBySourceSide")];
+  // SRD Guiding Bolt: the next attack roll against a creature uses up what
+  // that roll was granted, hit or miss.
+  const attackedIds = isRecord(mechanicalResult.attacks) ? Object.keys(mechanicalResult.attacks)
+    : isRecord(mechanicalResult.attack) ? targetIds : [];
+  const spent = attackedIds.flatMap((targetId) => worldEffectsEndingWhen(state, targetId, "targetAttacked")
+    .map((effect) => effect.effectId).filter((effectId) => !own.includes(effectId) && !harmed.includes(effectId)));
+  return [...worldEffectEndDrafts(state, own, "targetAttackedOrCast"), ...worldEffectEndDrafts(state, harmed, "harmedBySourceSide"),
+    ...worldEffectEndDrafts(state, spent, "targetAttacked")];
 }
 
 /** Each frozen Effect reads the preceding Effect's committed state. This also
@@ -2450,6 +2458,13 @@ function appendAbilityWorldEffects(
           eventType: "EffectApplied", payload: { effect: planned.effectRecord },
           visibilityPolicyId: "visibility:room-authority-only", secrecy: "internal",
         }];
+      } else if (effect.kind === "grantModifier") {
+        const planned = planModifierEffect(result.state, {
+          rootActionId, sourceRef, sourceDefinitionRef: String(operation.abilityRef), targetEntityId, effect, index });
+        if (planned.kind === "rejected") return rejected("invalidRulesInput", planned.message);
+        if (planned.effectRecord.lifecycle?.concentration === true) heldByConcentration = true;
+        drafts = [{ eventType: "EffectApplied", payload: { effect: planned.effectRecord },
+          visibilityPolicyId: "visibility:room-authority-only", secrecy: "internal" }];
       } else {
         const planned = planWorldEffectEnd(result.state, {
           sourceDefinitionRef: String(operation.abilityRef), targetEntityId, effect,
@@ -2602,6 +2617,7 @@ function reactionSpellRefs(
 
 function reactionAvailable(state: AuthoritativeWorldState, entity: JsonRecord): boolean {
   return entity.lifeState !== "dead" && !incapacitated(state, entity)
+    && !reactionsBlocked(state, entityId(entity))
     && (!isRecord(entity.turn) || Number(entity.turn.reaction ?? 1) > 0);
 }
 
@@ -2611,7 +2627,7 @@ function shieldEffects(state: AuthoritativeWorldState, targetId: string): JsonRe
 }
 
 function effectiveArmorClass(state: AuthoritativeWorldState, target: JsonRecord): number {
-  return attackArmorClass(target, Object.values(state.combatRuntime.effects));
+  return modifiedArmorClass(state, target);
 }
 
 function magicMissileImmune(state: AuthoritativeWorldState, targetId: string): boolean {
@@ -2831,6 +2847,8 @@ function attackMode(
   if (hiddenFrom(state, target, source)) disadvantageReasons.push("unseenTarget2014");
   // SPEC 0012 §6.3 (ADR 0099 decision 1): a helper's distraction.
   if (hasAttackHelp(source.conditions, entityId(target))) advantageReasons.push("helpedAttack2014");
+  // SRD 5.1 Guiding Bolt: the next attack roll against the target.
+  if (attacksAgainstHaveAdvantage(state, entityId(target))) advantageReasons.push("markedForNextAttack2014");
 
   const advantage = advantageReasons.length > 0;
   const disadvantage = disadvantageReasons.length > 0;
@@ -4296,9 +4314,14 @@ function prepareAbilityExecution(
       ? [entityId(source)] : selection.targetIds;
     const manyAttacks = targetIds.length > 1 && isRecord(definition.attack);
     const attacks: Record<string, JsonRecord> = {};
+    // SRD Mage Armor: an effect that ends when its target dons armor is
+    // cast only on a creature that wears none.
+    const unarmoredOnly = abilityWorldEffects(definition).some((effect) => isRecord(effect.lifecycle)
+      && Array.isArray(effect.lifecycle.endsWhen) && effect.lifecycle.endsWhen.includes("targetDonsArmor"));
     for (const targetId of targetIds) {
       const target = combatEntity(state, targetId);
       if (target === undefined) return rejected("privateOrUnknownReference", "Ability target is unavailable.");
+      if (unarmoredOnly && wearsBodyArmor(state, targetId)) return rejected("invalidRulesInput", "The target wears armor.");
       if (isRecord(definition.attack)) {
         const attack = attackMode(state, source, target, definition);
         if (!attack.allowed || attack.requiredContext.length > 0) {

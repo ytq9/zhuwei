@@ -2508,18 +2508,27 @@ function conditionEffectClaim(event: EventEnvelope, payload: JsonRecord, range: 
   const targetRef = stringField(effect, "targetEntityId");
   if (!targetRef) return undefined;
   let description: string;
+  const durationText = (): string | undefined => {
+    if (ended || !isRecord(effect.duration)) return "";
+    if (effect.duration.kind === "timed") {
+      const seconds = microsecondsText(effect.duration.durationMicros);
+      return seconds === undefined ? undefined : `持续 ${seconds} 秒。`;
+    }
+    if (effect.duration.kind === "untilEnded") return "持续至效果被解除。";
+    if (effect.duration.kind === "turnBoundary") return `持续至${effect.duration.subject === "target" ? "目标" : "效果来源"}的下次回合${effect.duration.edge === "turnStart" ? "开始" : "结束"}。`;
+    return undefined;
+  };
+  const modifierLabel = effect.kind === "modifier" && isRecord(effect.modifier) ? modifierEffectLabel(effect.modifier) : undefined;
   if (effect.kind === "condition" && typeof effect.condition === "string" && CONDITION_LABELS[effect.condition]) {
     const level = effect.condition === "exhaustion" && finiteNumber(effect.level) !== undefined ? ` ${finiteNumber(effect.level)} 级` : "";
-    description = `目标的${CONDITION_LABELS[effect.condition]}${level}效果${ended ? "已经结束" : "已生效"}。`;
-    if (!ended && isRecord(effect.duration)) {
-      if (effect.duration.kind === "timed") {
-        const seconds = microsecondsText(effect.duration.durationMicros);
-        if (seconds === undefined) return undefined;
-        description += `持续 ${seconds} 秒。`;
-      } else if (effect.duration.kind === "untilEnded") description += "持续至效果被解除。";
-      else if (effect.duration.kind === "turnBoundary") description += `持续至${effect.duration.subject === "target" ? "目标" : "效果来源"}的下次回合${effect.duration.edge === "turnStart" ? "开始" : "结束"}。`;
-      else return undefined;
-    }
+    const lasting = durationText();
+    if (lasting === undefined) return undefined;
+    description = `目标的${CONDITION_LABELS[effect.condition]}${level}效果${ended ? "已经结束" : "已生效"}。${lasting}`;
+  } else if (modifierLabel !== undefined) {
+    // SPEC 0012 §10.1: a modifier effect, told by what it changes.
+    const lasting = durationText();
+    if (lasting === undefined) return undefined;
+    description = ended ? `目标的「${modifierLabel}」效果已经结束。` : `目标获得效果：${modifierLabel}。${lasting}`;
   } else if (effect.kind === "shield" && finiteNumber(effect.armorClassBonus) !== undefined) {
     description = ended ? "目标的护盾效果已经结束。" : `目标护甲等级增加 ${finiteNumber(effect.armorClassBonus)}，并免疫魔法飞弹，持续至其下一回合开始。`;
   } else return undefined;
@@ -2527,6 +2536,25 @@ function conditionEffectClaim(event: EventEnvelope, payload: JsonRecord, range: 
     authorityRefs: [effectId, stringField(effect, "sourceDefinitionRef"), stringField(effect, "sourceAbilityRef"), stringField(effect, "sourceRef")],
     viewerRefs: [targetRef], materialVisibilityPolicyRef: stringField(effect, "visibilityPolicyId"),
   }), kind: "mechanicalOutcome", targetRefs: [targetRef], outcomeCode: ended ? "effectEnded" : "effectApplied", summary: description };
+}
+const D20_ROLL_LABELS: Readonly<Record<string, string>> = Object.freeze({ attack: "攻击检定", check: "属性检定", save: "豁免检定" });
+function modifierEffectLabel(modifier: JsonRecord): string | undefined {
+  const amount = finiteNumber(modifier.amount), sides = finiteNumber(modifier.sides);
+  switch (modifier.kind) {
+    case "armorClassBonus": return amount === undefined ? undefined : `护甲等级 +${amount}`;
+    case "unarmoredArmorClass": return finiteNumber(modifier.base) === undefined ? undefined : `未着甲时基础护甲等级为 ${finiteNumber(modifier.base)} 加敏捷调整值`;
+    case "speedBonus": {
+      const feet = finiteNumber(modifier.feet);
+      return feet === undefined ? undefined : `速度${feet > 0 ? "+" : "−"}${Math.abs(feet)} 尺`;
+    }
+    case "noReactions": return "不能使用反应";
+    case "advantageOnNextAttackAgainst": return "下一次针对它的攻击具有优势";
+    case "hitPointMaximumBonus": return amount === undefined ? undefined : `生命值上限与当前生命值 +${amount}`;
+    case "d20BonusDie": return sides === undefined || !Array.isArray(modifier.rolls) ? undefined
+      : `${modifier.rolls.map((roll) => D20_ROLL_LABELS[String(roll)] ?? String(roll)).join("、")} +1d${sides}`;
+    case "weaponDamageDieFromSource": return sides === undefined ? undefined : `被效果来源的武器命中时额外受到 1d${sides} 伤害`;
+    default: return undefined;
+  }
 }
 function nativeConditionClaims(event: EventEnvelope, payload: JsonRecord, range: VerifiedClaimCommittedRange): MechanicalOutcomeClaimMaterial[] {
   const targetRef = stringField(payload, "entityId");

@@ -46,7 +46,7 @@ for (const scenario of [
   { spellId: "silence", parameters: { areaOrigin: { x: "100", y: "100", elevation: "0" } } },
   { spellId: "silence", ritual: true,
     parameters: { ritual: true, areaOrigin: { x: "100", y: "100", elevation: "0" } } },
-  { spellId: "guiding-bolt", parameters: { targetEntityId: OTHER } },
+  { spellId: "command", parameters: { targetEntityId: OTHER } },
 ]) {
   test(`registered ${scenario.spellId}${scenario.ritual ? " ritual" : ""} refuses missing effect execution before any cost, die, or success`, () => {
     const f = fixture(scenario.spellId, scenario), before = structuredClone(f.state);

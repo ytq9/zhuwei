@@ -1,4 +1,4 @@
-import { scheduledWorldEffectDeadlines, isWorldEffectRecord, isWorldEffectRecordCandidate } from "./world-effects";
+import { scheduledWorldEffectDeadlines, isLastingEffectRecord, isWorldEffectRecordCandidate } from "./world-effects";
 import { activeEncounter } from "./combat-encounters";
 import { promiseReviewDeadlines, promiseReviewDescriptors } from "./promise-lifecycle";
 import { npcWorkDescriptors, npcWorkDeadlines } from "./npc-work";
@@ -175,7 +175,7 @@ function activityTimeSchedule(state: AuthoritativeWorldState, activity: JsonReco
   }
   for (const due of actorPlans.filter(due => due.timelineId === timelineId)) deadlines.push({ at: due.completionFictionMicros });
   for (const effect of Object.values(state.combatRuntime.effects)) {
-    if (isWorldEffectRecordCandidate(effect) && !isWorldEffectRecord(effect)
+    if (isWorldEffectRecordCandidate(effect) && !isLastingEffectRecord(effect)
       && characterTimelineId(state, String(effect.targetEntityId)) === timelineId) return { kind: "blocked", reason: "invalidSchedule" };
   }
   for (const due of scheduledWorldEffectDeadlines(state, { timelineId })) deadlines.push({ at: due.dueMicros });

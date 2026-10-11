@@ -9,7 +9,7 @@ import type {
   EventType,
   JsonRecord,
 } from "./model";
-import { applyWorldEffectEvent, isWorldEffectRecord, isWorldEffectRecordCandidate, synchronizeWorldEffectSuspensions } from "./world-effects";
+import { applyWorldEffectEvent, isLastingEffectRecord, isWorldEffectRecord, isWorldEffectRecordCandidate, synchronizeWorldEffectSuspensions } from "./world-effects";
 import { parseDamageFormula, resolveCreatureDamage, worldDamageTarget } from "./damage";
 import { conditionMovementPermission, conditionMovementCost, conditionSpeed, conditionDamageDefense } from "./condition-mechanics";
 import {
@@ -339,7 +339,7 @@ export function validateCombatEventPayload(eventType: EventType, value: JsonReco
     case "SpellResolved": return [value.castId, value.sourceEntityId, value.abilityRef].every(isNonEmptyString)
       && isRecord(value.outcome);
     case "EffectApplied": return isRecord(value.effect) && isNonEmptyString(value.effect.effectId)
-      && (!isWorldEffectRecordCandidate(value.effect) || isWorldEffectRecord(value.effect));
+      && (!isWorldEffectRecordCandidate(value.effect) || isLastingEffectRecord(value.effect));
     case "EffectEnded": return [value.effectId, value.targetEntityId, value.reason].every(isNonEmptyString);
     case "RoundEnded": return isNonEmptyString(value.encounterId)
       && isNonEmptyString(value.fictionAdvanceMicros) && Number.isSafeInteger(value.round);
