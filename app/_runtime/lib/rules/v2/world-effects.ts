@@ -100,6 +100,8 @@ export type ModifierEffectDefinition = {
   modifier: EffectModifier;
   duration: WorldEffectDuration;
   lifecycle?: WorldEffectLifecycle;
+  /** Abilities its source may use once its target is down (SRD Hunter's Mark). */
+  grantsWhenTargetDown?: string[];
 };
 export const MODIFIER_EFFECT_SCHEMA = "zhuwei.modifier-effect/v1" as const;
 export type ModifierEffectRecord = JsonRecord & {
@@ -120,6 +122,7 @@ export type ModifierEffectRecord = JsonRecord & {
   lifecycle?: WorldEffectLifecycle;
   /** The word a `commanded` modifier's caster chose when it cast the spell. */
   command?: CommandWord;
+  grantsWhenTargetDown?: string[];
 };
 /** SPEC 0012 §10.1: an area an effect fills for its duration (SRD Fog Cloud,
  * Silence), a sphere frozen where it was cast. */
@@ -294,8 +297,12 @@ export function isEffectModifier(value: unknown): value is EffectModifier {
 /** The Ability Effect family's modifier shape. Like a condition, a spell's
  * modifier carries its catalog tag and label, which the frozen mechanic
  * leaves out; a modifier repeats no save. */
+const grantList = (value: unknown): boolean => Array.isArray(value) && value.length > 0 && value.length <= 4
+  && value.every((ref, index, all) => isNonEmptyString(ref) && (index === 0 || String(all[index - 1]) < ref));
+
 export function modifierEffectDefinition(value: unknown): ModifierEffectDefinition | undefined {
-  if (!isRecord(value) || !hasOnlyKeys(value, ["duration", "kind", "modifier"], ["label", "lifecycle", "tag"])
+  if (!isRecord(value) || !hasOnlyKeys(value, ["duration", "kind", "modifier"], ["grantsWhenTargetDown", "label", "lifecycle", "tag"])
+    || !(value.grantsWhenTargetDown === undefined || grantList(value.grantsWhenTargetDown))
     || value.kind !== "grantModifier" || !isEffectModifier(value.modifier)
     || !isWorldEffectDuration(value.duration)
     || !(value.tag === undefined || isNonEmptyString(value.tag))
@@ -307,7 +314,8 @@ export function modifierEffectDefinition(value: unknown): ModifierEffectDefiniti
 
 function modifierRecordDefinition(effect: ModifierEffectRecord): ModifierEffectDefinition {
   return { kind: "grantModifier", modifier: effect.modifier, duration: effect.duration,
-    ...(effect.lifecycle === undefined ? {} : { lifecycle: effect.lifecycle }) };
+    ...(effect.lifecycle === undefined ? {} : { lifecycle: effect.lifecycle }),
+    ...(effect.grantsWhenTargetDown === undefined ? {} : { grantsWhenTargetDown: effect.grantsWhenTargetDown }) };
 }
 
 export function zoneEffectDefinition(value: unknown): ZoneEffectDefinition | undefined {
@@ -433,7 +441,7 @@ export function isModifierEffectRecord(value: unknown): value is ModifierEffectR
     "duration", "effectId", "expiresAt", "kind", "modifier", "pausedMicros", "schema",
     "sourceDefinitionRef", "sourceRef", "startedAtFictionMicros", "suspension", "targetEntityId",
     "visibilityFactId", "visibilityPolicyId",
-  ], ["command", "lifecycle"]) || value.schema !== MODIFIER_EFFECT_SCHEMA || value.kind !== "modifier"
+  ], ["command", "grantsWhenTargetDown", "lifecycle"]) || value.schema !== MODIFIER_EFFECT_SCHEMA || value.kind !== "modifier"
     || (isRecord(value.modifier) && value.modifier.kind === "commanded") !== (COMMAND_WORDS as readonly unknown[]).includes(value.command)
     || ![value.effectId, value.sourceRef, value.sourceDefinitionRef, value.targetEntityId].every(isNonEmptyString)
     || !unsignedMicros(value.startedAtFictionMicros) || value.pausedMicros !== "0" || value.suspension !== null
@@ -495,8 +503,50 @@ export function escapableEffects(state: AuthoritativeWorldState, targetEntityId:
 /** SRD Spiritual Weapon: the abilities a creature may use because an effect
  * it made still lasts, in a stable order. */
 export function grantedAbilityRefs(state: AuthoritativeWorldState, entityId: string): string[] {
-  return [...new Set(Object.values(state.combatRuntime.effects).flatMap((effect) =>
-    isZoneEffectRecord(effect) && effect.sourceRef === entityId && effect.grants !== undefined ? effect.grants : []))].sort();
+  return [...new Set(Object.values(state.combatRuntime.effects).flatMap((effect) => {
+    if (isZoneEffectRecord(effect) && effect.sourceRef === entityId && effect.grants !== undefined) return effect.grants;
+    // SRD Hunter's Mark: once the marked creature drops to 0 hit points.
+    if (isModifierEffectRecord(effect) && effect.sourceRef === entityId && effect.grantsWhenTargetDown !== undefined) {
+      const target = state.combatRuntime.entities[effect.targetEntityId];
+      const hitPoints = target?.hitPoints;
+      const down = target === undefined || target.lifeState === "dead"
+        || (isRecord(hitPoints) && Number(hitPoints.current) === 0);
+      return down ? effect.grantsWhenTargetDown : [];
+    }
+    return [];
+  }))].sort();
+}
+
+/** A creature's own modifier from a frozen Ability, if it still lasts. */
+export function ownModifierOf(state: AuthoritativeWorldState, sourceRef: string, sourceDefinitionRef: string): ModifierEffectRecord | undefined {
+  return Object.values(state.combatRuntime.effects).find((effect): effect is ModifierEffectRecord => isModifierEffectRecord(effect)
+    && effect.sourceRef === sourceRef && effect.sourceDefinitionRef === sourceDefinitionRef);
+}
+
+/** SRD Hunter's Mark: the mark moved to a new creature, keeping its time. */
+export type EffectRetargetedPayload = { effectId: string; sourceRef: string; targetEntityId: string };
+
+export function isEffectRetargetedPayload(value: unknown): value is EffectRetargetedPayload {
+  return isRecord(value) && hasExactKeys(value, ["effectId", "sourceRef", "targetEntityId"])
+    && [value.effectId, value.sourceRef, value.targetEntityId].every(isNonEmptyString);
+}
+
+export function applyEffectRetargetedEvent(state: AuthoritativeWorldState, event: EventEnvelope): boolean {
+  if (event.eventType !== "EffectRetargeted") return false;
+  const payload: unknown = event.payload;
+  if (!isEffectRetargetedPayload(payload)) throw new RulesValidationError("Only a lasting mark moves.");
+  const effect = state.combatRuntime.effects[payload.effectId];
+  if (!isModifierEffectRecord(effect) || effect.sourceRef !== payload.sourceRef || effect.grantsWhenTargetDown === undefined
+    || (state.entities[payload.targetEntityId] === undefined && state.combatRuntime.entities[payload.targetEntityId] === undefined)) {
+    throw new RulesValidationError("Only a lasting mark moves.");
+  }
+  const previous = effect.targetEntityId;
+  effect.targetEntityId = payload.targetEntityId;
+  // A timed mark keeps its due time, now on its new target's clock.
+  if (effect.expiresAt !== null && effect.expiresAt.entityId === previous) {
+    effect.expiresAt = { ...effect.expiresAt, entityId: payload.targetEntityId };
+  }
+  return true;
 }
 
 /** The zone a creature's own frozen Ability made, if it still lasts. */
@@ -689,6 +739,7 @@ export function planModifierEffect(state: AuthoritativeWorldState, input: {
     visibilityPolicyId: "visibility:scene-observers", visibilityFactId: null,
     ...(definition.lifecycle === undefined ? {} : { lifecycle: definition.lifecycle }),
     ...(input.command === undefined ? {} : { command: input.command as CommandWord }),
+    ...(definition.grantsWhenTargetDown === undefined ? {} : { grantsWhenTargetDown: definition.grantsWhenTargetDown }),
   };
   if (!isModifierEffectRecord(effectRecord) || state.combatRuntime.effects[effectRecord.effectId] !== undefined) {
     return { kind: "rejected", message: "The modifier effect identity, or the command it carries, is invalid." };

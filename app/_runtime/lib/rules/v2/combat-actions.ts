@@ -37,7 +37,7 @@ import {
   conditionMovementPermission,
   conditionMovementCost,
 } from "./condition-mechanics";
-import { COMMAND_WORDS, commandOn, type CommandWord, effectiveConditions, escapableEffects, grantedAbilityRefs, isWorldEffectRecord, modifierEffectDefinition, modifierEffectsOn, ownZoneOf, turnStartDamageEffects, planModifierEffect, planWorldEffect, planZoneEffect, zoneEffectDefinition, planWorldEffectEnd, repeatSaveEffects, worldEffectDefinition, worldEffectEndDefinition, worldEffectEndDrafts, worldEffectsEndingWhen } from "./world-effects";
+import { COMMAND_WORDS, commandOn, type CommandWord, effectiveConditions, escapableEffects, grantedAbilityRefs, isWorldEffectRecord, modifierEffectDefinition, modifierEffectsOn, ownModifierOf, ownZoneOf, turnStartDamageEffects, planModifierEffect, planWorldEffect, planZoneEffect, zoneEffectDefinition, planWorldEffectEnd, repeatSaveEffects, worldEffectDefinition, worldEffectEndDefinition, worldEffectEndDrafts, worldEffectsEndingWhen } from "./world-effects";
 import { castingSilenced, zoneBlocksSight } from "./zone-effects";
 import { attacksAgainstHaveAdvantage, d20BonusDie, effectiveArmorClass as modifiedArmorClass, reactionsBlocked, weaponDamageDieFrom, wearsBodyArmor } from "./effect-modifiers";
 import { combatPhaseExpiryAnchor, initiativePhaseOrder, phaseSlotForEntity } from "./effect-phase";
@@ -2404,7 +2404,7 @@ function appendTransitions(prefix: StepResult, next: StepResult): StepResult {
 function abilityWorldEffects(definition: JsonRecord): JsonRecord[] {
   return [definition.effect, ...(Array.isArray(definition.effects) ? definition.effects : [])]
     .filter((effect): effect is JsonRecord => isRecord(effect)
-      && ["createZone", "endEffect", "grantEffect", "grantModifier", "moveZone"].includes(String(effect.kind)));
+      && ["createZone", "endEffect", "grantEffect", "grantModifier", "moveModifier", "moveZone"].includes(String(effect.kind)));
 }
 
 /** SPEC 0012 §10.1: what one use of an Ability ends besides its own
@@ -2474,8 +2474,16 @@ function appendAbilityWorldEffects(
   // to strike again (SRD Spiritual Weapon); a summon takes a 5-foot space.
   const struck = targetIds.length === 0 ? undefined : combatEntity(result.state, targetIds[0]);
   for (const [index, effect] of abilityWorldEffects(definition).entries()) {
-    if ((effect.kind !== "createZone" && effect.kind !== "moveZone") || result.kind !== "committed") continue;
+    if ((effect.kind !== "createZone" && effect.kind !== "moveZone" && effect.kind !== "moveModifier") || result.kind !== "committed") continue;
     const source = combatEntity(result.state, sourceRef);
+    // SRD Hunter's Mark: the mark moves to the new creature, keeping its time.
+    if (effect.kind === "moveModifier") {
+      const mark = ownModifierOf(result.state, sourceRef, String(effect.modifierOf));
+      if (mark === undefined || struck === undefined) return rejected("invalidRulesInput", "The mark is no longer there.");
+      append([{ eventType: "EffectRetargeted", payload: { effectId: mark.effectId, sourceRef, targetEntityId: entityId(struck) },
+        visibilityPolicyId: "visibility:room-authority-only", secrecy: "internal" }]);
+      continue;
+    }
     if (effect.kind === "moveZone") {
       const zone = ownZoneOf(result.state, sourceRef, String(effect.zoneOf));
       if (zone === undefined || !isRecord(struck?.position)) return rejected("invalidRulesInput", "The summon is no longer there.");
@@ -2496,7 +2504,7 @@ function appendAbilityWorldEffects(
       visibilityPolicyId: "visibility:room-authority-only", secrecy: "internal" }]);
   }
   for (const [index, effect] of abilityWorldEffects(definition).entries()) {
-    if (effect.kind === "createZone" || effect.kind === "moveZone" || effect.on === "weaponHit") continue;
+    if (effect.kind === "createZone" || effect.kind === "moveZone" || effect.kind === "moveModifier" || effect.on === "weaponHit") continue;
     for (const targetEntityId of targetIds) {
       const attack = isRecord(mechanicalResult.attacks)
         ? mechanicalResult.attacks[targetEntityId] : mechanicalResult.attack;
@@ -4087,6 +4095,7 @@ function abilityEffectsExecutable(definition: JsonRecord, specCount: number): bo
     ? target.kind !== "creature"
     : !(target.kind === "area" && isRecord(target.shape) && isNonEmptyString(target.shape.radiusInches))))) return false;
   if (worldEffects.some((effect) => effect.kind === "moveZone" && (target.fromZoneOf !== effect.zoneOf || target.kind !== "creature"))) return false;
+  if (worldEffects.some((effect) => effect.kind === "moveModifier" && (target.kind !== "creature" || !isNonEmptyString(effect.modifierOf)))) return false;
   // SRD Ensnaring Strike: a condition applied on a weapon hit needs the rider that sets it off.
   if (worldEffects.some((effect) => effect.on === "weaponHit") && !worldEffects.some((effect) => effect.kind === "grantModifier"
     && isRecord(effect.modifier) && effect.modifier.kind === "weaponHitRider")) return false;

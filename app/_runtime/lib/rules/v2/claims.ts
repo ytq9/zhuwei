@@ -359,7 +359,7 @@ const VNEXT_DIRECT_CLAIM_EVENT_TYPES = new Set([
   "RelationshipChanged", "PromiseMade", "DebtIncurred",
   "PartyMemberLeft", "PartyLeaderTransferred", "PartyGroupDisbanded",
   "ActivityCompleted", "RestCompleted", "KnowledgeAcquired", "CharacterMoved", "CharacterRepositioned",
-  "CreaturePushed", "CharacterJumped", "HiddenPerceptionRolled", "EffectSaveRepeated", "EnvironmentFeatureStateChanged", "EnvironmentFeatureCompleted",
+  "CreaturePushed", "CharacterJumped", "HiddenPerceptionRolled", "EffectSaveRepeated", "EffectRetargeted", "EnvironmentFeatureStateChanged", "EnvironmentFeatureCompleted",
   "CharacterClimbed", "CharacterJumpedOnto", "CharacterFell",
   "KnowledgeReviewed",
   "NarrativeDetailCommitted",
@@ -770,6 +770,14 @@ export function deriveAuthorityClaimsFromCommittedRange(
       case "EffectSaveRepeated":
         materials.push(effectSaveRepeatedClaim(event, payload));
         break;
+      case "EffectRetargeted": {
+        // SPEC 0012 §10.1 (ADR 0159): the source moved its mark to this creature.
+        const sourceRef = stringField(payload, "sourceRef"), targetRef = stringField(payload, "targetEntityId");
+        if (sourceRef === undefined || targetRef === undefined) throw new RulesValidationError("EFFECT_RETARGETED_CLAIM_INVALID");
+        materials.push({ ...eventClaimBaseWithSeparatedBasis(event, "mark-moved", { requiredViewerRefs: [targetRef] }), kind: "mechanicalOutcome",
+          actorRef: sourceRef, targetRefs: [targetRef], outcomeCode: "markMoved", summary: "印记转到了这个目标身上。" });
+        break;
+      }
       case "CharacterClimbed":
       case "CharacterJumpedOnto":
       case "CharacterFell":

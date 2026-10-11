@@ -15,7 +15,7 @@ import { applyCharacterJumpedEvent, isCharacterJumpedPayload } from "./character
 import { hiddenCondition, hidingOpponents } from "./spatial-visibility";
 import { applyHiddenPerceptionRolledEvent, isHiddenPerceptionRolledPayload } from "./hiding";
 import { applyEffectSaveRepeatedEvent, isEffectSaveRepeatedPayload } from "./effect-repeat-saves";
-import { applyEffectZoneMovedEvent, isEffectZoneMovedPayload } from "./world-effects";
+import { applyEffectRetargetedEvent, applyEffectZoneMovedEvent, isEffectRetargetedPayload, isEffectZoneMovedPayload } from "./world-effects";
 import { helpRecords } from "./basic-actions";
 import { applyCharacterClimbedEvent, applyCharacterFellEvent, applyCharacterJumpedOntoEvent, isCharacterClimbedPayload,
   isCharacterFellPayload, isCharacterJumpedOntoPayload } from "./terrain-traversal";
@@ -420,7 +420,7 @@ const EVENT_TYPES = new Set<EventType>([
   "PromiseTermsEstablished", "PromiseReviewed", "PromiseChanged",
   "NpcWorkProposed", "NpcWorkStarted", "NpcWorkDecision",
   "NpcReactionOpened", "NpcReactionSettled",
-  "CharacterRepositioned", "CreaturePushed", "CharacterJumped", "HiddenPerceptionRolled", "EffectSaveRepeated", "EffectZoneMoved",
+  "CharacterRepositioned", "CreaturePushed", "CharacterJumped", "HiddenPerceptionRolled", "EffectSaveRepeated", "EffectZoneMoved", "EffectRetargeted",
   "CharacterClimbed", "CharacterJumpedOnto", "CharacterFell",
   "NpcCombatTurnPlanned", "NpcCombatTurnStepTaken", "NpcCombatTurnSettled",
   "KnowledgeReviewed",
@@ -748,6 +748,7 @@ function isTypedPayload(eventType: EventType, value: unknown): boolean {
     case "HiddenPerceptionRolled": return isHiddenPerceptionRolledPayload(value);
     case "EffectSaveRepeated": return isEffectSaveRepeatedPayload(value);
     case "EffectZoneMoved": return isEffectZoneMovedPayload(value);
+    case "EffectRetargeted": return isEffectRetargetedPayload(value);
     case "CharacterClimbed": return isCharacterClimbedPayload(value);
     case "CharacterJumpedOnto": return isCharacterJumpedOntoPayload(value);
     case "CharacterFell": return isCharacterFellPayload(value);
@@ -2789,6 +2790,7 @@ function foldEventInternal(
         && !applyHiddenPerceptionRolledEvent(state, event)
         && !applyEffectSaveRepeatedEvent(state, event)
         && !applyEffectZoneMovedEvent(state, event)
+        && !applyEffectRetargetedEvent(state, event)
         && !applyCharacterClimbedEvent(state, event)
         && !applyCharacterJumpedOntoEvent(state, event)
         && !applyCharacterFellEvent(state, event)

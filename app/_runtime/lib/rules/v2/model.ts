@@ -1339,6 +1339,8 @@ export type EventPayloadByType = {
   EffectSaveRepeated: import("./effect-repeat-saves").EffectSaveRepeatedPayload;
   /** SRD Spiritual Weapon: the spectral weapon moved beside the creature it attacked. */
   EffectZoneMoved: import("./world-effects").EffectZoneMovedPayload;
+  /** SRD Hunter's Mark: the mark moved to a new creature after its first dropped. */
+  EffectRetargeted: import("./world-effects").EffectRetargetedPayload;
   /** SPEC 0014 §4 (ADR 0098): the actor climbed or swam down, up or across. */
   CharacterClimbed: import("./terrain-traversal").CharacterClimbedPayload;
   /** SPEC 0014 §4 (ADR 0098): the actor made a high jump onto a raised feature. */

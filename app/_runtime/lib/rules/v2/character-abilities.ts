@@ -408,7 +408,8 @@ function compiledSpellEffect(source: SpellDefinition, effect: SpellEffectDefinit
   if (modifier !== undefined && duration !== undefined) {
     const kept = lifecycle(false);
     return { kind: "grantModifier", tag: effect.tag, label: effect.label, modifier, duration,
-      ...(Object.keys(kept).length === 0 ? {} : { lifecycle: kept }) };
+      ...(Object.keys(kept).length === 0 ? {} : { lifecycle: kept }),
+      ...(effect.movesWhenTargetDown === true ? { grantsWhenTargetDown: [spellMarkMoveId(spellDefinitionId)] } : {}) };
   }
   if (effect.kind === "condition" && (CONDITION_IDS as readonly string[]).includes(effect.tag) && duration !== undefined) {
     const kept = lifecycle(true);
@@ -505,6 +506,29 @@ function compileSpell(
     compiled.target = { ...rest, reachInches: String(Number(rangeInches) + summon.reachFeet * 12) };
   }
   return compiled;
+}
+
+/** SRD Hunter's Mark: the bonus action that moves the mark to a new
+ * creature once the marked one drops to 0 hit points. */
+function spellMarkMoveId(spellDefinitionId: string): string {
+  return `${spellDefinitionId}:move`;
+}
+
+/** The mark-moving bonus action, at the spell's own range and sight. */
+function compileSpellMarkMove(spell: JsonRecord, spellId: string): JsonRecord | undefined {
+  const moves = spellDefinition(spellId)?.resolution.effects?.some((effect) => effect.movesWhenTargetDown === true);
+  if (moves !== true || !isRecord(spell.target)) return undefined;
+  const spellDefinitionId = String(spell.definitionId);
+  return {
+    definitionId: spellMarkMoveId(spellDefinitionId),
+    revision: "1",
+    rulesBasis: "srd5.1-2014",
+    mechanicalKey: `spell:${spellId}:move`,
+    sourceSpellId: spellId,
+    activation: { kind: "bonusAction" },
+    target: structuredClone(spell.target),
+    effects: [{ kind: "moveModifier", tag: `${spellId}-move`, label: "把印记转到新的目标身上", modifierOf: spellDefinitionId }],
+  };
 }
 
 /** SRD Spiritual Weapon: the bonus-action strike its summon grants -- the
@@ -765,10 +789,10 @@ export function compileStaticCharacterCombat(
     for (const slotLevel of slots.sort((a, b) => a - b)) {
       const compiled = compileSpell(character, build, spellId, slotLevel);
       if (compiled !== undefined) definitions[String(compiled.definitionId)] = compiled;
-      const strike = compiled === undefined ? undefined : compileSpellSummonStrike(compiled, spellId);
-      if (strike !== undefined) {
-        definitions[String(strike.definitionId)] = strike;
-        grantedOnly.add(String(strike.definitionId));
+      for (const granted of compiled === undefined ? [] : [compileSpellSummonStrike(compiled, spellId), compileSpellMarkMove(compiled, spellId)]) {
+        if (granted === undefined) continue;
+        definitions[String(granted.definitionId)] = granted;
+        grantedOnly.add(String(granted.definitionId));
       }
     }
   }

@@ -3,8 +3,9 @@ import test from 'node:test';
 import { canonicalSha256 } from '../../../app/_runtime/lib/rules/profiles/canonical.ts';
 import { registeredAbilityRecord } from '../../../app/_runtime/lib/rules/profiles/ability-compiler.ts';
 import { buildPlayerCombatEntity, planPlayerAbilityCatalog, synchronizePlayerCombatEntity } from '../../../app/_runtime/lib/rules/v2/character-abilities.ts';
+import { deriveAuthorityClaimsFromCommittedRange } from '../../../app/_runtime/lib/rules/v2/claims.ts';
 import { hashWorldState } from '../../../app/_runtime/lib/rules/v2/validation.ts';
-import { createAuthoredProbeFixture, PROBE_ACTOR as ACTOR, PROBE_TARGET as PEER, PROBE_SCENE as SCENE } from '../../../tools/lib/vnext-authored-probe-fixture.mjs';
+import { createAuthoredProbeFixture, PROBE_ACTOR as ACTOR, PROBE_TARGET as PEER, PROBE_SCENE as SCENE, PROBE_SOURCE } from '../../../tools/lib/vnext-authored-probe-fixture.mjs';
 
 // SPEC 0012 §10.1 (SRD Bless, Guidance): a bonus die from an effect is asked
 // for with the d20 roll it adds to, under `<purpose>:bonus`, and counts in its
@@ -159,4 +160,86 @@ test('Hunter\'s Mark adds a d6 of the weapon\'s damage type to the caster\'s wea
   const packet = stab.events.find((event) => event.eventType === 'DamagePacketResolved').payload;
   assert.equal(packet.totalApplied, 6);
   assert.equal(f.state.entities[PEER].hitPoints.current, 14);
+});
+
+// SPEC 0012 §10.1 (ADR 0159, SRD Hunter's Mark): once the marked creature
+// drops to 0 hit points, a bonus action on a later turn moves the mark to a
+// new creature; the record keeps its time and its caster's concentration.
+const GUARD = 'npc:hunters-mark-guard';
+test('when the marked creature drops to 0 hit points, the caster may move the mark to another creature with a bonus action on a later turn', () => {
+  const ranger = { classId: 'ranger', level: 3, cantripIds: [], preparedSpellIds: ['hunters-mark'],
+    resources: { slot1: 3 }, resourceMaximums: { slot1: 3 },
+    characterBuild: { classId: 'ranger', raceId: 'human', cantrips: [], prepared: ['hunters-mark'] },
+    loadout: { equipped: { main: 'dagger' }, backpack: [], armorClass: 10, speedFeet: 30 } };
+  const f = createAuthoredProbeFixture('hunters-mark-move', { npcCharacters: [{ id: GUARD, name: '守卫', mechanical: false }],
+    spawnPoints: [[100, 100], [160, 100], [100, 160]].map(([x, y]) => ({ x: String(x), y: String(y), elevation: '0' })),
+    characterOverrides: { [ACTOR]: ranger, [PEER]: { hitPoints: { current: 1, maximum: 20 } } } });
+  f.events = [];
+  // The guard joins with the stat block a KP would give it.
+  const guard = f.state.combatRuntime.entities[GUARD];
+  const template = { definitionId: 'npc-template:hunters-mark-move:guard', revision: '1', definitionKind: 'npcMechanicalTemplate',
+    rulesBasis: 'srd5.1-2014', causalBasisRefs: [PROBE_SOURCE], visibilityPolicyRef: 'visibility:scene-observers',
+    content: { schema: 'zhuwei.npc-mechanical-template/v1', label: '守卫', footprint: structuredClone(guard.footprint),
+      stats: { str: '12', dex: '10', con: '10', int: '10', wis: '10', cha: '10' }, proficiencyBonus: '2',
+      armorClass: '10', armorClassModel: { kind: 'higherOfBaseAndEquipment', baseArmorClass: '10', shieldBonus: '0' },
+      hitPointsMaximum: '30', speedInches: { walk: '360' }, resourceMaximums: {}, deathPolicy: 'deadAtZero',
+      intrinsicAbilities: [], itemDefinitions: [], itemDefinitionRefs: [], initialLoadout: { entries: [] } } };
+  const participants = [ACTOR, PEER, GUARD];
+  const opened = settle(f, apply(f, { kind: 'startEncounter', rootActionId: 'root:hunters-mark-move:encounter', proposalAttemptId: 'proposal:hunters-mark-move',
+    encounterId: ENCOUNTER, sceneId: SCENE, participantEntityIds: [ACTOR, PEER], battlefieldFactIds: [],
+    dynamicEntities: [{ entityId: GUARD, name: '守卫', placement: { position: structuredClone(guard.position) },
+      mechanics: { kind: 'bespokeDefinition', definition: template } }],
+    initiativeGroups: participants.map((id) => ({ entryId: `initiative:${id}`, combatantEntityIds: [id] })),
+    hostilities: [{ fromEntityIds: [ACTOR], toEntityIds: [PEER, GUARD] }, { fromEntityIds: [PEER, GUARD], toEntityIds: [ACTOR] }] }));
+  assert.equal(opened.kind, 'committed', JSON.stringify(opened).slice(0, 1500));
+  const moveRef = `${spell(f, 'hunters-mark', 1)}:move`;
+  const listed = () => Object.keys(f.runtime.project(f.profiles, f.state, f.viewer).combatControls.abilities);
+  assert.ok(f.state.combatRuntime.definitions[moveRef], 'the move is registered with the spell');
+  assert.equal(f.state.combatRuntime.entities[ACTOR].abilityRefs.includes(moveRef), false, 'it is not an ability of its own');
+  cast(f, 'hunters-mark', 1, { targetEntityId: PEER });
+  const [mark] = Object.values(f.state.combatRuntime.effects);
+  assert.deepEqual(mark.grantsWhenTargetDown, [moveRef]);
+  assert.equal(listed().includes(moveRef), false, 'nothing to move while the marked creature stands');
+  assert.equal(apply(f, { kind: 'invokeAbility', rootActionId: 'root:hunters-mark:early', sourceEntityId: ACTOR,
+    abilityRef: moveRef, parameters: { targetEntityId: GUARD } }).kind, 'rejected');
+  const dagger = Object.values(f.state.combatRuntime.definitions).find((definition) => definition.weaponUse?.slot === 'main'
+    && definition.weaponUse?.mode === 'melee' && !definition.weaponUse?.bonusAttack).definitionId;
+  const stab = (target) => {
+    const requests = [];
+    let result = settle(f, apply(f, { kind: 'invokeAbility', rootActionId: `root:stab:${f.events.length}`, sourceEntityId: ACTOR,
+      abilityRef: dagger, parameters: { targetEntityId: target } }), { 'attack:': 15, 'damage:': 3 }, requests);
+    // A melee blow that would drop it may knock it out instead.
+    if (result.kind === 'awaitingInput' && result.pending.choiceKind === 'knockOut') result = settle(f, apply(f, { kind: 'answerPendingInput',
+      pendingInputId: result.pending.pendingInputId, responseId: `response:${result.pending.pendingInputId}`, answer: { kind: 'knockOut' } }));
+    assert.equal(result.kind, 'committed', JSON.stringify(result).slice(0, 1500));
+    return requests.find((request) => request.purposeKey.startsWith('damage:'));
+  };
+  stab(PEER);
+  assert.equal(f.state.entities[PEER].hitPoints.current, 0);
+  assert.ok(f.state.combatRuntime.effects[mark.effectId], 'the mark stays on the fallen creature until moved');
+  // Each other creature's turn passes until the caster's next one.
+  endTurn(f, ACTOR);
+  while (f.state.combatRuntime.encounters[ENCOUNTER].activeEntityId !== ACTOR) {
+    assert.equal(endTurn(f, f.state.combatRuntime.encounters[ENCOUNTER].activeEntityId).kind, 'committed');
+  }
+  assert.equal(listed().includes(moveRef), true);
+  const priorState = f.state, firstEvent = f.events.length;
+  const moved = settle(f, apply(f, { kind: 'invokeAbility', rootActionId: 'combat-act:hunters-mark-move', sourceEntityId: ACTOR,
+    abilityRef: moveRef, parameters: { targetEntityId: GUARD } }));
+  assert.equal(moved.kind, 'committed', JSON.stringify(moved));
+  // A map act is told from claims, the move included (SPEC 0016 §§7、8).
+  const rootEvents = f.events.slice(firstEvent);
+  const receipt = { ...moved.receipt, eventRange: { fromEventSeq: rootEvents[0].eventSeq, toEventSeq: rootEvents.at(-1).eventSeq } };
+  const told = deriveAuthorityClaimsFromCommittedRange({ receipt, actorCharacterId: ACTOR, priorState, state: f.state, events: rootEvents });
+  assert.ok(told.claims.some((claim) => claim.outcomeCode === 'markMoved' && claim.targetRefs.includes(GUARD)), JSON.stringify(told.claims));
+  assert.deepEqual(moved.events.filter((event) => event.eventType === 'EffectRetargeted').map((event) => event.payload),
+    [{ effectId: mark.effectId, sourceRef: ACTOR, targetEntityId: GUARD }]);
+  const after = f.state.combatRuntime.effects[mark.effectId];
+  // The hour runs on as before, read on the new target's clock.
+  assert.deepEqual([after.targetEntityId, after.expiresAt, after.lifecycle], [GUARD, { ...mark.expiresAt, entityId: GUARD }, mark.lifecycle]);
+  assert.equal(f.state.entities[ACTOR].resources.slot1, 2, 'moving it spends no slot');
+  assert.equal(f.state.combatRuntime.entities[ACTOR].concentration.linkedEffects, true);
+  assert.equal(listed().includes(moveRef), false, 'the new target stands');
+  // The guard now takes the d6.
+  assert.equal(stab(GUARD).diceExpression, '2d4+2d6');
 });

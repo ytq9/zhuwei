@@ -121,6 +121,9 @@ export type SpellEffectDefinition = {
   modifier?: SpellModifier;
   /** The area the effect fills for the spell's duration (SPEC 0012 §10.1). */
   zone?: { kind: "heavilyObscured" | "silence" };
+  /** Its source may move it to a new creature once its target drops to 0 hit
+   * points, with a bonus action on a later turn (SRD Hunter's Mark). */
+  movesWhenTargetDown?: true;
   /** Applied only when a weapon hit sets off the spell's rider (SRD Ensnaring Strike). */
   on?: "weaponHit";
   /** Damage the target takes at the start of each of its turns. */
