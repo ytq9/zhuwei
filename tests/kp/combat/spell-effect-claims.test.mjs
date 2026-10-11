@@ -3,7 +3,7 @@ import test from 'node:test';
 import { deriveAuthorityClaimsFromCommittedRange } from '../../../app/_runtime/lib/rules/v2/claims.ts';
 import { createAuthoredProbeFixture, PROBE_ACTOR as ACTOR, PROBE_TARGET as PEER, PROBE_SCENE as SCENE } from '../../../tools/lib/vnext-authored-probe-fixture.mjs';
 
-// SPEC 0016 §§7、8 with SPEC 0012 §10 (ADR 0150-0156): a map act's root is
+// SPEC 0016 §§7、8 with SPEC 0012 §10 (ADR 0150-0155, 0157): a map act's root is
 // told only from claims, and every event in it must be told or listed as a
 // record. The events the spell effects add -- conditions, modifiers, zones,
 // a repeated save, a summon moving, hit points rising with Aid -- are derived

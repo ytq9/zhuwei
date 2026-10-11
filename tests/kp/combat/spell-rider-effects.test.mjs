@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createAuthoredProbeFixture, PROBE_ACTOR as ACTOR, PROBE_TARGET as PEER, PROBE_SCENE as SCENE } from '../../../tools/lib/vnext-authored-probe-fixture.mjs';
 
-// SPEC 0012 §10.1 (ADR 0157, SRD Ensnaring Strike): a rider set off by the
+// SPEC 0012 §10.1 (ADR 0158, SRD Ensnaring Strike): a rider set off by the
 // caster's next weapon hit, a condition that hurts as each of its target's
 // turns starts, and the action's check that frees the target. Real catalog
 // spell and weapon, stepped and replayed.

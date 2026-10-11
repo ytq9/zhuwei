@@ -448,7 +448,7 @@ const VNEXT_NON_RENDERABLE_LEDGER_EVENT_TYPES = new Set([
   "EntityMaterialized", "InitiativeRequested", "InitiativeTieOrdered",
   // SPEC 0012 §3.4: actual departure is rendered by its paired CharacterMoved.
   "CombatantDeparted",
-  // SPEC 0012 §10.1 (ADR 0156): a spectral weapon moving beside its target is
+  // SPEC 0012 §10.1 (ADR 0157): a spectral weapon moving beside its target is
   // told by the attack it makes there.
   "EffectZoneMoved",
 ]);
@@ -771,7 +771,7 @@ export function deriveAuthorityClaimsFromCommittedRange(
         materials.push(effectSaveRepeatedClaim(event, payload));
         break;
       case "EffectRetargeted": {
-        // SPEC 0012 §10.1 (ADR 0159): the source moved its mark to this creature.
+        // SPEC 0012 §10.1 (ADR 0160): the source moved its mark to this creature.
         const sourceRef = stringField(payload, "sourceRef"), targetRef = stringField(payload, "targetEntityId");
         if (sourceRef === undefined || targetRef === undefined) throw new RulesValidationError("EFFECT_RETARGETED_CLAIM_INVALID");
         materials.push({ ...eventClaimBaseWithSeparatedBasis(event, "mark-moved", { requiredViewerRefs: [targetRef] }), kind: "mechanicalOutcome",
@@ -1867,7 +1867,7 @@ function medicineStabilizationClaims(event: EventEnvelope, payload: JsonRecord):
       ...(total === undefined ? {} : { total }), ...(dc === undefined ? {} : { dc }) } }];
 }
 
-/** SPEC 0012 §10.1 (ADR 0157): how an action's check to free a creature held
+/** SPEC 0012 §10.1 (ADR 0158): how an action's check to free a creature held
  * by an effect came out. That the hold ended is the EffectEnded claim. */
 function breakFreeClaims(event: EventEnvelope, payload: JsonRecord): MechanicalOutcomeClaimMaterial[] {
   const sourceRef = stringField(payload, "sourceEntityId");

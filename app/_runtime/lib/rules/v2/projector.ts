@@ -1171,7 +1171,7 @@ function projectAuthoritative(
   }
   const controlledCombatEntity = state.combatRuntime.entities[character.id];
   const hiddenItems = hiddenItemPresentation(state, character.id);
-  // SRD Spiritual Weapon (ADR 0156): an ability an effect grants is listed
+  // SRD Spiritual Weapon (ADR 0157): an ability an effect grants is listed
   // while that effect lasts.
   const controlledAbilityRefs = Array.isArray(controlledCombatEntity?.abilityRefs)
     ? [...new Set([...controlledCombatEntity.abilityRefs, ...grantedAbilityRefs(state, character.id)])]
@@ -1443,7 +1443,7 @@ function controlledCombatControls(
       // SPEC 0012 §6.3 (ADR 0097 decision 4): an attack roll can be aimed at a point.
       ...(aimableAttack(definition) ? { attackRoll: true } : {}),
       // SPEC 0014 §7 (ADR 0148): who it can reach now, of the creatures seen,
-      // from where a summon is when it strikes from there (ADR 0156).
+      // from where a summon is when it strikes from there (ADR 0157).
       ...((inRange) => inRange === undefined ? {} : { targetsInRange: inRange })(
         creatureTargetsInRange(summonOrigin(state, characterId, entity, definition), seen, definition.target)),
     }]];

@@ -240,7 +240,7 @@ export function npcCombatTurnOptions(
         creature.lifeState !== "dead" && creature.deathPolicy === "deathSaves"
         && isRecord(creature.hitPoints) && Number(creature.hitPoints.current) === 0
         && !(isRecord(creature.conditions) && creature.conditions.stable === true))
-        // SPEC 0012 §10.1 (ADR 0157): freeing itself or an ally held by vines.
+        // SPEC 0012 §10.1 (ADR 0158): freeing itself or an ally held by vines.
         : abilityRef === "action:break-free" ? candidates.filter(creature => escapableEffects(state, entityId(creature)).length > 0)
         : candidates;
       const aim = aimableAttack(definition) && hiddenEnemy;

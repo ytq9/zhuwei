@@ -563,7 +563,7 @@ export const BASIC_COMBAT_ACTIONS: readonly CombatControlAbility[] = Object.free
   // creature within 5 feet; offered only when Rules lists one.
   { abilityRef: "action:stabilize", name: "急救", group: "basic", activation: "action",
     target: { kind: "creatures", count: 1, reachFeet: 5, onlyRefs: [] } },
-  // SPEC 0012 §10.1 (ADR 0157): an action's check that frees itself or a
+  // SPEC 0012 §10.1 (ADR 0158): an action's check that frees itself or a
   // creature within 5 feet; offered only when Rules lists one.
   { abilityRef: "action:break-free", name: "挣脱", group: "basic", activation: "action",
     target: { kind: "creatures", count: 1, reachFeet: 5, onlyRefs: [] } },
@@ -1533,7 +1533,7 @@ function safeCombatChoice(value: JsonRecord) {
     const answerOptions = safeCombatAnswerOptions(value.answerOptions);
     return answerOptions ? { choiceKind: "knockOut" as const, answerOptions } : undefined;
   }
-  // SRD 5.1 Command (ADR 0158): the word the caster speaks.
+  // SRD 5.1 Command (ADR 0159): the word the caster speaks.
   if (value.choiceKind === "commandWord") {
     const answerOptions = safeCombatAnswerOptions(value.answerOptions);
     return answerOptions ? { choiceKind: "commandWord" as const, answerOptions } : undefined;

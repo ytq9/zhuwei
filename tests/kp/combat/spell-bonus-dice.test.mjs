@@ -162,7 +162,7 @@ test('Hunter\'s Mark adds a d6 of the weapon\'s damage type to the caster\'s wea
   assert.equal(f.state.entities[PEER].hitPoints.current, 14);
 });
 
-// SPEC 0012 §10.1 (ADR 0159, SRD Hunter's Mark): once the marked creature
+// SPEC 0012 §10.1 (ADR 0160, SRD Hunter's Mark): once the marked creature
 // drops to 0 hit points, a bonus action on a later turn moves the mark to a
 // new creature; the record keeps its time and its caster's concentration.
 const GUARD = 'npc:hunters-mark-guard';

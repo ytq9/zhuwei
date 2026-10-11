@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createAuthoredProbeFixture, PROBE_ACTOR as ACTOR, PROBE_TARGET as PEER, PROBE_SCENE as SCENE } from '../../../tools/lib/vnext-authored-probe-fixture.mjs';
 
-// SPEC 0012 §10.1 (ADR 0158, SRD Command; user ruling: Rules carries the
+// SPEC 0012 §10.1 (ADR 0159, SRD Command; user ruling: Rules carries the
 // command out): the caster speaks one of five words; a target that fails its
 // save follows it as its next turn starts, and that turn ends. Real catalog
 // spell, stepped and replayed.
