@@ -493,7 +493,7 @@ export const BLACK_OAK_WILL: ModuleDef = {
         {
           id: "private-lian",
           name: "莉安私谈",
-          location: "楼上客房或炉边角落",
+          location: "楼上客房",
           boxedText:
             "若有人把莉安从大厅的眼睛里带走，她才肯把声音放低。「我听见过。不是风。是我母亲的嗓子。她死的那年我八岁。我不唱歌。求你们也别唱。」",
           npcs: ["lian"],

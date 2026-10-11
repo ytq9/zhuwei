@@ -131,7 +131,9 @@ function assertKeys(data, keys) {
   assert.ok(data.submissionId.length > 0);
 }
 
-test("outside an encounter the map walks to a point or beside someone, and sends abilities to the KP as intent", async () => {
+// SPEC 0014 §4: selecting a creature or object inspects it; only ground
+// selection offers movement. Natural-language approaches remain available.
+test("outside an encounter the map walks to a point, inspects people and objects, and sends abilities to the KP as intent", async () => {
   const { compileSheet } = await import("../../../app/_runtime/lib/dnd/compute.ts");
   await withTable(snapFor(compileSheet, { combat: false }), async ({ calls, map, one, press, key, token, act, settle }) => {
     await press({ "data-tactical-disclosure-trigger": "desktop" });
@@ -149,15 +151,13 @@ test("outside an encounter the map walks to a point or beside someone, and sends
     assert.deepEqual(calls[0].data.destination, { kind: "point", x: "180", y: "180" });
     assert.equal(calls[0].data.spatialRevision, REVISION);
 
-    for (const [key, ref] of [["entity:npc:warden", "npc:warden"], ["feature:feature:portal", "feature:portal"]]) {
-      const select = one({ "data-tactical-beside-select": true });
-      await act(async () => { select.props.onChange({ target: { value: key } }); await settle(); });
-      await press({ "data-tactical-beside-submit": ref });
-      const call = calls.at(-1);
-      assert.equal(call.command, "moveOnMap");
-      assertKeys(call.data, ["code", "destination", "spatialRevision", "submissionId"]);
-      assert.deepEqual(call.data.destination, { kind: "nextTo", ref });
-    }
+    await token("npc:warden");
+    assert.ok(one({ "data-tactical-selected": "entity:npc:warden" }));
+    await act(async () => { one({ "data-feature-id": "feature:portal" }).props.onClick(); await settle(); });
+    assert.ok(one({ "data-tactical-selected": "feature:feature:portal" }));
+    assert.equal(calls.length, 1, "inspecting a person or object sends no movement");
+    assert.equal(map().findAll(node => node.props["data-tactical-beside-select"] !== undefined
+      || node.props["data-tactical-beside-submit"] !== undefined).length, 0);
 
     const sentences = [
       ["ability:alice:spell:healing-word", "target", "我对守夜人施放治愈真言。"],

@@ -2677,7 +2677,8 @@ export class RoomDurableObject extends DurableObject<Env> {
       const location = locationBySceneId.get(sceneId);
       return {
         id: sceneId,
-        name: location?.name ?? sceneId,
+        // SPEC 0014 §8: the spatial scene is a place, not a story heading.
+        name: location?.location ?? location?.name ?? sceneId,
         ...(vnextInitialization ? { publicTone: moduleProfile.tone } : {}),
         ...(location?.tacticalGeometry === undefined
           ? {}

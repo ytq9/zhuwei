@@ -392,6 +392,7 @@ function closedTacticalProjectionV1(input: {
   value: unknown;
   viewerCharacterId: string;
   sceneId?: string;
+  locationLabels: Record<string, string>;
 }): TacticalProjection {
   if (
     !isTacticalProjection(input.value)
@@ -400,7 +401,33 @@ function closedTacticalProjectionV1(input: {
   ) {
     throw new TypeError("Authoritative tactical projection is invalid.");
   }
-  return structuredClone(input.value);
+  const projection = structuredClone(input.value);
+  // SPEC 0014 §8: a module's scene title describes a story beat, whereas
+  // its location names a place. Apply the same display labels to the map
+  // and its readout, including rooms created with the earlier titles.
+  // Only already-projected IDs may acquire labels; keep the authority's
+  // spatial revision, geometry, visibility and destination identities.
+  const placeName = (id: string, name: string) => nonEmptyString(input.locationLabels[id]) ?? name;
+  projection.scene.name = placeName(projection.scene.id, projection.scene.name);
+  projection.textualReadout.summary = projection.textualReadout.summary.replace(
+    `位于${input.value.scene.name}；`, `位于${projection.scene.name}；`);
+  projection.knownFeatures.forEach((feature, index) => {
+    if (!feature.leadsTo) return;
+    const previous = feature.leadsTo.name;
+    feature.leadsTo.name = placeName(feature.leadsTo.sceneId, previous);
+    const line = projection.textualReadout.features[index];
+    if (line !== undefined) projection.textualReadout.features[index] = line.replace(
+      `通往${previous}（`, `通往${feature.leadsTo.name}（`);
+  });
+  projection.knownPlaces?.forEach((place, index) => {
+    const previous = place.name;
+    place.name = placeName(place.sceneId, previous);
+    const line = projection.textualReadout.places?.[index];
+    if (line !== undefined && line.startsWith(`${previous}（`)) {
+      projection.textualReadout.places![index] = place.name + line.slice(previous.length);
+    }
+  });
+  return projection;
 }
 
 /** SPEC 0014 §§5、8 (ADR 0091): what the player picks for an ability on the
@@ -1979,6 +2006,7 @@ export function projectAuthoritativeTableObservation(input: {
     : closedTacticalProjectionV1({
         value: readModel.tacticalProjection,
         viewerCharacterId,
+        locationLabels: input.locationLabels,
         ...(sceneId === undefined ? {} : { sceneId }),
       });
   const npcTurnValue = isRecord(readModel.npcCombatTurn) ? readModel.npcCombatTurn : undefined;

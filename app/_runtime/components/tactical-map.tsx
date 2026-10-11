@@ -496,6 +496,54 @@ function featureSelectionKey(featureId: string): string {
   return `feature:${featureId}`;
 }
 
+type FeatureCaption = { text: string; x: number; y: number };
+
+/** Display-only label placement: keep names apart and off the visible
+ * creature tokens. These rectangles never participate in movement. */
+function featureCaptions(projection: TacticalProjection, selectedKey: string | null): Map<string, FeatureCaption> {
+  const bounds = sceneBounds(projection);
+  const occupied = [projection.self, ...projection.visibleEntities].map(entity => ({
+    left: inches(entity.position.x) - inches(entity.footprint.width) / 2 - 12,
+    right: inches(entity.position.x) + inches(entity.footprint.width) / 2 + 12,
+    top: inches(entity.position.y) - inches(entity.footprint.depth) / 2 - 12,
+    bottom: inches(entity.position.y) + inches(entity.footprint.depth) / 2 + 12,
+  }));
+  for (const feature of projection.knownFeatures) if (COVER_MARK[feature.cover]) {
+    const center = polygonCenter(feature.polygon);
+    occupied.push({ left: center.x - 24, right: center.x + 24, top: center.y - 24, bottom: center.y + 24 });
+  }
+  const result = new Map<string, FeatureCaption>();
+  const features = projection.knownFeatures.filter(feature => featureSelectionKey(feature.id) === selectedKey
+    || feature.kind === "portal" || feature.kind === "interactable");
+  for (const feature of features) {
+    const chars = Array.from(feature.label);
+    const text = chars.slice(0, 8).join("") + (chars.length > 8 ? "…" : "");
+    const halfWidth = Array.from(text).length * 16 + 8;
+    const center = polygonCenter(feature.polygon);
+    const xs = feature.polygon.map(p => inches(p.x)), ys = feature.polygon.map(p => inches(p.y));
+    const points = [
+      { x: center.x, y: Math.min(...ys) - 14 },
+      { x: center.x, y: Math.max(...ys) + 34 },
+      { x: center.x, y: center.y + 12 },
+      { x: Math.min(...xs) - halfWidth - 12, y: center.y + 12 },
+      { x: Math.max(...xs) + halfWidth + 12, y: center.y + 12 },
+      { x: center.x, y: Math.min(...ys) - 54 },
+      { x: center.x, y: Math.max(...ys) + 74 },
+    ].map(point => {
+      const x = Math.max(bounds.minX + halfWidth + 8, Math.min(bounds.maxX - halfWidth - 8, point.x));
+      const y = Math.max(bounds.minY + 38, Math.min(bounds.maxY - 12, point.y));
+      const box = { left: x - halfWidth, right: x + halfWidth, top: y - 34, bottom: y + 10 };
+      const collisions = occupied.filter(other => box.left < other.right && box.right > other.left
+        && box.top < other.bottom && box.bottom > other.top).length;
+      return { x, y, box, score: collisions * 1_000_000 + Math.hypot(x - center.x, y - center.y) };
+    });
+    const best = points.sort((a, b) => a.score - b.score)[0];
+    occupied.push(best.box);
+    result.set(feature.id, { text, x: best.x, y: best.y });
+  }
+  return result;
+}
+
 function zoneSelectionKey(zoneId: string): string {
   return `zone:${zoneId}`;
 }
@@ -597,7 +645,7 @@ function TacticalEntityMark({
           cy={y}
           r={Math.max(width, depth) / 2 + 26}
           fill="none"
-          className="pointer-events-none stroke-red-300 stroke-[6] [vector-effect:non-scaling-stroke]"
+          className="pointer-events-none stroke-red-300 stroke-[2] [vector-effect:non-scaling-stroke]"
         />
       ) : null}
       <rect
@@ -606,7 +654,7 @@ function TacticalEntityMark({
         width={width}
         height={depth}
         rx={Math.min(width, depth) / 5}
-        className="stroke-[8] [vector-effect:non-scaling-stroke]"
+        className="stroke-[1.5] [vector-effect:non-scaling-stroke]"
       />
       {currentActor ? (
         <rect
@@ -616,7 +664,7 @@ function TacticalEntityMark({
           height={depth + 20}
           rx={Math.min(width, depth) / 4}
           fill="none"
-          className="stroke-brass stroke-[6] [vector-effect:non-scaling-stroke]"
+          className="stroke-brass stroke-[2] [vector-effect:non-scaling-stroke]"
         />
       ) : null}
       {selected ? (
@@ -627,7 +675,7 @@ function TacticalEntityMark({
           height={depth + 36}
           rx={Math.min(width, depth) / 3}
           fill="none"
-          className="stroke-white/90 stroke-[5] [stroke-dasharray:12_8] [vector-effect:non-scaling-stroke]"
+          className="stroke-white/90 stroke-[1.5] [stroke-dasharray:4_3] [vector-effect:non-scaling-stroke]"
         />
       ) : null}
       <text
@@ -662,6 +710,7 @@ function TacticalFeatureShape({
   opaquePatternId,
   propagationPatternId,
   landformPatternId,
+  caption,
 }: {
   feature: TacticalKnownFeature;
   selected: boolean;
@@ -670,6 +719,7 @@ function TacticalFeatureShape({
   opaquePatternId: string;
   propagationPatternId: string;
   landformPatternId: (landform: TacticalLandform) => string;
+  caption?: FeatureCaption;
 }) {
   const mechanics = featureMechanics(feature);
   const center = polygonCenter(feature.polygon);
@@ -705,8 +755,8 @@ function TacticalFeatureShape({
         points={polygonPoints(feature.polygon)}
         data-movement-encoding={feature.impassable ? "solid" : "dashed"}
         className={cn(
-          "stroke-[8] [vector-effect:non-scaling-stroke]",
-          !feature.impassable && "[stroke-dasharray:24_14]",
+          "stroke-[1.5] [vector-effect:non-scaling-stroke]",
+          !feature.impassable && "[stroke-dasharray:5_3]",
         )}
       />
       {feature.landform !== undefined ? (
@@ -742,7 +792,7 @@ function TacticalFeatureShape({
             cx={center.x}
             cy={center.y}
             r={20}
-            className="fill-[#0d0b0a] stroke-white/80 stroke-[3] [vector-effect:non-scaling-stroke]"
+            className="fill-[#0d0b0a] stroke-white/80 stroke-[1] [vector-effect:non-scaling-stroke]"
           />
           <text
             x={center.x}
@@ -759,8 +809,15 @@ function TacticalFeatureShape({
         <polygon
           points={polygonPoints(feature.polygon)}
           fill="none"
-          className="pointer-events-none stroke-white stroke-[14] [stroke-dasharray:18_10] [vector-effect:non-scaling-stroke]"
+          className="pointer-events-none stroke-white stroke-[2] [stroke-dasharray:5_3] [vector-effect:non-scaling-stroke]"
         />
+      ) : null}
+      {caption ? (
+        <text x={caption.x} y={caption.y}
+          textAnchor="middle" data-feature-caption={feature.id}
+          className="pointer-events-none fill-stone-200 stroke-[#151411] text-[32px] [paint-order:stroke] [stroke-width:6px]">
+          {caption.text}
+        </text>
       ) : null}
     </g>
   );
@@ -980,9 +1037,10 @@ export function TacticalMap({
     <section
       data-tactical-map-disclosure={projection ? "ready" : "unknown"}
       aria-label="战术地图"
-      className="min-w-0 max-w-full shrink-0 border-b border-border bg-bg/45"
+      className={cn("min-w-0 max-w-full shrink-0 border-b border-border bg-bg/45",
+        isDesktopExpanded && "lg:flex lg:min-h-0 lg:max-h-[65dvh] lg:shrink lg:flex-col")}
     >
-      <div className="px-4 py-2.5">
+      <div className="shrink-0 px-4 py-2.5">
         <button
           ref={desktopTriggerRef}
           type="button"
@@ -1033,7 +1091,8 @@ export function TacticalMap({
       <div
         id={desktopContentId}
         hidden={!isDesktopExpanded}
-        className="hidden lg:block"
+        data-tactical-scroll="desktop"
+        className="hidden min-h-0 overflow-x-hidden overflow-y-auto overscroll-contain [scrollbar-gutter:stable] lg:block lg:flex-1"
       >
         {isDesktopExpanded && projection ? (
           <TacticalMapExpanded
@@ -1211,10 +1270,10 @@ function TacticalMapExpanded({
       data-tactical-view={view}
       className={cn(
         "min-w-0 max-w-full",
-        mobile ? "min-h-0 flex-1 overflow-y-auto p-3" : "px-4 pb-3",
+        mobile ? "min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain p-3" : "px-4 pb-4",
       )}
     >
-      <div className="mx-auto grid w-full max-w-[58rem] gap-3 lg:grid-cols-[minmax(0,1fr)_17rem]">
+      <div className="mx-auto grid w-full gap-3 lg:grid-cols-[minmax(0,1fr)_15rem]">
         <div className="flex items-center justify-between gap-3 lg:col-span-2">
           <div
             role="tablist"
@@ -1241,7 +1300,7 @@ function TacticalMapExpanded({
             ))}
           </div>
           <p className="text-[11px] text-subtle">
-            观察者投影 · 每格 {formatLength(String(projection.scene.gridInches))}
+            每格 {formatLength(String(projection.scene.gridInches))} · 点选查看
           </p>
         </div>
 
@@ -1259,23 +1318,35 @@ function TacticalMapExpanded({
             />
             <aside
               data-tactical-detail="v1"
-              className="flex min-w-0 flex-col gap-3 rounded-[16px] border border-border bg-surface p-3 lg:h-[min(28dvh,17rem)] lg:overflow-y-auto"
+              className="flex min-w-0 flex-col gap-3 rounded-[16px] border border-border bg-surface p-3"
             >
               <SelectedTacticalDetail
                 projection={projection}
                 selected={selected}
               />
               <TacticalLegend />
+              <div className="space-y-2 border-t border-border pt-3">
+                <p className="text-xs text-muted">此处可见</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {[projection.self, ...projection.visibleEntities].map(entity => (
+                    <button key={entity.id} type="button" onClick={() => onSelect(entitySelectionKey(entity.id))}
+                      aria-pressed={effectiveSelectedKey === entitySelectionKey(entity.id)}
+                      className="rounded-lg border border-border px-2 py-1.5 text-xs text-fg hover:bg-elevated aria-pressed:border-brass">
+                      {entity.relation === "self" ? "我" : entity.name.split(" / ")[0]}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <div className="mt-auto space-y-1 border-t border-border pt-2 text-[11px] text-subtle">
                 <p data-tactical-features={projection.knownFeatures.length > 0 ? "known" : "unknown"}>
                   {projection.knownFeatures.length > 0
-                    ? `已知环境要素 ${projection.knownFeatures.length} 项`
-                    : "尚无已知环境要素；未投影内容保持未知。"}
+                    ? `可查看 ${projection.knownFeatures.length} 处环境`
+                    : "暂未发现可查看的环境。"}
                 </p>
                 <p data-tactical-zones={projection.knownZones.length > 0 ? "known" : "unknown"}>
                   {projection.knownZones.length > 0
-                    ? `已知区域效果 ${projection.knownZones.length} 项`
-                    : "尚无已知区域效果；未投影内容保持未知。"}
+                    ? `区域效果 ${projection.knownZones.length} 项`
+                    : "暂无区域效果。"}
                 </p>
                 <p data-tactical-interactions={interaction ? "enabled" : "view-only"}>
                   {interaction
@@ -1403,7 +1474,7 @@ function StitchedPlaceShape({
       {place.features.map((feature) => (
         <g key={feature.id} data-tactical-stitched-feature={feature.id}
           className={feature.landform === undefined ? FEATURE_STYLE[feature.kind] : LANDFORM_STYLE[feature.landform]}>
-          <polygon points={polygonPoints(feature.polygon)} className="stroke-[6] [vector-effect:non-scaling-stroke]" />
+          <polygon points={polygonPoints(feature.polygon)} className="stroke-[2] [vector-effect:non-scaling-stroke]" />
           {feature.landform !== undefined ? (
             <polygon points={polygonPoints(feature.polygon)} fill={`url(#${landformPatternId(feature.landform)})`} className="stroke-none" />
           ) : null}
@@ -1460,6 +1531,7 @@ function TacticalMapCanvas({
   const minY = Math.min(...ys);
   const width = Math.max(projection.scene.gridInches, Math.max(...xs) - minX);
   const height = Math.max(projection.scene.gridInches, Math.max(...ys) - minY);
+  const captions = featureCaptions(projection, selectedKey);
   // SPEC 0014 §8 (ADR 0103 decision 5): a stitched map keeps the current
   // place's own coordinates and widens the view to the other chosen places
   // on the level shown, each where the site plan puts it. On another level
@@ -1513,7 +1585,7 @@ function TacticalMapCanvas({
       data-tactical-canvas="v1"
       data-tactical-picking={!onCurrentLevel ? "none" : gestures.pointPick ? task.kind : gestures.aimPick ? "aim" : gestures.groundPick ? "destination" : "none"}
       data-tactical-stitched-view={stitch === null ? undefined : stitchedView ? String(stitch.level) : "none"}
-      className="aspect-[4/3] min-w-0 overflow-hidden rounded-[16px] border border-border bg-[#0d0b0a] p-2 lg:h-[min(28dvh,17rem)] lg:aspect-auto"
+      className="aspect-[4/3] min-w-0 overflow-hidden rounded-[16px] border border-border bg-[#151411] p-3 lg:h-[clamp(18rem,42dvh,26rem)] lg:aspect-auto"
     >
       <svg
         role="group"
@@ -1604,7 +1676,7 @@ function TacticalMapCanvas({
               data-scene-boundary={projection.scene.id}
               points={polygonPoints(projection.scene.boundary.points)}
               fill={`url(#${gridId})`}
-              className="stroke-brass/80 stroke-[8] [vector-effect:non-scaling-stroke]"
+              className="stroke-brass/80 stroke-[1.5] [vector-effect:non-scaling-stroke]"
             />
             {stitchedView ? <PlaceNameLabel name={projection.scene.name} x={minX} y={minY} size={labelSize} /> : null}
             {interaction ? (
@@ -1640,6 +1712,7 @@ function TacticalMapCanvas({
                 <TacticalFeatureShape
                   key={feature.id}
                   feature={feature}
+                  caption={captions.get(feature.id)}
                   selected={selectedKey === key}
                   // Ground terrain does not stop a click from picking where to go;
                   // an aimed attack can guess a point behind any feature.
@@ -1712,7 +1785,7 @@ function TacticalTaskMarks({
           />
           {task.waypoints.map((point, index) => (
             <g key={`${point.x},${point.y},${index}`}>
-              <circle cx={point.x} cy={point.y} r={14} className="fill-brass stroke-black/70 stroke-[3] [vector-effect:non-scaling-stroke]" />
+              <circle cx={point.x} cy={point.y} r={14} className="fill-brass stroke-black/70 stroke-[1] [vector-effect:non-scaling-stroke]" />
               <text
                 x={point.x}
                 y={point.y}
@@ -1743,7 +1816,7 @@ function TacticalTaskMarks({
             cx={task.origin.x}
             cy={task.origin.y}
             r={16}
-            className="fill-violet-300/80 stroke-white stroke-[3] [vector-effect:non-scaling-stroke]"
+            className="fill-violet-300/80 stroke-white stroke-[1] [vector-effect:non-scaling-stroke]"
           />
           {task.direction ? (
             <line
@@ -1752,7 +1825,7 @@ function TacticalTaskMarks({
               y1={task.origin.y}
               x2={task.direction.x}
               y2={task.direction.y}
-              className="stroke-violet-200 stroke-[5] [stroke-dasharray:12_8] [vector-effect:non-scaling-stroke]"
+              className="stroke-violet-200 stroke-[1.5] [stroke-dasharray:4_3] [vector-effect:non-scaling-stroke]"
             />
           ) : null}
         </>
@@ -2043,7 +2116,7 @@ function AbilityButtons({
 }
 
 /** SPEC 0014 §8 (ADR 0091): the controls under the map. Outside an encounter
- * the player walks to a picked point or beside someone or something, and an
+ * the player walks to a picked point, and an
  * ability aimed at someone becomes an intent sentence for the KP. On the
  * player's own turn the move, its abilities, the basic actions and the end
  * of the turn go straight to Rules. Every pick can also be made from the
@@ -2164,10 +2237,6 @@ function TacticalActionPanel({
   const terrainFeature = selected.kind === "feature" && terrainFeatures.some((feature) => feature.id === selected.value.id)
     ? selected.value : null;
 
-  const besideKey = selected.kind === "entity" && selected.value.id !== projection.self.id
-    ? entitySelectionKey(selected.value.id)
-    : selected.kind === "feature" ? featureSelectionKey(selected.value.id) : "";
-  const besideRef = besideKey.slice(besideKey.indexOf(":") + 1);
   const activeEntityId = projection.encounter?.activeEntityId ?? null;
   const activeName = activeEntityId === null
     ? "尚未确定"
@@ -2469,7 +2538,7 @@ function TacticalActionPanel({
       ) : (
         <>
           <div className="space-y-2">
-            <p className="text-muted">走动不经 KP，也不花时间。</p>
+            <p className="text-muted">场内移动</p>
             {task.kind === "destination" ? (
               <div data-tactical-destination-picker className="flex flex-wrap items-center gap-1.5">
                 <span className="text-fg">目的地已在地图上用虚线方框标出。</span>
@@ -2494,45 +2563,14 @@ function TacticalActionPanel({
               <p className="text-subtle">
                 {mapVisible
                   ? "点地图上的空地选目的地；也可用方向键移动选点框，按回车选定。"
-                  : "要走到某个空地，请切换到“地图”点选；也可以在下面选人或物，走到旁边。"}
+                  : "要移动位置，请切换到“地图”点选空地；也可以直接用文字描述你的行动。"}
               </p>
             )}
-            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-              <label className="flex min-w-0 max-w-full items-center gap-1.5 text-muted">
-                <span className="shrink-0">走到</span>
-                <select
-                  data-tactical-beside-select
-                  value={besideKey}
-                  onChange={(event) => {
-                    if (event.target.value) onSelect(event.target.value);
-                  }}
-                  className="min-h-9 min-w-0 max-w-[14rem] rounded-[10px] border border-border bg-bg px-2 text-xs text-fg"
-                >
-                  <option value="" disabled>选择人或物</option>
-                  {projection.visibleEntities.map((entity) => (
-                    <option key={entity.id} value={entitySelectionKey(entity.id)}>{entity.name}</option>
-                  ))}
-                  {projection.knownFeatures.map((feature) => (
-                    <option key={feature.id} value={featureSelectionKey(feature.id)}>{feature.label}</option>
-                  ))}
-                </select>
-                <span className="shrink-0">旁边</span>
-              </label>
-              <button
-                type="button"
-                data-tactical-beside-submit={besideRef || undefined}
-                disabled={busy || besideKey === ""}
-                onClick={() => void finish(actions.moveTo({ kind: "nextTo", ref: besideRef }))}
-                className={PRIMARY_BUTTON}
-              >
-                走到旁边
-              </button>
-            </div>
           </div>
           {doors.length > 0 ? (
             <div data-tactical-go-to-list className="space-y-2 border-t border-border pt-2">
-              <p className="text-muted">去别处：作为你的行动交给 KP 裁定，照常写旁白。</p>
-              <div className="flex min-w-0 flex-wrap gap-1.5">
+              <p className="text-muted">出口与通路</p>
+              <div className="grid min-w-0 gap-2 sm:grid-cols-2 xl:grid-cols-3">
                 {doors.map((door) => (
                   <button
                     key={door.id}
@@ -2545,11 +2583,11 @@ function TacticalActionPanel({
                       onSelect(featureSelectionKey(door.id));
                       setTask({ kind: "goTo", featureId: door.id, sentence: goToSentence(door), passable: door.leadsTo.passable });
                     }}
-                    className={cn(ACTION_BUTTON, "max-w-full break-words text-left")}
+                    className={cn(ACTION_BUTTON, "flex max-w-full flex-col items-start gap-1 break-words px-3 py-2.5 text-left")}
                   >
-                    前往{door.leadsTo.name}
-                    <span className="ml-1 text-[10px] text-subtle">
-                      {door.leadsTo.passable ? `经${door.label}` : `${door.label}关着`}
+                    <span className="text-fg">{door.label}</span>
+                    <span className="text-xs text-muted">
+                      → {door.leadsTo.name}{door.leadsTo.passable ? "" : " · 暂时无法通过"}
                     </span>
                   </button>
                 ))}

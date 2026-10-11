@@ -174,6 +174,16 @@ describe("authoritative room opening delivery", () => {
       .toMatchObject({ profileId: "definition-catalog:black-oak-will:opening-v1" });
     const aliceView = record(await stub.observe(ALICE), "Alice view");
     const bobView = record(await stub.observe(BOB), "Bob view");
+    // SPEC 0014 §8: authoritative new-room maps name physical locations,
+    // and only actual connection endpoints offer another destination.
+    const map = record(record(aliceView.readModel, "Alice model").tacticalProjection, "map");
+    expect(map.scene).toMatchObject({ id: "wake", name: "黑橡居酒屋大厅" });
+    const exits = (map.knownFeatures as Array<Record<string, unknown>>).filter(feature => feature.leadsTo);
+    expect(exits.map(feature => record(feature.leadsTo, "destination").name).sort())
+      .toEqual(["居酒屋后院", "楼上客房", "账台与炉边"].sort());
+    expect(exits.map(feature => feature.id).sort()).toEqual([
+      "feature:wake:stair-foot", "feature:wake:wills-opening", "feature:wake:yard-door",
+    ]);
     expect(JSON.stringify(record(aliceView.readModel, "Alice model").knowledge)).toContain("宗教知识");
     expect(JSON.stringify(record(bobView.readModel, "Bob model").knowledge)).not.toContain("宗教知识");
     for (const view of [aliceView, bobView]) {

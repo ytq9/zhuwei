@@ -260,6 +260,26 @@ test("the table read model forwards door destinations and known places closed an
   }
 });
 
+// SPEC 0014 §8: module story titles are not place names. This also covers
+// existing rooms whose stored scene names still contain those titles.
+test("the table names mapped places by location in the map and its text without adding unseen places", () => {
+  const view = structuredClone(placesWorld.view), tacticalProjection = view.tacticalProjection;
+  const labels = { "scene:hall": "守灵大厅", "scene:yard": "屋后庭院", "scene:attic": "楼上客房",
+    "scene:secret": "不该出现的密室" };
+  const result = projectAuthoritativeTableObservation({ userId: "principal:alice", members: ["principal:alice"],
+    locationLabels: labels, observation: { readModel: view, delivery: { kind: "none" } } }).tacticalProjection;
+  assert.equal(result.scene.name, labels["scene:hall"]);
+  assert.equal(result.knownFeatures.find(f => f.id === "feature:hall:back-door").leadsTo.name, labels["scene:yard"]);
+  assert.equal(result.knownFeatures.find(f => f.id === "feature:hall:hatch").leadsTo.name, labels["scene:attic"]);
+  assert.deepEqual(result.knownPlaces.map(p => p.name), [labels["scene:hall"], labels["scene:yard"]]);
+  assert.match(result.textualReadout.summary, /位于守灵大厅/);
+  assert.ok(result.textualReadout.features.some(line => line.includes("通往屋后庭院（")));
+  assert.ok(result.textualReadout.places.some(line => line.startsWith("屋后庭院（")));
+  assert.equal(result.spatialRevision, tacticalProjection.spatialRevision, "display names do not issue a new movement revision");
+  assert.doesNotMatch(JSON.stringify(result), /不该出现的密室/);
+  assert.equal(view.tacticalProjection.scene.name, "大厅", "presentation does not mutate the room observation");
+});
+
 // End to end: Rules accepts a state carrying `placeMap` (ADR 0103) and
 // projects it for the player.
 const placesWorld = (() => {

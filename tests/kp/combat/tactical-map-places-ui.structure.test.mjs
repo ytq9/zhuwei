@@ -146,8 +146,8 @@ test("outside an encounter 前往 on a door sends the player's sentence to the K
   await withTable(snapFor(compileSheet, { combat: false }), async ({ calls, one, all, press }) => {
     await press({ "data-tactical-disclosure-trigger": "desktop" });
     assert.deepEqual(all("data-tactical-go-to").map((node) => node.props["data-tactical-go-to"]), ["feature:gate", "feature:portal"]);
-    assert.match(text(one({ "data-tactical-go-to": "feature:gate" })), /^前往小礼拜堂经庭院侧门$/);
-    assert.match(text(one({ "data-tactical-go-to": "feature:portal" })), /^前往地下墓室关闭的庭院铁门关着$/);
+    assert.match(text(one({ "data-tactical-go-to": "feature:gate" })), /^庭院侧门→ 小礼拜堂$/);
+    assert.match(text(one({ "data-tactical-go-to": "feature:portal" })), /^关闭的庭院铁门→ 地下墓室 · 暂时无法通过$/);
 
     await press({ "data-tactical-go-to": "feature:gate" });
     // The door is selected on the map, with where it leads.

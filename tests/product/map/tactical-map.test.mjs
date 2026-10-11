@@ -189,7 +189,7 @@ test("TacticalMap is collapsible and keeps unavailable projections compact", asy
   )?.[1];
   assert.ok(collapsedControls, "the disclosure button must name its controlled region");
   assert.ok(
-    collapsed.includes(`<div id="${collapsedControls}" hidden="" class="hidden lg:block"></div>`),
+    new RegExp(`<div id="${collapsedControls}" hidden=""[^>]*></div>`).test(collapsed),
     "the collapsed controlled region must remain in the DOM and be hidden",
   );
   assert.doesNotMatch(collapsed, /data-tactical-map="v1"/);
@@ -207,7 +207,7 @@ test("TacticalMap is collapsible and keeps unavailable projections compact", asy
   )?.[1];
   assert.ok(absentControls, "the unavailable status must still name its compact region");
   assert.ok(
-    absent.includes(`<div id="${absentControls}" hidden="" class="hidden lg:block"></div>`),
+    new RegExp(`<div id="${absentControls}" hidden=""[^>]*></div>`).test(absent),
     "the unavailable controlled region must remain valid without mounting map content",
   );
   assert.doesNotMatch(absent, /data-tactical-map="unknown"/);
@@ -223,8 +223,8 @@ test("TacticalMap is collapsible and keeps unavailable projections compact", asy
     projection: emptyProjection,
     defaultExpanded: true,
   }));
-  assert.match(empty, /尚无已知环境要素/);
-  assert.match(empty, /尚无已知区域效果/);
+  assert.match(empty, /暂未发现可查看的环境/);
+  assert.match(empty, /暂无区域效果/);
   assert.match(empty, /当前遭遇信息未知/);
 });
 
