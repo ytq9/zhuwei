@@ -24,6 +24,7 @@ import {
   mapGestures,
   pickStep,
   playerEncounter,
+  reachOf,
   sceneBounds,
   selfPoint,
   snapToGrid,
@@ -536,6 +537,8 @@ function TacticalEntityMark({
   elevationLabel,
   textScale,
   targeted = false,
+  reach = null,
+  inArea = false,
   passThrough = false,
   onSelect,
 }: {
@@ -545,6 +548,10 @@ function TacticalEntityMark({
   /** The height beside the token (tokenElevationLabel). */
   elevationLabel: string | null;
   textScale: number;
+  /** SPEC 0014 §7 (ADR 0148): how far it is for the ability being aimed. */
+  reach?: "within" | "long" | "out" | null;
+  /** SPEC 0014 §7 (ADR 0148): Rules names it inside the area being picked. */
+  inArea?: boolean;
   targeted?: boolean;
   /** While the player picks a point, a pointer click reaches the ground. */
   passThrough?: boolean;
@@ -574,15 +581,38 @@ function TacticalEntityMark({
       data-map-label={mapLabel}
       data-selected={String(selected)}
       data-targeted={String(targeted)}
+      data-tactical-reach={reach ?? undefined}
+      data-tactical-in-area={inArea ? "true" : undefined}
       className={cn(
         RELATION_STYLE[entity.relation],
         "cursor-pointer outline-none focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-brass",
+        reach === "out" && "opacity-40",
         passThrough && "pointer-events-none",
       )}
       onClick={onSelect}
       onKeyDown={(event) => activateOnKeyboard(event, onSelect)}
     >
-      <title>{title}</title>
+      <title>{`${title}${reach === "within" ? "；在射程内" : reach === "long" ? "；在远射程内（劣势）" : reach === "out" ? "；够不着" : ""}${inArea ? "；在范围内" : ""}`}</title>
+      {inArea ? (
+        <rect
+          x={x - width / 2 - 8}
+          y={y - depth / 2 - 8}
+          width={width + 16}
+          height={depth + 16}
+          rx={Math.min(width, depth) / 3}
+          className="pointer-events-none fill-violet-400/25 stroke-violet-200 stroke-[2.5] [vector-effect:non-scaling-stroke]"
+        />
+      ) : null}
+      {reach === "within" || reach === "long" ? (
+        <circle
+          cx={x}
+          cy={y}
+          r={Math.max(width, depth) / 2 + 12}
+          fill="none"
+          className={cn("pointer-events-none stroke-brass stroke-[2] [vector-effect:non-scaling-stroke]",
+            reach === "long" && "[stroke-dasharray:4_4]")}
+        />
+      ) : null}
       {targeted ? (
         <circle
           cx={x}
@@ -1534,6 +1564,8 @@ function TacticalMapCanvas({
       : task.kind === "help" ? [task.allyRef, task.enemyRef].filter((ref): ref is string => ref !== null)
         : task.kind === "ready" && task.triggerRef ? [task.triggerRef] : []);
   const cursor = picking ? interaction?.cursor ?? null : null;
+  const areaPreview = interaction?.actions.areaPreview ?? null;
+  const inArea = new Set(areaPreview?.knownAffectedEntityIds ?? []);
   const start = selfPoint(projection);
   const grid = projection.scene.gridInches;
   const step = pickStep(projection);
@@ -1757,6 +1789,8 @@ function TacticalMapCanvas({
                   elevationLabel={tokenElevationLabel(entity, projection.knownFeatures)}
                   textScale={textScale}
                   targeted={targetedIds.has(entity.id)}
+                  reach={task.kind === "creatures" ? reachOf(task.ability, entity.id) : null}
+                  inArea={inArea.has(entity.id)}
                   passThrough={gestures.pointPick}
                   onSelect={() => gestures.activateEntity(entity)}
                 />
@@ -1768,7 +1802,8 @@ function TacticalMapCanvas({
               ))}
             </g>
             {interaction ? (
-              <TacticalTaskMarks projection={projection} task={task} cursor={cursor} textScale={textScale} />
+              <TacticalTaskMarks projection={projection} task={task} cursor={cursor} textScale={textScale}
+                stop={areaPreview?.stop ?? null} />
             ) : null}
           </>
         ) : null}
@@ -1815,10 +1850,16 @@ function RangeRings({
   const bounds = sceneBounds(projection);
   const margin = 30 * textScale;
   const middle = { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 };
+  // Clear of the tokens, so the number never sits on a creature.
+  const tokens = [projection.self, ...projection.visibleEntities].map((entity) => ({
+    x: inches(entity.position.x), y: inches(entity.position.y),
+    clearance: Math.max(inches(entity.footprint.width), inches(entity.footprint.depth)) / 2 + margin * 2,
+  }));
   const label = Array.from({ length: 72 }, (_, step) => step * 5 * Math.PI / 180)
     .map((angle) => ({ x: center.x + radius * Math.cos(angle), y: center.y + radius * Math.sin(angle) }))
     .filter((point) => point.x > bounds.minX + margin && point.x < bounds.maxX - margin
-      && point.y > bounds.minY + margin && point.y < bounds.maxY - margin)
+      && point.y > bounds.minY + margin && point.y < bounds.maxY - margin
+      && tokens.every((token) => Math.hypot(point.x - token.x, point.y - token.y) > token.clearance))
     .sort((left, right) => Math.hypot(left.x - middle.x, left.y - middle.y) - Math.hypot(right.x - middle.x, right.y - middle.y))[0];
   return (
     <g data-tactical-range-ring={range.feet}>
@@ -1966,11 +2007,14 @@ function TacticalTaskMarks({
   task,
   cursor,
   textScale,
+  stop = null,
 }: {
   projection: TacticalProjection;
   task: MapTask;
   cursor: MapPoint | null;
   textScale: number;
+  /** Where Rules says the area's origin stops, at a known wall. */
+  stop?: { point: { x: string; y: string } } | null;
 }) {
   const grid = projection.scene.gridInches;
   const start = selfPoint(projection);
@@ -1979,6 +2023,21 @@ function TacticalTaskMarks({
   const marker = 12 * textScale;
   return (
     <g data-tactical-task-marks={task.kind} className="pointer-events-none">
+      {stop && task.kind === "area" && task.origin ? (
+        <g data-tactical-area-stop={`${stop.point.x},${stop.point.y}`}>
+          <line
+            x1={task.origin.x}
+            y1={task.origin.y}
+            x2={inches(stop.point.x)}
+            y2={inches(stop.point.y)}
+            className="stroke-danger stroke-[1.5] [stroke-dasharray:3_3] [vector-effect:non-scaling-stroke]"
+          />
+          <path
+            d={`M ${inches(stop.point.x) - marker} ${inches(stop.point.y) - marker} L ${inches(stop.point.x) + marker} ${inches(stop.point.y) + marker} M ${inches(stop.point.x) + marker} ${inches(stop.point.y) - marker} L ${inches(stop.point.x) - marker} ${inches(stop.point.y) + marker}`}
+            className="fill-none stroke-danger stroke-[2.5] [vector-effect:non-scaling-stroke]"
+          />
+        </g>
+      ) : null}
       {task.kind === "destination" ? (
         <rect
           data-tactical-destination={`${task.point.x},${task.point.y}`}

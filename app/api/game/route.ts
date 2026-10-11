@@ -30,6 +30,7 @@ import {
   useInventoryItem,
   moveOnMap,
   combatAbility,
+  previewArea,
 } from "../../_runtime/lib/table/server";
 import {
   speakNarration,
@@ -70,6 +71,7 @@ const commands: Record<string, Callable> = Object.assign(Object.create(null), {
   lockCharacter,
   moveOnMap,
   passCaptain,
+  previewArea,
   resolveRoll,
   restNow,
   retryNarration,

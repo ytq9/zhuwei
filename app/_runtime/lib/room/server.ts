@@ -988,6 +988,11 @@ export function observeAuthoritativeRoom(
   );
 }
 
+/** SPEC 0014 §7 (ADR 0148): a read-only area preview for the player's own map. */
+export function previewAuthoritativeTacticalArea(roomId: string, userId: string, query: unknown) {
+  return roomStub(roomId).previewTacticalArea(trustedRoomPrincipal(userId), query);
+}
+
 export function acknowledgeAuthoritativeDelivery(
   roomId: string,
   userId: string,

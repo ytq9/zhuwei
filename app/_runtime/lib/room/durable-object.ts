@@ -90,8 +90,11 @@ import {
   isTacticalPosition,
   isCombatAbilityTarget,
   isMapMoveDestination,
+  isTacticalAreaPreviewQuery,
+  isTacticalPreview,
   isTacticalSpatialRevision,
   type CombatAbilityTarget,
+  type TacticalPreview,
 } from "../rules/tactical-projection";
 import {
   project as projectAuthoritative,
@@ -13021,6 +13024,37 @@ export class RoomDurableObject extends DurableObject<Env> {
       }
     }
     return { ...publicationResult(), ...continuation, outcome };
+  }
+
+  /** SPEC 0014 §7 (ADR 0148): the player's preview of an area ability at a
+   * picked origin and direction. Read-only: nothing is stored or published,
+   * and the answer comes from what the player's own map knows. */
+  previewTacticalArea(
+    context: TrustedPrincipalContext,
+    query: unknown,
+  ): { kind: "previewed"; preview: TacticalPreview | null } | AuthorityCommitOutcome {
+    if (this.authorityStore.room() === undefined) {
+      return rejectedAuthority("roomUninitialized", "The authoritative room is not initialized.");
+    }
+    if (!isTacticalAreaPreviewQuery(query)) {
+      return rejectedAuthority("invalidRulesInput", "The area preview query is not canonical.");
+    }
+    const replay = this.authoritativeReplay();
+    const authenticated = this.authenticatedAuthorityViewer(context, replay.state);
+    const characterId = authenticated?.characterIds[0];
+    const viewer = authenticated === undefined || characterId === undefined
+      ? undefined : this.authorityPlayerViewer(authenticated, replay.state, characterId);
+    if (viewer === undefined) {
+      return rejectedAuthority("viewerUnauthorized", "The trusted viewer has no active character.");
+    }
+    const projected = this.rulesRuntime.project(replay.profiles, replay.state, viewer,
+      { tacticalAreaPreview: structuredClone(query) });
+    if (projected.kind === "rejected") return rejectedAuthority(projected.rejection.code, projected.rejection.message);
+    const preview = "tacticalPreview" in projected ? projected.tacticalPreview : undefined;
+    if (preview === undefined || (preview !== null && !isTacticalPreview(preview))) {
+      return rejectedAuthority("projectionIntegrity", "The area preview is malformed.");
+    }
+    return { kind: "previewed", preview };
   }
 
   observe(

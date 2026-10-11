@@ -3,6 +3,7 @@
 import type { TableSnap } from "@/components/play-table";
 import type { CharacterSheet } from "@/lib/dnd/types";
 import type { KpModelId } from "@/lib/kp/models";
+import type { TacticalAreaPreviewQuery, TacticalPreview } from "@/lib/rules/tactical-projection";
 import { callWithStableSubmission } from "@/lib/table/authoritative-client";
 import { callGame as call } from "@/lib/platform/game-client";
 
@@ -84,6 +85,9 @@ export const useInventoryItem = ({ data }: Args) =>
 export const moveOnMap = ({ data }: Args) => callWithStableTableSubmission("moveOnMap", data);
 /** SPEC 0014 §§3、5 (ADR 0091): an ability used on the actor's own combat turn, chosen on the map. */
 export const combatAbility = ({ data }: Args) => callWithStableTableSubmission("combatAbility", data);
+/** SPEC 0014 §7 (ADR 0148): a read-only preview of an area picked on the map. */
+export const previewArea = ({ data }: { data: { code: string; query: TacticalAreaPreviewQuery } }) =>
+  call<{ ok: true; preview: TacticalPreview | null } | { ok: false; error: string }>("previewArea", data);
 export const startGame = ({ data }: Args) => call<Result>("startGame", data);
 export const sendAction = ({ data }: Args) =>
   callWithStableTableSubmission("sendAction", data);

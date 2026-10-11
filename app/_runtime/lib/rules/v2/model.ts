@@ -1861,6 +1861,9 @@ export type ProjectionQuery = {
   pendingNpcDecisionFor?: {
     pendingInputId: string;
   };
+  /** SPEC 0014 §7 (ADR 0148): a player's preview of an area ability at a
+   * picked origin and direction; answered alone, without the projection. */
+  tacticalAreaPreview?: import("../tactical-projection").TacticalAreaPreviewQuery;
 };
 
 export type PerceivedCharacter = Readonly<{
@@ -2105,12 +2108,25 @@ export type DueActivitiesReadModel = {
 export type ProjectionResult =
   | { kind: "projected"; promiseReview: import("./promise-lifecycle").PromiseReviewRequest | null; projectionHash: Sha256Ref;
       viewer: { kind: "kp"; subjectId: "kp" }; stateVersion: string; activeBranchId: string; runtimeProfiles: RuntimeProfileManifest }
+  | TacticalPreviewReadModel
   | SafeReadModel
   | LifecycleReadModel
   | KpSpatialReadModel
   | DueActorPlanReadModel
   | DueActivitiesReadModel
   | RejectedRulesResult;
+
+/** SPEC 0014 §7 (ADR 0148): the answer to a player's area preview; null
+ * when the player has no map or the ability is not one it can use. */
+export type TacticalPreviewReadModel = {
+  kind: "projected";
+  tacticalPreview: import("../tactical-projection").TacticalPreview | null;
+  projectionHash: Sha256Ref;
+  viewer: { kind: "player"; characterId: string };
+  stateVersion: string;
+  activeBranchId: string;
+  runtimeProfiles: RuntimeProfileManifest;
+};
 
 export type InitializedRulesResult = {
   kind: "initialized";

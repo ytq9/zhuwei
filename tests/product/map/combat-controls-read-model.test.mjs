@@ -52,7 +52,24 @@ const GUTTER = {
   visibilityPolicyId: "visibility:scene-observers",
 };
 
-function geometry({ gutter = false } = {}) {
+/** ADR 0148: a wall the player has not found, between her and the yard's east side. */
+const HIDDEN_WALL = {
+  featureId: "feature:yard:hidden-wall",
+  kind: "barrier",
+  label: "暗墙",
+  state: "intact",
+  polygon: [{ x: "300", y: "-240" }, { x: "312", y: "-240" }, { x: "312", y: "240" }, { x: "300", y: "240" }],
+  elevation: "0",
+  height: "120",
+  opaque: true,
+  impassable: true,
+  cover: "full",
+  propagation: "blocks",
+  terrain: "normal",
+  visibilityPolicyId: "visibility:hidden-until-evidence",
+};
+
+function geometry({ gutter = false, hiddenWall = false } = {}) {
   return {
     schema: "zhuwei.tactical-geometry/v1",
     unit: "inch",
@@ -61,7 +78,7 @@ function geometry({ gutter = false } = {}) {
       points: [{ x: "-1200", y: "-1200" }, { x: "1200", y: "-1200" }, { x: "1200", y: "1200" }, { x: "-1200", y: "1200" }],
     },
     spawnPoints: [{ x: "0", y: "0", elevation: "0" }, { x: "240", y: "0", elevation: "0" }],
-    obstacles: [...(gutter ? [GUTTER] : []), {
+    obstacles: [...(gutter ? [GUTTER] : []), ...(hiddenWall ? [HIDDEN_WALL] : []), {
       featureId: "feature:yard:marker",
       kind: "barrier",
       label: "院角石墩",
@@ -177,7 +194,7 @@ const DEFINITIONS = {
 const ALLY = "pc:bob";
 
 function genesis({ spentMilliInches = "120000", grappled = false, prone = false, ally = false, hidden = false, readied = false,
-  gutter = false, allyDying = false, concentrating = false } = {}) {
+  gutter = false, allyDying = false, concentrating = false, lurker = false, hiddenWall = false } = {}) {
   const player = combatant(PLAYER, 1, "player");
   player.abilityRefs = Object.keys(DEFINITIONS).sort();
   player.resources = {
@@ -217,7 +234,7 @@ function genesis({ spentMilliInches = "120000", grappled = false, prone = false,
     initialDefinitionCatalogRef: { profileId: "catalog:combat-controls", profileHash: hash({ definitions: Object.keys(DEFINITIONS) }) },
     activeBranchId: "branch:main",
     fictionInstantMicros: "0",
-    scenes: [{ id: "scene:yard", name: "钟楼庭院", geometry: geometry({ gutter }) }],
+    scenes: [{ id: "scene:yard", name: "钟楼庭院", geometry: geometry({ gutter, hiddenWall }) }],
     principals: [{ id: "principal:alice", sessionVersion: 1, role: "host" }],
     seats: [{ id: "seat:alice", principalId: "principal:alice", status: "active" }],
     characters: [{
@@ -243,8 +260,11 @@ function genesis({ spentMilliInches = "120000", grappled = false, prone = false,
   initialState.entities[NPC] = { id: NPC, kind: "npc", name: "守夜人", sceneId: "scene:yard", tenureStatus: "active", entityOrdinal: "2" };
   initialState.combatRuntime = {
     story: { chapterId: "chapter:yard", status: "active", endingCandidates: [] },
-    scenes: { "scene:yard": { sceneId: "scene:yard", geometry: geometry({ gutter }) } },
-    entities: { [PLAYER]: player, [NPC]: npc, ...(ally ? { [ALLY]: bob } : {}) },
+    scenes: { "scene:yard": { sceneId: "scene:yard", geometry: geometry({ gutter, hiddenWall }) } },
+    entities: { [PLAYER]: player, [NPC]: npc, ...(ally ? { [ALLY]: bob } : {}),
+      // ADR 0148: a creature the player does not see, 50 feet east.
+      ...(lurker ? { "npc:lurker": { ...combatant("npc:lurker", 4, "npc"), position: { x: "600", y: "0", elevation: "0" },
+        visibilityPolicyId: "visibility:hidden-until-evidence" } } : {}) },
     definitions: structuredClone(DEFINITIONS),
     encounters: {
       "encounter:yard": {
@@ -303,7 +323,8 @@ function playerView(world) {
 
 test("Rules projects the player's own combat controls outside the actor's delta fields", () => {
   const { view, state } = playerView(genesis());
-  assert.deepEqual(Object.keys(view.combatControls).sort(), ["abilities", "hidden", "jumps", "movement", "offers", "prone", "turn", "vitals"]);
+  assert.deepEqual(Object.keys(view.combatControls).sort(),
+    ["abilities", "hidden", "jumps", "movement", "offers", "prone", "turn", "vitals", "withinFiveFeetRefs"]);
   assert.deepEqual(view.combatControls.vitals, {
     temporaryHitPoints: "0", concentration: null, lifeState: "alive", deathSaves: { successes: "0", failures: "0" },
   });
@@ -381,9 +402,10 @@ test("the table read model forwards closed combat controls built from that proje
   // Ready names the creatures the actor perceives and the three events.
   assert.deepEqual(controls.basicActions.at(-1).target,
     { kind: "ready", triggerRefs: [NPC], events: ["turnStarted", "movementCommitted", "spellCastingStarted"] });
-  // Grapple and shove against a player need that player's own answer.
+  // Grapple and shove against a player need that player's own answer; the
+  // warden, 20 feet off, is out of their reach (ADR 0148).
   for (const action of controls.basicActions.slice(3, 6)) {
-    assert.deepEqual(action.target, { kind: "creatures", count: 1, reachFeet: 5, npcOpponentsOnly: true });
+    assert.deepEqual(action.target, { kind: "creatures", count: 1, reachFeet: 5, npcOpponentsOnly: true, withinRefs: [], longRangeRefs: [] });
   }
   // ADR 0092: a prone creature is offered standing up instead of lying down.
   const { view: lying } = playerView(genesis({ prone: true }));
@@ -401,7 +423,8 @@ test("the table read model forwards closed combat controls built from that proje
     activation: "bonusAction",
     spellLevel: 1,
     slotLevel: 1,
-    target: { kind: "creatures", count: 1, rangeFeet: 60 },
+    // ADR 0148: the warden 20 feet off and Alice herself are within 60 feet.
+    target: { kind: "creatures", count: 1, rangeFeet: 60, withinRefs: [NPC, PLAYER], longRangeRefs: [] },
   });
   assert.deepEqual(byRef["ability:alice:spell:sleep"].target, {
     kind: "area", shape: "sphere", sizeFeet: 20, origin: "point", rangeFeet: 90, needsDirection: false,
@@ -415,7 +438,7 @@ test("the table read model forwards closed combat controls built from that proje
     name: "徒手攻击",
     group: "attack",
     activation: "attack",
-    target: { kind: "creatures", count: 1, reachFeet: 5, aimable: true },
+    target: { kind: "creatures", count: 1, reachFeet: 5, aimable: true, withinRefs: [PLAYER], longRangeRefs: [] },
   });
   assert.equal(byRef["ability:alice:spell:healing-word"].target.aimable, undefined);
   assert.deepEqual(byRef["ability:alice:class:second-wind"], {
@@ -426,11 +449,16 @@ test("the table read model forwards closed combat controls built from that proje
     target: { kind: "self" },
   });
   // Closed: nothing of the definitions' mechanics, hashes or other creatures
-  // beyond the ones Ready can wait for, which the map shows anyway.
-  assert.doesNotMatch(
-    JSON.stringify({ ...controls, basicActions: controls.basicActions.filter((action) => action.abilityRef !== "action:ready") }),
-    /"(formula|healing|damage|save|costs|mechanicalKey|sourceSpellId|definitionId|attackRoll)"|sha256|npc:warden|spellSlot/,
-  );
+  // beyond the ones Ready can wait for and the ones in range, which the map
+  // shows anyway.
+  const withoutSeen = JSON.stringify({ ...controls, basicActions: controls.basicActions.filter((action) => action.abilityRef !== "action:ready") },
+    (key, value) => key === "withinRefs" || key === "longRangeRefs" ? undefined : value);
+  assert.doesNotMatch(withoutSeen,
+    /"(formula|healing|damage|save|costs|mechanicalKey|sourceSpellId|definitionId|attackRoll|targetsInRange)"|sha256|npc:warden|spellSlot/);
+  const seen = new Set([PLAYER, ...view.tacticalProjection.visibleEntities.map((entity) => entity.id)]);
+  for (const ability of [...controls.abilities, ...controls.basicActions]) {
+    for (const ref of [...ability.target.withinRefs ?? [], ...ability.target.longRangeRefs ?? []]) assert.ok(seen.has(ref), ref);
+  }
 
   const table = buildAuthoritativeTableState({ rulesetVersion: AUTHORITATIVE_RULESET_VERSION, projected });
   assert.deepEqual(table.combatControls, controls);
@@ -543,13 +571,13 @@ test("a weapon attack is named by the held item and a malformed budget fails clo
     members: ["principal:alice"],
     locationLabels: {},
     observation: syntheticObservation({ abilities: { "ability:alice:weapon": weapon }, turn: null, movement: null, prone: false,
-      hidden: false, offers, jumps: [], vitals }),
+      hidden: false, offers, jumps: [], vitals, withinFiveFeetRefs: [] }),
   });
   assert.equal(projected.combatControls.abilities[0].name, "旧长剑");
   assert.equal(projected.combatControls.turn, null);
   assert.equal(projected.combatControls.movement, null);
 
-  const closed = { hidden: false, offers, jumps: [], vitals };
+  const closed = { hidden: false, offers, jumps: [], vitals, withinFiveFeetRefs: [] };
   const jump = { abilityRef: "action:long-jump", featureId: "feature:yard:gutter", to: { x: "96", y: "0", elevation: "0" }, running: true,
     costMilliInches: "96000", clearCheck: false, landingCheck: false };
   for (const malformed of [
@@ -570,6 +598,9 @@ test("a weapon attack is named by the held item and a malformed budget fails clo
     { abilities: {}, turn: null, movement: null, prone: false, ...closed, jumps: [{ ...jump, abilityRef: "action:pole-vault" }] },
     { abilities: {}, turn: null, movement: null, prone: false, ...closed, jumps: [{ ...jump, to: { x: "96", y: "0" } }] },
     { abilities: {}, turn: null, movement: null, prone: false, ...closed, jumps: [{ ...jump, damage: "1d6" }] },
+    { abilities: {}, turn: null, movement: null, prone: false, ...closed, withinFiveFeetRefs: "npc:warden" },
+    { abilities: { "ability:alice:weapon": { ...weapon, targetsInRange: { withinRefs: ["npc:warden"] } } },
+      turn: null, movement: null, prone: false, ...closed },
   ]) {
     assert.throws(() => projectAuthoritativeTableObservation({
       userId: "principal:alice",
@@ -616,4 +647,108 @@ test("the table forwards the NPC combat turn status the Room reports", () => {
   assert.deepEqual(table({ ...view, npcCombatTurn: { npcRef: NPC, state: "waitingForRetry" } }).npcCombatTurn, { npcRef: NPC, state: "waitingForRetry" });
   assert.equal(table({ ...view, npcCombatTurn: { npcRef: NPC, state: "thinking" } }).npcCombatTurn, undefined);
   assert.equal(Object.hasOwn(table(view), "npcCombatTurn"), false);
+});
+
+// SPEC 0014 §7 (ADR 0148): Rules lists, of the creatures the player sees,
+// who each ability reaches now; the page shows it and computes nothing.
+test("the controls list who each ability reaches among the creatures seen, and the creatures within 5 feet", () => {
+  const { view } = playerView(genesis({ ally: true, lurker: true }));
+  assert.deepEqual(view.combatControls.withinFiveFeetRefs, [NPC, ALLY]);
+  assert.deepEqual(view.combatControls.abilities["ability:alice:unarmed-strike"].targetsInRange,
+    { withinRefs: [NPC, PLAYER, ALLY], longRangeRefs: [] });
+  assert.equal(view.combatControls.abilities["ability:alice:class:second-wind"].targetsInRange, undefined);
+  assert.equal(view.combatControls.abilities["ability:alice:spell:sleep"].targetsInRange, undefined);
+  assert.doesNotMatch(JSON.stringify(view.combatControls), /npc:lurker/, "a creature the player does not see is never listed");
+});
+
+test("creatures beyond the normal range and within the long range are listed apart", async () => {
+  const { creatureTargetsInRange } = await import("../../../app/_runtime/lib/rules/v2/tactical-preview.ts");
+  const body = { width: "60", depth: "60", height: "60" };
+  const at = (id, x) => [id, { id, sceneId: "scene:yard", position: { x: String(x), y: "0", elevation: "0" }, footprint: body, lifeState: "alive" }];
+  const source = at(PLAYER, 0)[1];
+  const seen = [at(PLAYER, 0), at("npc:near", 900), at("npc:far", 2400), at("npc:beyond", 4000), ["npc:dead", { ...at("npc:dead", 60)[1], lifeState: "dead" }]];
+  // A light crossbow: 80 feet, long 320.
+  assert.deepEqual(creatureTargetsInRange(source, seen, { kind: "creature", count: "1", rangeNormalInches: "960", rangeLongInches: "3840" }),
+    { withinRefs: ["npc:near", PLAYER], longRangeRefs: ["npc:far"] });
+  assert.equal(creatureTargetsInRange(source, seen, { kind: "creature", count: "1", selfOnly: true, rangeInches: "0" }), undefined);
+  assert.equal(creatureTargetsInRange(source, seen, { kind: "area", rangeInches: "1080" }), undefined);
+});
+
+function preview(state, query) {
+  const result = project(PROFILES, state, {
+    kind: "player", principalId: "principal:alice", sessionVersion: 1, seatId: "seat:alice", characterId: PLAYER,
+  }, { tacticalAreaPreview: query });
+  return result;
+}
+
+test("an area preview names the creatures seen inside it and stops at a known wall, from what the player knows only", () => {
+  const { state } = playerView(genesis());
+  const sleep = { abilityRef: "ability:alice:spell:sleep", origin: { x: "480", y: "0", elevation: "0" } };
+  const answered = preview(state, sleep);
+  assert.equal(answered.kind, "projected", JSON.stringify(answered));
+  assert.deepEqual(answered.tacticalPreview, {
+    kind: "area",
+    abilityRef: "ability:alice:spell:sleep",
+    origin: { x: "480", y: "0", elevation: "0" },
+    knownAffectedEntityIds: [NPC],
+    knownSelfEffects: [],
+    knownFriendlyEntityIds: [],
+    knownBlockerFeatureIds: [],
+    knownCover: [],
+    stop: null,
+    readout: ["范围内你看得见的：守夜人。"],
+    spatialRevision: playerView(genesis()).view.tacticalProjection.spatialRevision,
+  });
+
+  // SPEC 0014 §6: a creature and a wall the player does not know change
+  // nothing in the answer, byte for byte, though the cast would meet both.
+  const { state: secret } = playerView(genesis({ lurker: true, hiddenWall: true }));
+  assert.equal(JSON.stringify(preview(secret, sleep).tacticalPreview), JSON.stringify(answered.tacticalPreview));
+
+  // Beyond the 90-foot range nothing is named.
+  const far = preview(state, { ...sleep, origin: { x: "1200", y: "0", elevation: "0" } }).tacticalPreview;
+  assert.deepEqual([far.knownAffectedEntityIds, far.readout], [[], ["这一处超出射程。"]]);
+
+  // A sphere takes no direction, a cube needs one, and only the player's own
+  // area abilities are previewed.
+  assert.equal(preview(state, { ...sleep, direction: { x: "1", y: "0", elevation: "0" } }).tacticalPreview, null);
+  assert.equal(preview(state, { abilityRef: "ability:alice:spell:thunderwave", origin: { x: "0", y: "0", elevation: "0" } }).tacticalPreview, null);
+  assert.equal(preview(state, { ...sleep, abilityRef: "ability:alice:spell:healing-word" }).tacticalPreview, null);
+  assert.equal(preview(state, { ...sleep, abilityRef: "ability:bob:spell:sleep" }).tacticalPreview, null);
+  assert.equal(preview(state, { ...sleep, targetIds: [NPC] }).kind, "rejected");
+});
+
+// A cube from the player: its origin is where she stands and it points the
+// way she picked; the creatures seen inside it are named.
+test("a cube from the player covers the creatures seen the way it points", async () => {
+  const { tacticalAreaPreview } = await import("../../../app/_runtime/lib/rules/v2/tactical-preview.ts");
+  const { view } = playerView(genesis({ ally: true }));
+  const cube = { kind: "area", shape: { kind: "cube", edgeInches: "180", propagation: "straight" } };
+  const east = tacticalAreaPreview(view.tacticalProjection, cube, { abilityRef: "ability:x", origin: { x: "0", y: "0", elevation: "0" },
+    direction: { x: "1", y: "0", elevation: "0" } });
+  assert.ok(east.knownAffectedEntityIds.includes(NPC), JSON.stringify(east));
+  assert.deepEqual(east.direction, { x: "1", y: "0", elevation: "0" });
+  assert.deepEqual(east.knownSelfEffects, east.knownAffectedEntityIds.includes(PLAYER) ? ["inArea"] : []);
+  assert.deepEqual(east.knownFriendlyEntityIds, east.knownAffectedEntityIds.filter((id) => id === ALLY));
+  const west = tacticalAreaPreview(view.tacticalProjection, cube, { abilityRef: "ability:x", origin: { x: "0", y: "0", elevation: "0" },
+    direction: { x: "-1", y: "0", elevation: "0" } });
+  assert.equal(west.knownAffectedEntityIds.includes(NPC), false);
+  // Without a range it starts where she stands, nowhere else.
+  const elsewhere = tacticalAreaPreview(view.tacticalProjection, cube, { abilityRef: "ability:x", origin: { x: "60", y: "0", elevation: "0" },
+    direction: { x: "1", y: "0", elevation: "0" } });
+  assert.deepEqual(elsewhere.readout, ["这一处超出射程。"]);
+});
+
+test("a known opaque wall stops the area's origin in front of it and is named", async () => {
+  const { tacticalAreaPreview } = await import("../../../app/_runtime/lib/rules/v2/tactical-preview.ts");
+  const { view } = playerView(genesis());
+  const tactical = structuredClone(view.tacticalProjection);
+  tactical.knownFeatures.push({ ...HIDDEN_WALL, id: HIDDEN_WALL.featureId, label: "院中石墙", featureId: undefined, visibilityPolicyId: undefined });
+  const answered = tacticalAreaPreview(tactical, DEFINITIONS["ability:alice:spell:sleep"].target,
+    { abilityRef: "ability:alice:spell:sleep", origin: { x: "480", y: "0", elevation: "0" } });
+  assert.equal(answered.stop.kind, "knownBlocked");
+  assert.equal(answered.stop.featureId, HIDDEN_WALL.featureId);
+  assert.ok(Number(answered.stop.point.x) <= 300, JSON.stringify(answered.stop));
+  assert.deepEqual(answered.knownBlockerFeatureIds, [HIDDEN_WALL.featureId]);
+  assert.ok(answered.readout.includes("院中石墙挡在前面，范围从墙前展开。"), JSON.stringify(answered.readout));
 });

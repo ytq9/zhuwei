@@ -20,7 +20,8 @@ import { combatJumpOptions } from "./combat-jump";
 import { atomicContinuationCanResume, isAtomicWorldContinuation } from "./atomic-world-input";
 import { canonicalSha256 } from "../profiles/canonical";
 import { projectHeldSourceClaims } from "./knowledge-records";
-import { pathLengthMilliInches } from "../profiles/combat-geometry";
+import { entitiesWithinRange, entityOccupiesSpace, pathLengthMilliInches } from "../profiles/combat-geometry";
+import { creatureTargetsInRange, tacticalAreaPreview } from "./tactical-preview";
 import { isCanonicalTacticalGeometry } from "../profiles/tactical-geometry";
 import { projectRegisteredAbility, registeredAbilityDefinition } from "../profiles/ability-compiler";
 import { dragCostFactor, heldBodies } from "./carry";
@@ -28,6 +29,7 @@ import { conditionSpeed } from "./condition-mechanics";
 import { npcMechanicsProfileEnabled } from "../profiles/npc-mechanics";
 import type { RuntimeProfileManifest } from "../profiles/types";
 import {
+  isTacticalAreaPreviewQuery,
   isTacticalProjection,
   tacticalTerrainPhrases,
   type TacticalEntity,
@@ -1168,7 +1170,7 @@ function projectAuthoritative(
   // change the narration writer is sent.
   const combatControls = authorized.kind !== "player" || controlledCombatEntity === undefined
     ? undefined
-    : controlledCombatControls(state, character.id, controlledCombatEntity, controlledAbilityRefs);
+    : controlledCombatControls(state, character.id, controlledCombatEntity, controlledAbilityRefs, visibleCombatEntities);
   const adjudicationPrecedents = publicAdjudicationPrecedents(state, character.sceneId);
 
   const base = {
@@ -1393,7 +1395,10 @@ function controlledCombatControls(
   characterId: string,
   entity: JsonRecord,
   abilityRefs: readonly string[],
+  /** The creatures the viewer sees, as it sees them. */
+  visibleCombatEntities: Record<string, JsonRecord>,
 ) {
+  const seen = Object.entries(visibleCombatEntities);
   const abilities: Record<string, JsonRecord> = Object.fromEntries(abilityRefs.flatMap((ref) => {
     const stored = state.combatRuntime.definitions[ref];
     if (!isRecord(stored)) return [];
@@ -1405,6 +1410,9 @@ function controlledCombatControls(
         .map((key) => [key, structuredClone(definition[key])])),
       // SPEC 0012 §6.3 (ADR 0097 decision 4): an attack roll can be aimed at a point.
       ...(aimableAttack(definition) ? { attackRoll: true } : {}),
+      // SPEC 0014 §7 (ADR 0148): who it can reach now, of the creatures seen.
+      ...((inRange) => inRange === undefined ? {} : { targetsInRange: inRange })(
+        creatureTargetsInRange(entity, seen, definition.target)),
     }]];
   }));
   for (const exit of combatDepartureOptions(state, characterId)) abilities[exit.abilityRef] = {
@@ -1429,6 +1437,12 @@ function controlledCombatControls(
       costMilliInches: option.costMilliInches, clearCheck: option.clearCheck, landingCheck: option.landingCheck,
     })),
     vitals: controlledVitals(state, entity),
+    // SPEC 0014 §7 (ADR 0148): the creatures seen within 5 feet, for the
+    // basic actions that reach that far (grapple, shove).
+    withinFiveFeetRefs: entityOccupiesSpace(entity)
+      ? seen.filter(([id, other]) => id !== characterId && other.sceneId === entity.sceneId && other.lifeState !== "dead"
+        && entityOccupiesSpace(other) && entitiesWithinRange(entity, other, "60")).map(([id]) => id).sort()
+      : [],
   };
 }
 
@@ -1592,6 +1606,39 @@ function projectPendingNpcDecision(
 }
 
 /** Query channel and guessed reference never select a second projection path. */
+/** SPEC 0014 §7 (ADR 0148): a player's area preview, answered from the
+ * same projection the player's map shows: its own abilities, the creatures
+ * it sees and the features it knows. Nothing else of the world enters it. */
+function projectTacticalAreaPreview(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  viewerValue: unknown,
+  query: ProjectionQuery,
+): ProjectionResult {
+  if (!hasExactKeys(query, ["tacticalAreaPreview"]) || !isTacticalAreaPreviewQuery(query.tacticalAreaPreview)
+    || !isRecord(viewerValue) || viewerValue.kind !== "player") {
+    return rejected("invalidRulesInput", "An area preview requires a player's exclusive canonical query.");
+  }
+  const projected = projectAuthoritative(profiles, state, viewerValue);
+  if (projected.kind === "rejected") return projected;
+  const record = projected as unknown as JsonRecord;
+  const tactical = isRecord(record.tacticalProjection) ? record.tacticalProjection as unknown as TacticalProjection : undefined;
+  const controls = isRecord(record.combatControls) && isRecord(record.combatControls.abilities)
+    ? record.combatControls.abilities : undefined;
+  const usage = controls?.[query.tacticalAreaPreview.abilityRef];
+  const preview = tactical === undefined || !isRecord(usage) ? null
+    : tacticalAreaPreview(tactical, usage.target, query.tacticalAreaPreview) ?? null;
+  return {
+    kind: "projected",
+    tacticalPreview: preview,
+    projectionHash: canonicalSha256(preview),
+    viewer: { kind: "player", characterId: String(viewerValue.characterId) },
+    stateVersion: state.version,
+    activeBranchId: state.activeBranchId,
+    runtimeProfiles: profiles,
+  };
+}
+
 export function projectWorld(
   profiles: RuntimeProfileManifest,
   state: unknown,
@@ -1620,6 +1667,9 @@ export function projectWorld(
   }
   if (query?.dueActorPlanFor !== undefined) {
     return projectDueActorPlan(profiles, state, viewerValue, query);
+  }
+  if (query?.tacticalAreaPreview !== undefined) {
+    return projectTacticalAreaPreview(profiles, state, viewerValue, query);
   }
   const projected = projectAuthoritative(profiles, state, viewerValue);
   return applyObserverRangeProjection(

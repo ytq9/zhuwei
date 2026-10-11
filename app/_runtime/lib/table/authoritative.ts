@@ -454,6 +454,11 @@ export type CombatControlTarget =
       /** SPEC 0012 §12.1 (ADR 0113): only these creatures can be picked, as
        * Rules listed them (first aid: the dying creatures within reach). */
       onlyRefs?: string[];
+      /** SPEC 0014 §7 (ADR 0148): the creatures the viewer sees within reach
+       * or normal range, and those only within long range, as Rules measured
+       * them. Absent when the ability names no reach or range. */
+      withinRefs?: string[];
+      longRangeRefs?: string[];
     }
   | {
       kind: "area";
@@ -579,6 +584,23 @@ function inchesToFeet(value: unknown): number | undefined {
     : undefined;
 }
 
+function projectedRefs(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length > 100
+    || !value.every((ref) => typeof ref === "string" && ref.length > 0 && ref.length <= 300)) {
+    throw new TypeError("Authoritative target refs are invalid.");
+  }
+  return [...value as string[]];
+}
+
+/** SPEC 0014 §7 (ADR 0148): who a creature-targeting ability reaches now. */
+function targetsInRange(value: unknown): { withinRefs: string[]; longRangeRefs: string[] } | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value) || !hasExactKeys(value, ["longRangeRefs", "withinRefs"])) {
+    throw new TypeError("Authoritative target ranges are invalid.");
+  }
+  return { withinRefs: projectedRefs(value.withinRefs), longRangeRefs: projectedRefs(value.longRangeRefs) };
+}
+
 function combatControlTarget(value: unknown): CombatControlTarget | undefined {
   if (value === undefined) return { kind: "none" };
   if (!isRecord(value)) return undefined;
@@ -636,8 +658,12 @@ function combatControlAbility(
   const activation = COMBAT_ACTIVATION[usage.activation.kind];
   const projectedTarget = combatControlTarget(usage.target);
   if (activation === undefined || projectedTarget === undefined) return undefined;
-  const target: CombatControlTarget = projectedTarget.kind === "creatures" && projectedTarget.count === 1 && usage.attackRoll === true
-    ? { ...projectedTarget, aimable: true } : projectedTarget;
+  const inRange = projectedTarget.kind === "creatures" ? targetsInRange(usage.targetsInRange) : undefined;
+  const target: CombatControlTarget = projectedTarget.kind !== "creatures" ? projectedTarget : {
+    ...projectedTarget,
+    ...(projectedTarget.count === 1 && usage.attackRoll === true ? { aimable: true as const } : {}),
+    ...inRange,
+  };
   const costs = Array.isArray(usage.costs) ? usage.costs.filter(isRecord) : [];
   const slot = costs.find((cost) => cost.kind === "spellSlot");
   const slotLevel = slot === undefined ? undefined : Number(slot.level);
@@ -692,12 +718,13 @@ function closedCombatControls(input: {
   inventory: AuthoritativeInventory | undefined;
 }): CombatControls {
   const value = input.value;
-  if (!isRecord(value) || !hasExactKeys(value, ["abilities", "hidden", "jumps", "movement", "offers", "prone", "turn", "vitals"]) || !isRecord(value.abilities)
+  if (!isRecord(value) || !hasExactKeys(value, ["abilities", "hidden", "jumps", "movement", "offers", "prone", "turn", "vitals", "withinFiveFeetRefs"]) || !isRecord(value.abilities)
     || typeof value.prone !== "boolean" || typeof value.hidden !== "boolean") {
     throw new TypeError("Authoritative combat controls are invalid.");
   }
   const offers = closedCombatOffers(value.offers);
   const jumps = closedCombatJumps(value.jumps);
+  const withinFiveFeetRefs = projectedRefs(value.withinFiveFeetRefs);
   const definitions = isRecord(input.definitions) ? input.definitions : {};
   const abilities = Object.entries(value.abilities)
     .sort(([left], [right]) => left.localeCompare(right))
@@ -752,6 +779,10 @@ function closedCombatControls(input: {
       if (action.abilityRef === "action:stabilize") {
         return offers.stabilize === null ? []
           : [{ ...structuredClone(action), target: { kind: "creatures", count: 1, reachFeet: 5, onlyRefs: [...offers.stabilize.targetRefs] } }];
+      }
+      // SPEC 0014 §7 (ADR 0148): a grapple or shove reaches the creatures seen within 5 feet.
+      if (action.target.kind === "creatures" && action.target.reachFeet === 5) {
+        return [{ ...structuredClone(action), target: { ...action.target, withinRefs: [...withinFiveFeetRefs], longRangeRefs: [] } }];
       }
       return [structuredClone(action)];
     }),

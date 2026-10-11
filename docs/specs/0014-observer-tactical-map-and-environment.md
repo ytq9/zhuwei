@@ -29,7 +29,7 @@ revisions:
     scope: "§4：行动者擒抱着的生物随行动者移动，停在行动者身边；遭遇中拖带时速度减半，除非它小两级或以上"
   - date: 2026-10-03
     scope: "§4：遭遇之外，观察或世界互动的一步可以先在本场景内走到某人、某物旁或地图上一点，由 Rules 找路并在这一步之前提交位置；§2.1：模组可以写明开场站位"
-adr: ["0087", "0090", "0091", "0092", "0098", "0100", "0103", "0104", "0106", "0108", "0114", "0140", "0146"]
+adr: ["0087", "0090", "0091", "0092", "0098", "0100", "0103", "0104", "0106", "0108", "0114", "0140", "0146", "0148"]
 gates:
   - "tests/kp/world/tactical-scene.room.test.ts"
   - "tests/kp/world/environment-portal.room.test.ts"
@@ -47,6 +47,8 @@ gates:
   - "tests/kp/combat/tactical-map-actions-ui.structure.test.mjs"
   - "tests/kp/combat/tactical-map-places-ui.structure.test.mjs"
   - "tests/product/map/tactical-places.test.mjs"
+  - "tests/product/map/combat-controls-read-model.test.mjs"
+  - "tests/kp/combat/area-preview.room.test.ts"
 ---
 # SPEC 0014：观察者战术地图、权威环境与空间意图
 
@@ -282,7 +284,7 @@ preview 不公开隐藏目标数量、隐藏障碍或完整实际集合，不冻
 | --- | --- | --- | --- |
 | Geometry/Profile | `app/_runtime/lib/rules/profiles/combat-geometry.ts`、Rules v2 state/events/fold | G01–G15、场景 1/4/10 | 现有算法已有定向证据；真实 scene geometry/state/project vertical 待补 |
 | 环境定义/状态 | Rules Ability/Definition compiler、CausalActionProgram、campaign events | 场景 7–9/11 | 待实现/验证，禁止 UI patch |
-| Tactical Projection/preview | Rules `project(viewer)`、Room observe | 场景 2/4/6/12 | 待实现/验证 |
+| Tactical Projection/preview | Rules `project(viewer)`、Room observe；区域预览经 `project(viewer, { tacticalAreaPreview })`、Room `previewTacticalArea`、桌面 `previewArea`（ADR 0148） | 场景 2/4/6/12 | 单体目标射程与区域预览已有定向证据（含隐藏生物与隐藏墙不改变答复）；移动路径预览与掩护读数待补 |
 | 路径/区域提交 | Room Action、Rules `step`、Room DO randomness/continuation | 场景 5/6/10/11 | 机械 helper 有证据；生产 Room/页面纵切待补 |
 | Map/text Adapter | authoritative table Read Model、`play-table.tsx` | 场景 2–5/13 | 待实现/浏览器验证 |
 | archive/replay/version | Room archive/restore、Rules `replay`、Runtime Registry | 场景 1/7–11/14 | 通用恢复已有证据；战术全状态纵切待补 |

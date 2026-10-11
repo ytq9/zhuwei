@@ -96,6 +96,42 @@ export function mapPosition(point: MapPoint, elevation: string): TacticalPositio
   return { x: String(point.x), y: String(point.y), elevation };
 }
 
+/** SPEC 0014 §5: the area a pick names -- its origin and, for a cube, cone
+ * or line, the way from the origin to the second point -- as it is
+ * submitted and previewed. Outside an encounter an area sits on the
+ * creature it is aimed at, or on the player when it starts there. */
+export function areaPick(
+  projection: TacticalProjection,
+  task: MapTask,
+): { origin: TacticalPosition; direction?: TacticalPosition } | null {
+  if (task.kind === "intent" && task.ability.target.kind === "area" && !task.ability.target.needsDirection) {
+    if (task.ability.target.origin === "self") return { origin: structuredClone(projection.self.position) };
+    const aimed = [projection.self, ...projection.visibleEntities].find((entity) => entity.id === task.aimRef);
+    return aimed === undefined ? null : { origin: structuredClone(aimed.position) };
+  }
+  if (task.kind !== "area" || task.ability.target.kind !== "area" || task.origin === null) return null;
+  const shape = task.ability.target;
+  if (shape.needsDirection && task.direction === null) return null;
+  const origin = shape.origin === "self"
+    ? structuredClone(projection.self.position)
+    : mapPosition(task.origin, projection.self.position.elevation);
+  return {
+    origin,
+    ...(shape.needsDirection && task.direction !== null
+      ? { direction: { x: String(task.direction.x - Number(origin.x)), y: String(task.direction.y - Number(origin.y)), elevation: "0" } }
+      : {}),
+  };
+}
+
+/** SPEC 0014 §7 (ADR 0148): how far a creature is for the ability being
+ * aimed, as Rules listed it; null when Rules gave no list. */
+export function reachOf(ability: CombatControlAbility, entityId: string): "within" | "long" | "out" | null {
+  const target = ability.target;
+  if (target.kind !== "creatures" || target.withinRefs === undefined) return null;
+  return target.withinRefs.includes(entityId) ? "within"
+    : target.longRangeRefs?.includes(entityId) ? "long" : "out";
+}
+
 export function playerEncounter(projection: TacticalProjection) {
   const encounter = projection.encounter;
   const inEncounter = encounter !== null
@@ -227,6 +263,9 @@ export function mapGestures(
     if (interaction === undefined) return;
     if (task.kind === "creatures") {
       if (!creaturePickable(task.ability, entity)) return;
+      // SPEC 0014 §7 (ADR 0148): on the player's turn a creature Rules
+      // listed as out of reach is not picked.
+      if (task.purpose === "combat" && reachOf(task.ability, entity.id) === "out") return;
       const count = task.ability.target.kind === "creatures" ? task.ability.target.count : 1;
       const refs = task.refs.includes(entity.id)
         ? task.refs.filter((ref) => ref !== entity.id)

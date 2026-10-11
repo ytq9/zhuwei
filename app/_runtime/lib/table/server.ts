@@ -1,4 +1,4 @@
-import { isCombatAbilityTarget, isMapMoveDestination, isTacticalPosition, isTacticalSpatialRevision, type CombatAbilityTarget, type MapMoveDestination, type TacticalPosition } from "../rules/tactical-projection";
+import { isCombatAbilityTarget, isMapMoveDestination, isTacticalAreaPreviewQuery, isTacticalPosition, isTacticalSpatialRevision, type CombatAbilityTarget, type MapMoveDestination, type TacticalAreaPreviewQuery, type TacticalPosition } from "../rules/tactical-projection";
 import { env } from "cloudflare:workers";
 import {
   authMiddleware,
@@ -26,6 +26,7 @@ import {
   introduceAuthoritativeSuccessor,
   materializeAuthoritativeCharacter,
   observeAuthoritativeRoom,
+  previewAuthoritativeTacticalArea,
   readAuthoritativeMemberIdentity,
   prepareAuthoritativeRoomDeletion,
   removeAuthoritativeMember,
@@ -1460,6 +1461,33 @@ export const combatAbility = createServerFn({ method: "POST" })
       action: { kind: "combatAbility", submissionId, spatialRevision: data.spatialRevision, abilityRef: data.abilityRef,
         target: structuredClone(data.target) },
     });
+  });
+
+/** SPEC 0014 §7 (ADR 0148): what an area picked on the map would reach, of
+ * what the player knows. Read-only; the cast itself settles on submission. */
+export const previewArea = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((input: { code: string; query: TacticalAreaPreviewQuery }) => input)
+  .handler(async ({ context, data }) => {
+    if (
+      !hasExactTableInputKeys(data, ["code", "query"])
+      || typeof data.code !== "string"
+      || data.code.trim().length === 0
+      || !isTacticalAreaPreviewQuery(data.query)
+    ) return { ok: false as const, error: "范围预览请求无效" };
+    const room = await roomByCode(data.code);
+    if (!room) return { ok: false as const, error: "找不到这间房" };
+    await memberOf(room.id, context.userId);
+    const sql = await getSql();
+    const activeRules = await roomRuleset(sql, room.id);
+    if (
+      activeRules?.ruleset_version !== AUTHORITATIVE_RULESET_VERSION
+      || activeRules.status !== "play"
+    ) return { ok: false as const, error: "这间房不支持范围预览" };
+    const result = await previewAuthoritativeTacticalArea(room.id, context.userId, structuredClone(data.query));
+    return result.kind === "previewed"
+      ? { ok: true as const, preview: result.preview }
+      : { ok: false as const, error: "范围预览暂时不可用" };
   });
 
 export const startGame = createServerFn({ method: "POST" })

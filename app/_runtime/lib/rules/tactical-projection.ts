@@ -186,10 +186,16 @@ export type TacticalPreview =
       kind: "movement";
       path: TacticalPosition[];
     })
+  /** SPEC 0014 §7 (ADR 0148): an area from the picked origin, and the way
+   * it points for a cube, cone or line. `knownAffectedEntityIds` are the
+   * creatures on the viewer's map the area would reach, computed only from
+   * what the viewer knows; the cast settles against the whole world. */
   | (TacticalPreviewKnownConsequences & {
       kind: "area";
+      abilityRef: string;
       origin: TacticalPosition;
-      direction: TacticalPosition;
+      direction?: TacticalPosition;
+      knownAffectedEntityIds: string[];
     });
 
 export type TacticalProjection = {
@@ -336,6 +342,21 @@ export function isCombatAbilityTarget(value: unknown, depth = 0): value is Comba
   }
   return value.kind === "area" && isTacticalPosition(value.origin)
     && (exactKeys(value, ["kind", "origin"]) || (exactKeys(value, ["direction", "kind", "origin"]) && isTacticalPosition(value.direction)));
+}
+
+/** SPEC 0014 §7 (ADR 0148): what the map's area pick asks Rules to preview:
+ * the ability, its origin and, for a cube, cone or line, the way it points. */
+export type TacticalAreaPreviewQuery = {
+  abilityRef: string;
+  origin: TacticalPosition;
+  direction?: TacticalPosition;
+};
+
+export function isTacticalAreaPreviewQuery(value: unknown): value is TacticalAreaPreviewQuery {
+  return isRecord(value) && combatRef(value.abilityRef) && isTacticalPosition(value.origin)
+    && (exactKeys(value, ["abilityRef", "origin"])
+      || (exactKeys(value, ["abilityRef", "direction", "origin"]) && isTacticalPosition(value.direction)
+        && [value.direction.x, value.direction.y, value.direction.elevation].some((part) => part !== "0")));
 }
 
 export function isMapMoveDestination(value: unknown): value is MapMoveDestination {
@@ -625,9 +646,17 @@ function tacticalPreview(value: unknown): value is TacticalPreview {
       && value.path.every(isTacticalPosition);
   }
   return value.kind === "area"
-    && exactKeys(value, [...commonKeys, "direction", "origin"])
+    && exactKeys(value, [...commonKeys, "abilityRef", ...(value.direction === undefined ? [] : ["direction"]),
+      "knownAffectedEntityIds", "origin"])
+    && nonEmptyString(value.abilityRef)
     && isTacticalPosition(value.origin)
-    && isTacticalPosition(value.direction);
+    && (value.direction === undefined || isTacticalPosition(value.direction))
+    && sortedUniqueStrings(value.knownAffectedEntityIds, 100);
+}
+
+/** SPEC 0014 §7 (ADR 0148): a preview answered on its own, outside a projection. */
+export function isTacticalPreview(value: unknown): value is TacticalPreview {
+  return tacticalPreview(value);
 }
 
 export function isTacticalProjection(value: unknown): value is TacticalProjection {

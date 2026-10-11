@@ -644,3 +644,51 @@ test("a picked point snaps to a quarter cell and Shift moves the keyboard cursor
     assert.deepEqual(calls.at(-1).data.destination, { kind: "point", x: "150", y: "210" });
   });
 });
+
+// SPEC 0014 §7 (ADR 0148): the map shows who Rules says an ability reaches
+// and who an area would cover, of what the player sees; it computes neither,
+// and an area is still submitted as only its origin.
+test("the map marks who an ability reaches and who an area covers, as Rules answered", async () => {
+  const { compileSheet } = await import("../../../app/_runtime/lib/dnd/compute.ts");
+  const snap = snapFor(compileSheet, { combat: true });
+  const abilities = snap.state.authoritative.combatControls.abilities;
+  const healing = abilities.find((ability) => ability.abilityRef === "ability:alice:spell:healing-word");
+  healing.target = { ...healing.target, withinRefs: ["character:alice"], longRangeRefs: [] };
+  abilities.push({ abilityRef: "ability:alice:longbow", name: "长弓", group: "attack", activation: "attack",
+    target: { kind: "creatures", count: 1, rangeFeet: 150, longRangeFeet: 600, withinRefs: ["character:alice"], longRangeRefs: ["npc:warden"] } });
+  const origin = { x: "720", y: "180", elevation: "60" };
+  const preview = { kind: "area", abilityRef: "ability:alice:spell:sleep", origin, knownAffectedEntityIds: ["npc:warden"],
+    knownSelfEffects: [], knownFriendlyEntityIds: [], knownBlockerFeatureIds: [], knownCover: [], stop: null,
+    readout: ["范围内你看得见的：守夜人。"], spatialRevision: REVISION };
+  await withTable(snap, async ({ calls, one, press, token, act, settle }) => {
+    await press({ "data-tactical-ability": "ability:alice:spell:healing-word" });
+    assert.equal(one({ "data-entity-id": "npc:warden" }).props["data-tactical-reach"], "out");
+    assert.equal(one({ "data-entity-id": "character:alice" }).props["data-tactical-reach"], "within");
+    assert.equal(one({ "data-tactical-target-option": "npc:warden" }).props.disabled, true);
+    assert.match(text(one({ "data-tactical-target-option": "npc:warden" })), /够不着/);
+    await token("npc:warden");
+    assert.equal(one({ "data-entity-id": "npc:warden" }).props["data-targeted"], "false", "a creature out of reach is not picked");
+    await press({ "data-tactical-ability": "ability:alice:spell:healing-word" });
+
+    await press({ "data-tactical-ability": "ability:alice:longbow" });
+    assert.equal(one({ "data-entity-id": "npc:warden" }).props["data-tactical-reach"], "long");
+    assert.match(text(one({ "data-tactical-target-option": "npc:warden" })), /远射程，劣势/);
+    await token("npc:warden");
+    assert.equal(one({ "data-entity-id": "npc:warden" }).props["data-targeted"], "true");
+    await press({ "data-tactical-ability": "ability:alice:longbow" });
+
+    await press({ "data-tactical-ability": "ability:alice:spell:sleep" });
+    await press({ "data-tactical-area-option": "npc:warden" });
+    // The answer comes back from the table server.
+    await act(async () => { await settle(); await settle(); });
+    const asked = calls.filter((call) => call.command === "previewArea");
+    assert.deepEqual(asked.at(-1).data, { code: "TACTIC", query: { abilityRef: "ability:alice:spell:sleep", origin } });
+    assert.equal(one({ "data-entity-id": "npc:warden" }).props["data-tactical-in-area"], "true");
+    assert.equal(one({ "data-entity-id": "character:alice" }).props["data-tactical-in-area"], undefined);
+    assert.match(text(one({ "data-tactical-area-preview": "npc:warden" })), /范围内你看得见的：守夜人。/);
+    await press({ "data-tactical-area-submit": true });
+    assert.deepEqual(calls.at(-1).data.target, { kind: "area", origin });
+  }, (command) => command === "previewArea"
+    ? { ok: true, preview }
+    : { action: "committed", narration: "notApplicable" });
+});

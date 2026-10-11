@@ -1,15 +1,17 @@
 import { useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { combatAbility, endTurn, moveOnMap } from "@/lib/table/client";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { combatAbility, endTurn, moveOnMap, previewArea } from "@/lib/table/client";
 import { tableActionAccepted, type TableActionResponse } from "@/lib/table/authoritative-client";
 import type { CombatControls } from "@/lib/table/authoritative";
 import type {
   CombatAbilityTarget,
   MapMoveDestination,
+  TacticalAreaPreviewQuery,
   TacticalPosition,
+  TacticalPreview,
   TacticalProjection,
 } from "@/lib/rules/tactical-projection";
-import { IDLE_TASK, type MapPoint, type MapTask, type TacticalTaskControl } from "@/components/tactical-task";
+import { IDLE_TASK, areaPick, type MapPoint, type MapTask, type TacticalTaskControl } from "@/components/tactical-task";
 
 /** What the map, the character panel's action list and the bar above the
  * composer may ask the table to do (SPEC 0014 §§3、4、8, ADR 0091), and the
@@ -22,6 +24,11 @@ export type TacticalMapActions = TacticalTaskControl & {
   error: string | null;
   /** Why a sentence cannot be put in the composer now, if it cannot. */
   intentUnavailable?: string;
+  /** SPEC 0014 §7 (ADR 0148): what the area being picked would reach, of
+   * what the player knows, as Rules answered; null until it answers. */
+  areaPreview: Extract<TacticalPreview, { kind: "area" }> | null;
+  /** Whether that answer is still on its way. */
+  areaPreviewPending: boolean;
   moveTo(destination: MapMoveDestination): Promise<boolean>;
   walkPath(path: TacticalPosition[]): Promise<boolean>;
   useAbility(abilityRef: string, target: CombatAbilityTarget): Promise<boolean>;
@@ -58,6 +65,24 @@ export function useTacticalMapActions(input: {
     if (family(next) !== family(task)) setCursor(null);
   };
 
+  // SPEC 0014 §7 (ADR 0148): once an area's origin (and its direction) is
+  // picked, Rules says who the player can see inside it. Read-only.
+  const pick = input.projection === null || (task.kind !== "area" && task.kind !== "intent")
+    ? null : areaPick(input.projection, task);
+  const previewQuery: TacticalAreaPreviewQuery | null = pick === null || (task.kind !== "area" && task.kind !== "intent")
+    ? null : { abilityRef: task.ability.abilityRef, ...pick };
+  const previewed = useQuery({
+    queryKey: ["area-preview", input.code, input.projection?.spatialRevision ?? "", previewQuery],
+    queryFn: async () => {
+      const result = await previewArea({ data: { code: input.code, query: previewQuery! } });
+      return result.ok === true && result.preview?.kind === "area" ? result.preview : null;
+    },
+    enabled: previewQuery !== null,
+    staleTime: Infinity,
+    retry: false,
+  });
+  const areaPreview = previewQuery !== null && previewed.data?.abilityRef === previewQuery.abilityRef ? previewed.data : null;
+
   async function submit(
     call: (spatialRevision: string) => Promise<TableActionResponse>,
     failure: string,
@@ -89,6 +114,8 @@ export function useTacticalMapActions(input: {
     busy: busy || input.sending,
     error,
     ...(input.intentUnavailable === undefined ? {} : { intentUnavailable: input.intentUnavailable }),
+    areaPreview,
+    areaPreviewPending: previewQuery !== null && previewed.isFetching,
     task,
     setTask,
     cursor,

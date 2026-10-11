@@ -8,6 +8,7 @@ import {
   READY_EVENT_LABEL,
   abilityDetail,
   aimable,
+  areaPick,
   creaturePickable,
   inches,
   intentSentence,
@@ -15,6 +16,7 @@ import {
   mapGestures,
   mapPosition,
   playerEncounter,
+  reachOf,
   selfPoint,
   targetHint,
   taskPicksPoint,
@@ -42,7 +44,21 @@ const ABILITY_GROUP_LABEL: Record<CombatControlAbility["group"], string> = {
 };
 
 /** SPEC 0014 §8: the map's rings and shapes are sketches, not rulings. */
-const HINT_NOTE = "地图上的圈和范围只是示意：够不够得着、范围内有谁，由规则结算。";
+const HINT_NOTE = "地图上的圈和范围图形只是示意；标出的射程内、范围内是规则按你看得见的情况算的，真正结算时规则会按实际情况重算。";
+
+const REACH_LABEL = { within: "", long: "（远射程，劣势）", out: "（够不着）" } as const;
+
+/** SPEC 0014 §7 (ADR 0148): what Rules says the area would reach, of what
+ * the player knows. */
+function AreaPreviewReadout({ actions }: { actions: TacticalMapActions }) {
+  const preview = actions.areaPreview;
+  if (!preview) return null;
+  return (
+    <ul data-tactical-area-preview={preview.knownAffectedEntityIds.join(" ")} className="space-y-0.5 text-fg">
+      {preview.readout.map((line) => <li key={line}>{line}</li>)}
+    </ul>
+  );
+}
 
 const COST_STYLE: Record<CombatControlAbility["activation"], string> = {
   action: "border-brass/50 text-brass",
@@ -72,7 +88,6 @@ function activeName(projection: TacticalProjection): string {
  * sentence in the composer. */
 function abilityCommands(projection: TacticalProjection, actions: TacticalMapActions) {
   const { task, setTask } = actions;
-  const elevation = projection.self.position.elevation;
   const armedRef = task.kind === "creatures" || task.kind === "area" || task.kind === "intent"
     || task.kind === "help" || task.kind === "ready"
     ? task.ability.abilityRef
@@ -130,28 +145,11 @@ function abilityCommands(projection: TacticalProjection, actions: TacticalMapAct
     return true;
   }
 
+  /** SPEC 0014 §5: the page submits only the origin and a direction; Rules
+   * finds who is inside. */
   function areaTarget(): CombatAbilityTarget | null {
-    if (task.kind !== "area" || task.ability.target.kind !== "area" || task.origin === null) return null;
-    const shape = task.ability.target;
-    if (shape.needsDirection && task.direction === null) return null;
-    const origin = shape.origin === "self"
-      ? structuredClone(projection.self.position)
-      : mapPosition(task.origin, elevation);
-    // SPEC 0014 §5: the page submits only the origin and a direction (the way
-    // from the origin to the second point); Rules finds who is inside.
-    return {
-      kind: "area",
-      origin,
-      ...(shape.needsDirection && task.direction !== null
-        ? {
-            direction: {
-              x: String(task.direction.x - Number(origin.x)),
-              y: String(task.direction.y - Number(origin.y)),
-              elevation: "0",
-            },
-          }
-        : {}),
-    };
+    const pick = task.kind === "area" ? areaPick(projection, task) : null;
+    return pick === null ? null : { kind: "area", ...pick };
   }
 
   return { armedRef, finish, submitAbility, chooseCombatAbility, chooseIntentAbility, areaTarget };
@@ -652,18 +650,25 @@ export function TaskBar({
           </p>
           <p className="text-subtle" data-tactical-hint-note>{HINT_NOTE}</p>
           <div className="flex flex-wrap gap-1.5">
-            {entities.filter((entity) => creaturePickable(task.ability, entity)).map((entity) => (
-              <button
-                key={entity.id}
-                type="button"
-                data-tactical-target-option={entity.id}
-                aria-pressed={task.refs.includes(entity.id)}
-                onClick={() => gestures.activateEntity(entity)}
-                className={ACTION_BUTTON}
-              >
-                {nameOf(entity.id)}
-              </button>
-            ))}
+            {entities.filter((entity) => creaturePickable(task.ability, entity)).map((entity) => {
+              // SPEC 0014 §7 (ADR 0148): on the player's turn a creature out of
+              // reach cannot be picked; outside an encounter the KP decides.
+              const reach = reachOf(task.ability, entity.id);
+              return (
+                <button
+                  key={entity.id}
+                  type="button"
+                  data-tactical-target-option={entity.id}
+                  data-tactical-reach={reach ?? undefined}
+                  aria-pressed={task.refs.includes(entity.id)}
+                  disabled={task.purpose === "combat" && reach === "out"}
+                  onClick={() => gestures.activateEntity(entity)}
+                  className={ACTION_BUTTON}
+                >
+                  {nameOf(entity.id)}{reach === null ? "" : REACH_LABEL[reach]}
+                </button>
+              );
+            })}
           </div>
           <p className="text-fg">
             已选：{task.refs.length > 0 ? joinNames(task.refs.map(nameOf))
@@ -692,13 +697,12 @@ export function TaskBar({
         <div data-tactical-area-picker className="space-y-2">
           <p className="text-muted">{task.ability.name}：{targetHint(task.ability)}。</p>
           <p className="text-subtle" data-tactical-hint-note>{HINT_NOTE}</p>
-          <p className="text-fg">
-            {task.origin === null
-              ? "在地图上点选位置，或从下面选一个人所在处。"
-              : task.ability.target.kind === "area" && task.ability.target.needsDirection && task.direction === null
-                ? "再点地图上一处，或从下面选一个人，定出朝向。"
-                : "已选好。范围内有谁由规则结算。"}
-          </p>
+          {task.origin === null || (task.ability.target.kind === "area" && task.ability.target.needsDirection && task.direction === null) ? (
+            <p className="text-fg">
+              {task.origin === null ? "在地图上点选位置，或从下面选一个人所在处。" : "再点地图上一处，或从下面选一个人，定出朝向。"}
+            </p>
+          ) : actions.areaPreview ? <AreaPreviewReadout actions={actions} />
+            : <p className="text-muted">{actions.areaPreviewPending ? "正在算范围内有谁……" : "已选好。范围内有谁由规则结算。"}</p>}
           {taskPicksPoint(task) ? (
             <div className="flex flex-wrap gap-1.5">
               {entities.map((entity) => (
@@ -765,6 +769,7 @@ export function TaskBar({
       {intent ? (
         <div data-tactical-intent-preview className="space-y-2">
           <p className="text-fg">放进输入框的句子：{intent.ready ? intent.sentence : "请先选择目标。"}</p>
+          {task.kind === "intent" ? <AreaPreviewReadout actions={actions} /> : null}
           {task.kind === "goTo" && !task.passable ? (
             <p data-tactical-go-to-closed className="text-brass">这扇门现在关着；能不能打开由 KP 裁定。</p>
           ) : null}
