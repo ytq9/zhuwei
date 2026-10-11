@@ -2388,8 +2388,6 @@ function TacticalPlacePanel({
     ? projection.knownFeatures.filter((feature) => jumps.some((jump) => jump.featureId === feature.id)
       || climbChoices(feature, projection.self).length > 0)
     : [];
-  const terrainFeature = selected.kind === "feature" && terrainFeatures.some((feature) => feature.id === selected.value.id)
-    ? selected.value : null;
 
   return (
     <section
@@ -2442,59 +2440,64 @@ function TacticalPlacePanel({
         </div>
       ) : null}
       {terrainFeatures.length > 0 ? (
+        // SPEC 0014 §4 (ADR 0098): each place on the combat map that can be
+        // jumped, climbed or swum, with what can be done there. A jump goes
+        // straight to Rules; a climb or swim is the player's sentence.
         <div data-tactical-terrain className="space-y-2">
-          <label className="flex min-w-0 max-w-full items-center gap-1.5 text-muted">
-            <span className="shrink-0">地形</span>
-            <select
-              data-tactical-terrain-select
-              value={terrainFeature === null ? "" : featureSelectionKey(terrainFeature.id)}
-              onChange={(event) => {
-                if (event.target.value) onSelect(event.target.value);
-              }}
-              className="min-h-9 min-w-0 max-w-[14rem] rounded-control border border-border bg-bg px-2 text-xs text-fg"
-            >
-              <option value="" disabled>在地图上点选，或从这里选</option>
-              {terrainFeatures.map((feature) => (
-                <option key={feature.id} value={featureSelectionKey(feature.id)}>{feature.label}</option>
-              ))}
-            </select>
-          </label>
-          {terrainFeature === null ? (
-            <p className="text-subtle">选一处地形，看能怎样跳过、跳上、攀爬或游过去。</p>
-          ) : (
-            <div className="flex min-w-0 flex-wrap gap-1.5">
-              {jumps.filter((jump) => jump.featureId === terrainFeature.id).map((jump) => (
+          <p className="text-muted">跳、爬、游{myTurn ? "" : " · 轮到你时可用"}</p>
+          <ul className="space-y-1.5">
+            {terrainFeatures.map((feature) => (
+              <li
+                key={feature.id}
+                data-tactical-terrain-feature={feature.id}
+                aria-current={selected.kind === "feature" && selected.value.id === feature.id ? "true" : undefined}
+                className="flex min-w-0 flex-wrap items-center gap-1.5 rounded-control px-1 py-0.5 aria-[current=true]:bg-brass/10"
+              >
                 <button
-                  key={jump.abilityRef}
                   type="button"
-                  data-tactical-jump={jump.abilityRef}
-                  data-tactical-jump-feature={jump.featureId}
-                  disabled={combatDisabled}
-                  onClick={() => {
-                    void actions.useAbility(jump.abilityRef, { kind: "point", position: structuredClone(jump.landing) })
-                      .then((done) => { if (done) setTask(IDLE_TASK); });
-                  }}
-                  className={cn(ACTION_BUTTON, "max-w-full whitespace-normal break-words text-left")}
+                  data-tactical-terrain-select={feature.id}
+                  onClick={() => onSelect(featureSelectionKey(feature.id))}
+                  className="min-w-0 max-w-full break-words text-left text-fg underline decoration-border underline-offset-2 hover:decoration-brass"
                 >
-                  {jumpLabel(jump, terrainFeature)}
+                  {feature.label}
                 </button>
-              ))}
-              {climbChoices(terrainFeature, projection.self).map((choice) => (
-                <button
-                  key={choice.direction}
-                  type="button"
-                  data-tactical-climb={choice.direction}
-                  aria-pressed={task.kind === "climb" && task.sentence === choice.sentence}
-                  disabled={combatDisabled}
-                  title="交给 KP 裁定：是否需要运动检定，失败会怎样"
-                  onClick={() => setTask({ kind: "climb", featureId: terrainFeature.id, sentence: choice.sentence })}
-                  className={ACTION_BUTTON}
-                >
-                  {choice.label}
-                </button>
-              ))}
-            </div>
-          )}
+                {jumps.filter((jump) => jump.featureId === feature.id).map((jump) => (
+                  <button
+                    key={jump.abilityRef}
+                    type="button"
+                    data-tactical-jump={jump.abilityRef}
+                    data-tactical-jump-feature={jump.featureId}
+                    disabled={combatDisabled}
+                    onClick={() => {
+                      void actions.useAbility(jump.abilityRef, { kind: "point", position: structuredClone(jump.landing) })
+                        .then((done) => { if (done) setTask(IDLE_TASK); });
+                    }}
+                    className={cn(ACTION_BUTTON, "max-w-full whitespace-normal break-words text-left")}
+                  >
+                    {jumpLabel(jump, feature)}
+                  </button>
+                ))}
+                {climbChoices(feature, projection.self).map((choice) => (
+                  <button
+                    key={choice.direction}
+                    type="button"
+                    data-tactical-climb={choice.direction}
+                    data-tactical-climb-feature={feature.id}
+                    aria-pressed={task.kind === "climb" && task.sentence === choice.sentence}
+                    disabled={combatDisabled}
+                    title="交给 KP 裁定：是否需要运动检定，失败会怎样"
+                    onClick={() => {
+                      onSelect(featureSelectionKey(feature.id));
+                      setTask({ kind: "climb", featureId: feature.id, sentence: choice.sentence });
+                    }}
+                    className={ACTION_BUTTON}
+                  >
+                    {choice.label}
+                  </button>
+                ))}
+              </li>
+            ))}
+          </ul>
         </div>
       ) : null}
     </section>

@@ -373,16 +373,13 @@ test("on the player's turn the map jumps across a picked feature and sends a cli
   const landing = { x: "240", y: "180", elevation: "60" };
   authoritative.combatControls.jumps = [{ abilityRef: "action:long-jump", featureId: "feature:ditch", landing, running: true,
     costFeet: 10, clearCheck: false, landingCheck: false }];
-  await withTable(snap, async ({ calls, map, one, press, act, settle, sendComposer }) => {
-    const terrain = one({ "data-tactical-terrain": true });
-    // Only the ditch and the pond are terrain to jump, climb or swim.
-    assert.deepEqual(terrain.findAll((node) => node.type === "option" && node.props.value !== "").map((node) => node.props.value),
-      ["feature:feature:ditch", "feature:feature:pond"]);
-    const pick = async (featureId) => {
-      const select = one({ "data-tactical-terrain-select": true });
-      await act(async () => { select.props.onChange({ target: { value: `feature:${featureId}` } }); await settle(); });
-    };
-    await pick("feature:ditch");
+  await withTable(snap, async ({ calls, map, all, one, press, sendComposer }) => {
+    // Only the ditch and the pond are places to jump, climb or swim; each is
+    // listed with what can be done there, no picking first.
+    assert.deepEqual(all("data-tactical-terrain-feature").map((node) => node.props["data-tactical-terrain-feature"]),
+      ["feature:ditch", "feature:pond"]);
+    await press({ "data-tactical-terrain-select": "feature:ditch" });
+    assert.ok(one({ "data-tactical-selected": "feature:feature:ditch" }), "the place's name selects it on the map");
     assert.match(text(one({ "data-tactical-jump": "action:long-jump" })), /跳过排水沟（助跑，花 10 尺）/);
     await press({ "data-tactical-jump": "action:long-jump" });
     let call = calls.at(-1);
@@ -391,18 +388,17 @@ test("on the player's turn the map jumps across a picked feature and sends a cli
     assert.deepEqual([call.data.abilityRef, call.data.target], ["action:long-jump", { kind: "point", position: landing }]);
 
     // Beside the ditch she can climb down into it or across it.
-    assert.deepEqual(map().findAll((node) => node.type === "button" && node.props["data-tactical-climb"] !== undefined)
+    assert.deepEqual(map().findAll((node) => node.type === "button" && node.props["data-tactical-climb-feature"] === "feature:ditch")
       .map((node) => node.props["data-tactical-climb"]), ["down", "across"]);
-    await press({ "data-tactical-climb": "across" });
+    await press({ "data-tactical-climb": "across", "data-tactical-climb-feature": "feature:ditch" });
     assert.match(text(one({ "data-tactical-intent-preview": true })), /我爬过排水沟。/);
     await press({ "data-tactical-intent-submit": true });
     await sendComposer("我爬过排水沟。");
     call = calls.at(-1);
     assert.deepEqual([call.command, call.data.text], ["sendAction", "我爬过排水沟。"]);
 
-    await pick("feature:pond");
-    assert.equal(map().findAll((node) => node.props["data-tactical-jump"] !== undefined).length, 0);
-    await press({ "data-tactical-climb": "across" });
+    assert.equal(map().findAll((node) => node.props["data-tactical-jump-feature"] === "feature:pond").length, 0);
+    await press({ "data-tactical-climb": "across", "data-tactical-climb-feature": "feature:pond" });
     await press({ "data-tactical-intent-submit": true });
     await sendComposer("我游过水塘。");
     assert.equal(calls.at(-1).data.text, "我游过水塘。");
@@ -415,11 +411,11 @@ test("on the player's turn the map jumps across a picked feature and sends a cli
   waiting.state.authoritative.tacticalProjection.knownFeatures.push({ ...ground, id: "feature:ditch", kind: "terrain", label: "排水沟",
     polygon: rectangle("150", "120", "210", "240"), height: "1", landform: "ditch", depth: "36", material: "mud" });
   waiting.state.authoritative.tacticalProjection.knownFeatures.sort((left, right) => left.id.localeCompare(right.id));
-  await withTable(waiting, async ({ one, act, settle, map }) => {
-    const select = one({ "data-tactical-terrain-select": true });
-    await act(async () => { select.props.onChange({ target: { value: "feature:feature:ditch" } }); await settle(); });
-    assert.ok(map().findAll((node) => node.type === "button" && node.props["data-tactical-climb"] !== undefined)
-      .every((node) => node.props.disabled === true));
+  await withTable(waiting, async ({ one, map }) => {
+    const climbs = map().findAll((node) => node.type === "button" && node.props["data-tactical-climb"] !== undefined);
+    assert.ok(climbs.length > 0);
+    assert.ok(climbs.every((node) => node.props.disabled === true));
+    assert.match(text(one({ "data-tactical-terrain": true })), /轮到你时可用/);
   });
 });
 
