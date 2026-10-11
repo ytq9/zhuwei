@@ -582,3 +582,39 @@ test("the action list counts spell slots and hands a pick to the bar, which can 
     assert.equal(all("data-tactical-task-bar").length, 0, "a confirmed pick clears the bar");
   });
 });
+
+// SPEC 0014 §8: while a target or an area is being picked, the map sketches
+// the stated range from the edge of the actor's space and the area's shape
+// at its origin. The sketch marks nobody as inside; Rules settles that.
+test("picking shows the range ring and the area's shape as a sketch", async () => {
+  const { compileSheet } = await import("../../../app/_runtime/lib/dnd/compute.ts");
+  await withTable(snapFor(compileSheet, { combat: true }), async ({ one, all, press, key, map }) => {
+    assert.equal(all("data-tactical-range-ring").length, 0);
+    await press({ "data-tactical-ability": "ability:alice:spell:healing-word" });
+    assert.equal(one({ "data-tactical-range-ring": 60 }).type, "g");
+    assert.equal(all("data-tactical-area-shape").length, 0);
+    assert.ok(one({ "data-tactical-hint-note": true }));
+    await press({ "data-tactical-ability": "ability:alice:spell:healing-word" });
+    assert.equal(all("data-tactical-range-ring").length, 0, "cancelling the pick clears the sketch");
+
+    // A sphere at range: the ring is its range; the shape sits on the picked spot.
+    await press({ "data-tactical-ability": "ability:alice:spell:sleep" });
+    assert.ok(one({ "data-tactical-range-ring": 90 }));
+    await press({ "data-tactical-area-option": "npc:warden" });
+    const sphere = one({ "data-tactical-area-shape": "sphere" });
+    assert.deepEqual([sphere.props.cx, sphere.props.cy, sphere.props.r, sphere.props["data-tactical-area-tentative"]], [720, 180, 240, "false"]);
+    assert.ok(map().findAll((node) => node.props["data-targeted"] === "true").length === 0, "the sketch targets nobody");
+    await press({ "data-tactical-ability": "ability:alice:spell:sleep" });
+
+    // A cube from the actor: until a direction is picked it only shows its reach.
+    await press({ "data-tactical-ability": "ability:alice:spell:thunderwave" });
+    assert.equal(all("data-tactical-range-ring").length, 0, "an area from the actor has no range to show");
+    assert.equal(one({ "data-tactical-area-shape": "cube" })["props"]["data-tactical-area-tentative"], "true");
+    await key("ArrowRight");
+    await key("Enter");
+    const cube = one({ "data-tactical-area-shape": "cube" });
+    assert.equal(cube.props["data-tactical-area-tentative"], "false");
+    // 15 feet from the actor (120, 180) toward the picked square on its right.
+    assert.equal(cube.props.points, "120,270 300,270 300,90 120,90");
+  });
+});

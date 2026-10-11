@@ -41,6 +41,9 @@ const ABILITY_GROUP_LABEL: Record<CombatControlAbility["group"], string> = {
   basic: "基础动作",
 };
 
+/** SPEC 0014 §8: the map's rings and shapes are sketches, not rulings. */
+const HINT_NOTE = "地图上的圈和范围只是示意：够不够得着、范围内有谁，由规则结算。";
+
 const COST_STYLE: Record<CombatControlAbility["activation"], string> = {
   action: "border-brass/50 text-brass",
   attack: "border-brass/50 text-brass",
@@ -647,6 +650,7 @@ export function TaskBar({
               : ""}
             {gestures.aimPick ? "看不见的目标：点地图空地，朝你猜的位置攻击（劣势，猜错则落空）。" : ""}
           </p>
+          <p className="text-subtle" data-tactical-hint-note>{HINT_NOTE}</p>
           <div className="flex flex-wrap gap-1.5">
             {entities.filter((entity) => creaturePickable(task.ability, entity)).map((entity) => (
               <button
@@ -687,6 +691,7 @@ export function TaskBar({
       {task.kind === "area" ? (
         <div data-tactical-area-picker className="space-y-2">
           <p className="text-muted">{task.ability.name}：{targetHint(task.ability)}。</p>
+          <p className="text-subtle" data-tactical-hint-note>{HINT_NOTE}</p>
           <p className="text-fg">
             {task.origin === null
               ? "在地图上点选位置，或从下面选一个人所在处。"

@@ -11,7 +11,7 @@ import {
   type TacticalProjection,
   type TacticalZone,
 } from "@/lib/rules/tactical-projection";
-import type { CombatJumpChoice, NpcCombatTurnStatus } from "@/lib/table/authoritative";
+import type { CombatControlAbility, CombatControlTarget, CombatJumpChoice, NpcCombatTurnStatus } from "@/lib/table/authoritative";
 import type { TacticalMapActions } from "@/components/tactical-map-actions";
 import { ACTION_BUTTON } from "@/components/table-actions";
 import {
@@ -1334,6 +1334,10 @@ function TacticalMapCanvas({
   const cursor = picking ? interaction?.cursor ?? null : null;
   const start = selfPoint(projection);
   const grid = projection.scene.gridInches;
+  // A local hover point, only to show where a tentative area would sit; the
+  // pick itself is still the click or the keyboard cursor (SPEC 0014 §8).
+  const [hover, setHover] = useState<MapPoint | null>(null);
+  const followsPointer = picking && task.kind === "area";
 
   function onCanvasKey(event: KeyboardEvent<SVGSVGElement>) {
     // Tokens and shapes handle their own keys.
@@ -1461,6 +1465,13 @@ function TacticalMapCanvas({
                   const point = svgPointFromEvent(event);
                   if (point && picking) gestures.pickPoint(point);
                 }}
+                onMouseMove={(event) => {
+                  if (!followsPointer) return;
+                  const point = svgPointFromEvent(event);
+                  setHover(point === null ? null
+                    : clampToScene({ x: snapToGrid(point.x, grid), y: snapToGrid(point.y, grid) }, projection));
+                }}
+                onMouseLeave={() => setHover(null)}
               />
             ) : null}
             {projection.knownZones.map((zone) => {
@@ -1508,7 +1519,9 @@ function TacticalMapCanvas({
                 />
               );
             })}
-            {interaction ? <TacticalTaskMarks projection={projection} task={task} cursor={cursor} /> : null}
+            {interaction ? (
+              <TacticalTaskMarks projection={projection} task={task} cursor={cursor} hover={followsPointer ? hover : null} />
+            ) : null}
           </>
         ) : null}
       </svg>
@@ -1519,19 +1532,173 @@ function TacticalMapCanvas({
 /** Where the player's picks are: the destination, the waypoints in order, an
  * area's origin and direction, and the keyboard cursor. These are the
  * player's own picks, not a preview of the result. */
+/** SPEC 0014 §8: the reach or range an ability names, for the hint ring. */
+function rangeOf(ability: CombatControlAbility): { feet: number; longFeet?: number; reach: boolean } | null {
+  const target = ability.target;
+  if (target.kind === "creatures") {
+    if (target.reachFeet !== undefined) return { feet: target.reachFeet, reach: true };
+    if (target.rangeFeet !== undefined) {
+      return { feet: target.rangeFeet, ...(target.longRangeFeet ? { longFeet: target.longRangeFeet } : {}), reach: false };
+    }
+    return null;
+  }
+  return target.kind === "area" && target.origin === "point" && target.rangeFeet !== undefined
+    ? { feet: target.rangeFeet, reach: false }
+    : null;
+}
+
+/** A hint only: a ring at the stated reach or range from the edge of the
+ * actor's own space. It neither decides nor marks who is within; cover,
+ * height and sight are Rules' (SPEC 0014 §8). */
+function RangeRings({
+  projection,
+  range,
+}: {
+  projection: TacticalProjection;
+  range: { feet: number; longFeet?: number; reach: boolean };
+}) {
+  const center = selfPoint(projection);
+  const half = Math.max(inches(projection.self.footprint.width), inches(projection.self.footprint.depth)) / 2;
+  const radius = half + range.feet * 12;
+  // The label sits on the ring where the ring crosses the map, so a long
+  // range still shows its number.
+  const bounds = sceneBounds(projection);
+  const margin = 40;
+  const middle = { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 };
+  const label = Array.from({ length: 72 }, (_, step) => step * 5 * Math.PI / 180)
+    .map((angle) => ({ x: center.x + radius * Math.cos(angle), y: center.y + radius * Math.sin(angle) }))
+    .filter((point) => point.x > bounds.minX + margin && point.x < bounds.maxX - margin
+      && point.y > bounds.minY + margin && point.y < bounds.maxY - margin)
+    .sort((left, right) => Math.hypot(left.x - middle.x, left.y - middle.y) - Math.hypot(right.x - middle.x, right.y - middle.y))[0];
+  return (
+    <g data-tactical-range-ring={range.feet}>
+      {range.longFeet ? (
+        <circle
+          data-tactical-long-range-ring={range.longFeet}
+          cx={center.x}
+          cy={center.y}
+          r={half + range.longFeet * 12}
+          fill="none"
+          className="stroke-brass/35 stroke-[1] [stroke-dasharray:2_4] [vector-effect:non-scaling-stroke]"
+        />
+      ) : null}
+      <circle
+        cx={center.x}
+        cy={center.y}
+        r={radius}
+        className="fill-brass/[0.06] stroke-brass/70 stroke-[1.5] [stroke-dasharray:6_4] [vector-effect:non-scaling-stroke]"
+      />
+      {label ? (
+        <text
+          data-tactical-range-label
+          x={label.x}
+          y={label.y - 10}
+          textAnchor="middle"
+          className="fill-brass text-[26px] [paint-order:stroke] stroke-[#151411] [stroke-width:5px]"
+        >
+          {range.reach ? "触及" : "射程"} {range.feet} 尺
+        </text>
+      ) : null}
+    </g>
+  );
+}
+
+type AreaTarget = Extract<CombatControlTarget, { kind: "area" }>;
+
+/** Where to sketch an area: at the picked origin, or tentatively at the
+ * pointer while the origin or direction is still open; outside an encounter
+ * on the creature it is aimed at. */
+function areaShapeHint(projection: TacticalProjection, task: MapTask, pointer: MapPoint | null):
+  { target: AreaTarget; origin: MapPoint; toward: MapPoint | null; tentative: boolean } | null {
+  if (task.kind === "area" && task.ability.target.kind === "area") {
+    const target = task.ability.target;
+    if (task.origin === null) {
+      return pointer === null ? null : { target, origin: pointer, toward: null, tentative: true };
+    }
+    const toward = task.direction ?? (target.needsDirection ? pointer : null);
+    return { target, origin: task.origin, toward, tentative: target.needsDirection && task.direction === null };
+  }
+  if (task.kind === "intent" && task.ability.target.kind === "area" && task.aimRef !== null) {
+    const aimed = [projection.self, ...projection.visibleEntities].find((entity) => entity.id === task.aimRef);
+    return aimed === undefined ? null
+      : { target: task.ability.target, origin: { x: inches(aimed.position.x), y: inches(aimed.position.y) }, toward: null, tentative: true };
+  }
+  return null;
+}
+
+/** A sketch of an area's size and shape at its origin, pointing the way the
+ * player chose: a circle for a sphere or cylinder, a square for a cube, a
+ * triangle as wide as it is long for a cone, a 5-foot strip for a line.
+ * Without a direction yet, a pointed shape shows only how far it reaches.
+ * Who is inside is Rules' to settle (SPEC 0014 §§5、8). */
+function AreaShape({
+  target,
+  origin,
+  toward,
+  tentative,
+}: {
+  target: AreaTarget;
+  origin: MapPoint;
+  toward: MapPoint | null;
+  tentative: boolean;
+}) {
+  const size = target.sizeFeet * 12;
+  const className = cn(
+    "stroke-violet-200 stroke-[1.5] [vector-effect:non-scaling-stroke]",
+    tentative ? "fill-violet-400/10 [stroke-dasharray:4_4]" : "fill-violet-400/20",
+  );
+  const common = { "data-tactical-area-shape": target.shape, "data-tactical-area-tentative": String(tentative) };
+  if (target.shape === "sphere" || target.shape === "cylinder") {
+    return <circle {...common} cx={origin.x} cy={origin.y} r={size} className={className} />;
+  }
+  const dx = toward === null ? 0 : toward.x - origin.x;
+  const dy = toward === null ? 0 : toward.y - origin.y;
+  const length = Math.hypot(dx, dy);
+  if (length === 0) {
+    return target.shape === "cube" && !target.needsDirection
+      ? <rect {...common} x={origin.x - size / 2} y={origin.y - size / 2} width={size} height={size} className={className} />
+      : <circle {...common} cx={origin.x} cy={origin.y} r={size} className={cn(className, "fill-none [stroke-dasharray:2_6]")} />;
+  }
+  const ux = dx / length;
+  const uy = dy / length;
+  const px = -uy;
+  const py = ux;
+  const halfWidth = target.shape === "line" ? 30 : size / 2;
+  const far = { x: origin.x + ux * size, y: origin.y + uy * size };
+  const points = target.shape === "cone"
+    ? [origin, { x: far.x + px * halfWidth, y: far.y + py * halfWidth }, { x: far.x - px * halfWidth, y: far.y - py * halfWidth }]
+    : [
+        { x: origin.x + px * halfWidth, y: origin.y + py * halfWidth },
+        { x: far.x + px * halfWidth, y: far.y + py * halfWidth },
+        { x: far.x - px * halfWidth, y: far.y - py * halfWidth },
+        { x: origin.x - px * halfWidth, y: origin.y - py * halfWidth },
+      ];
+  return <polygon {...common} points={points.map((point) => `${point.x},${point.y}`).join(" ")} className={className} />;
+}
+
 function TacticalTaskMarks({
   projection,
   task,
   cursor,
+  hover,
 }: {
   projection: TacticalProjection;
   task: MapTask;
   cursor: MapPoint | null;
+  /** Where the pointer is, for a tentative area. */
+  hover: MapPoint | null;
 }) {
   const grid = projection.scene.gridInches;
   const start = selfPoint(projection);
+  const ability = task.kind === "creatures" || task.kind === "area" || task.kind === "intent" ? task.ability : null;
+  const range = ability === null ? null : rangeOf(ability);
+  const area = areaShapeHint(projection, task, cursor ?? hover);
   return (
     <g data-tactical-task-marks={task.kind} className="pointer-events-none">
+      {range ? <RangeRings projection={projection} range={range} /> : null}
+      {area ? (
+        <AreaShape target={area.target} origin={area.origin} toward={area.toward} tentative={area.tentative} />
+      ) : null}
       {task.kind === "destination" ? (
         <rect
           data-tactical-destination={`${task.point.x},${task.point.y}`}
@@ -1721,6 +1888,8 @@ function TacticalLegend() {
         <p><span className="mr-1 text-stone-400">■</span>中立</p>
         <p><span className="mr-1 text-primary">□</span>可互动物</p>
         <p><span className="mr-1 text-violet-300">▧</span>区域效果</p>
+        <p><span className="mr-1 text-brass">◌</span>射程或触及（示意）</p>
+        <p><span className="mr-1 text-violet-200">◇</span>法术范围（示意）</p>
       </div>
       <div className="mt-2 space-y-1 border-t border-border pt-2 text-[11px] text-subtle">
         <p>实线边阻挡移动；虚线边可通过。</p>
