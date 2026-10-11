@@ -567,13 +567,15 @@ test("a weapon attack is named by the held item and a malformed budget fails clo
   }
 });
 
-// SPEC 0006 §7 (ADR 0101): the Room's NPC turn status reaches the table as
-// given; anything else is dropped.
+// SPEC 0006 §§6、7 (ADR 0101): the Room's NPC turn status reaches the table
+// state the page reads, as given; anything else is dropped.
 test("the table forwards the NPC combat turn status the Room reports", () => {
   const { view } = playerView(genesis());
-  const table = readModel => projectAuthoritativeTableObservation({ userId: "principal:alice", members: ["principal:alice"],
-    locationLabels: {}, observation: { readModel, delivery: { kind: "none" } } });
+  const table = readModel => buildAuthoritativeTableState({ rulesetVersion: AUTHORITATIVE_RULESET_VERSION,
+    projected: projectAuthoritativeTableObservation({ userId: "principal:alice", members: ["principal:alice"],
+      locationLabels: {}, observation: { readModel, delivery: { kind: "none" } } }) });
+  assert.deepEqual(table({ ...view, npcCombatTurn: { npcRef: NPC, state: "acting" } }).npcCombatTurn, { npcRef: NPC, state: "acting" });
   assert.deepEqual(table({ ...view, npcCombatTurn: { npcRef: NPC, state: "waitingForRetry" } }).npcCombatTurn, { npcRef: NPC, state: "waitingForRetry" });
   assert.equal(table({ ...view, npcCombatTurn: { npcRef: NPC, state: "thinking" } }).npcCombatTurn, undefined);
-  assert.equal(table(view).npcCombatTurn, undefined);
+  assert.equal(Object.hasOwn(table(view), "npcCombatTurn"), false);
 });

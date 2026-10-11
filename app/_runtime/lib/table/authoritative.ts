@@ -2385,6 +2385,10 @@ export function buildAuthoritativeTableState(input: {
   const combatControls = "combatControls" in projected
     ? projected.combatControls
     : undefined;
+  // SPEC 0006 §§6、7 (ADR 0101): the map shows an NPC's turn running or waiting.
+  const npcCombatTurn = "npcCombatTurn" in projected
+    ? projected.npcCombatTurn
+    : undefined;
   const narrationRecovery = "narrationRecovery" in projected
     ? projected.narrationRecovery
     : undefined;
@@ -2398,6 +2402,7 @@ export function buildAuthoritativeTableState(input: {
     ...(lifecycle === undefined ? {} : { lifecycle }),
     ...(tacticalProjection === undefined ? {} : { tacticalProjection }),
     ...(combatControls === undefined ? {} : { combatControls }),
+    ...(npcCombatTurn === undefined ? {} : { npcCombatTurn }),
     ...(narrationRecovery === undefined ? {} : { narrationRecovery }),
   };
 }
