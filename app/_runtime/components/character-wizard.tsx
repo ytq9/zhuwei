@@ -562,7 +562,7 @@ function ScoresStep({
       <div className="mb-4 flex gap-2">
         <Button
           size="sm"
-          variant="subtle"
+          variant="secondary"
           type="button"
           onClick={() =>
             onChange({ str: 15, dex: 14, con: 13, int: 8, wis: 12, cha: 10 })
@@ -572,7 +572,7 @@ function ScoresStep({
         </Button>
         <Button
           size="sm"
-          variant="subtle"
+          variant="secondary"
           type="button"
           onClick={() => onChange({ ...EMPTY_SCORES })}
         >

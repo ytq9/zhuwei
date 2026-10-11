@@ -1,6 +1,8 @@
 "use client";
 
 import { useId, useRef, useState, type ReactNode } from "react";
+import { buttonVariants } from "@/components/ui/button";
+import { Disclosure } from "@/components/ui/disclosure";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   GEAR_SLOTS,
@@ -101,46 +103,8 @@ function useGearActions(code: string, canEdit: boolean): GearActionController {
 
 /** A disclosure for what is seldom needed: the empty slots and what a
  * container held when last looked into. */
-function InventorySection({
-  title,
-  hint,
-  children,
-}: {
-  title: string;
-  hint: string;
-  children: ReactNode;
-}) {
-  const [open, setOpen] = useState(false);
-  const id = useId();
-  const triggerId = `${id}-trigger`;
-  const panelId = `${id}-panel`;
-  return (
-    <div className="min-w-0 max-w-full overflow-hidden rounded-[10px] border border-border">
-      <button
-        id={triggerId}
-        type="button"
-        aria-controls={panelId}
-        aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
-        className="flex min-h-11 w-full min-w-0 items-center justify-between gap-2 px-2.5 py-2 text-left"
-      >
-        <span className="text-xs text-muted">{title}</span>
-        <span className="min-w-0 truncate text-[11px] text-subtle">
-          {open ? "收起" : hint}
-        </span>
-      </button>
-      {open ? (
-        <div
-          id={panelId}
-          role="region"
-          aria-labelledby={triggerId}
-          className="min-w-0 border-t border-border px-2.5 py-2"
-        >
-          {children}
-        </div>
-      ) : null}
-    </div>
-  );
+function InventorySection({ title, hint, children }: { title: string; hint: string; children: ReactNode }) {
+  return <Disclosure title={title} hint={hint}>{children}</Disclosure>;
 }
 
 const INVENTORY_ACTIVITY_DISABLED_COPY: Record<
@@ -235,7 +199,7 @@ function OpaqueItemState({ entry }: { entry: AuthoritativeInventoryEntry & { kin
   );
 }
 
-const ROW_BUTTON = "min-h-9 shrink-0 rounded-[10px] border border-border bg-surface px-2.5 text-xs text-fg transition-colors hover:bg-elevated disabled:cursor-not-allowed disabled:opacity-50";
+const ROW_BUTTON = `${buttonVariants({ variant: "secondary", size: "xs" })} shrink-0 px-2.5`;
 
 /** What the row offers at a glance, as Rules allows it: stowing what is worn,
  * using, and equipping into each slot the item fits. */
@@ -332,7 +296,7 @@ function ItemRow({
     : entry.condition === "broken" ? ["已损坏"] : [];
   const failure = actions.failure?.entryId === entry.entryId ? actions.failure.message : null;
   return (
-    <li data-inventory-entry={entry.entryId} className="min-w-0 rounded-[10px] border border-border bg-bg/40">
+    <li data-inventory-entry={entry.entryId} className="min-w-0 rounded-control border border-border bg-bg/40">
       <div className="flex min-h-11 min-w-0 items-center gap-2 px-2.5 py-1">
         <button
           id={triggerId}
@@ -419,7 +383,7 @@ function AuthoritativeGearSlots({
         {shown.map((slot) => {
           const entry = entriesBySlot.get(slot.id);
           return entry === undefined ? (
-            <li key={slot.id} data-inventory-slot={slot.id} className="flex min-h-11 items-center gap-2 rounded-[10px] border border-dashed border-border px-2.5 text-xs">
+            <li key={slot.id} data-inventory-slot={slot.id} className="flex min-h-11 items-center gap-2 rounded-control border border-dashed border-border px-2.5 text-xs">
               <span className="w-9 shrink-0 text-[11px] text-subtle">{slot.label}</span>
               <span className="text-subtle">空</span>
             </li>
@@ -488,7 +452,7 @@ export function InventoryPanel({
 }: InventoryPanelProps) {
   const actions = useGearActions(code, canEdit);
   if (inventory === undefined) return (
-    <div className="rounded-[12px] border border-border px-2.5 py-3 text-xs text-subtle">
+    <div className="rounded-control border border-border px-2.5 py-3 text-xs text-subtle">
       {UNAVAILABLE_ITEM_LABEL}
     </div>
   );

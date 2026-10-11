@@ -39,20 +39,17 @@ test("host can manage a hall table from one menu", async () => {
 });
 
 test("on-demand table journal omits redundant controls and wraps action copy", async () => {
-  const [playTable, inventoryPanel, catalog] = await Promise.all([
+  const [playTable, inventoryPanel, catalog, fold] = await Promise.all([
     source("app/_runtime/components/play-table.tsx"),
     source("app/_runtime/components/inventory-panel.tsx"),
     source("app/_runtime/lib/dnd/catalog.ts"),
+    // The table's one disclosure, shared by the character panel and inventory.
+    source("app/_runtime/components/ui/disclosure.tsx"),
   ]);
   const characterDetail = sliceBetween(
     playTable,
     "function CharacterDetail",
     "function ResourcePanel",
-  );
-  const fold = sliceBetween(
-    playTable,
-    "function Fold",
-    "function CharacterDetail",
   );
   const resourcePanel = sliceBetween(
     playTable,
@@ -69,7 +66,7 @@ test("on-demand table journal omits redundant controls and wraps action copy", a
     catalog,
     /吐息武器：动作，3 级 2d6（对应龙种伤害）。15 尺锥或 30 尺线，豁免 DC＝8＋熟练＋体质。短休后可用/,
   );
-  assert.match(playTable, /<Fold title="特性"/);
+  assert.match(playTable, /<Disclosure title="特性"/);
   assert.doesNotMatch(characterDetail, /所在 ·/);
   assert.doesNotMatch(playTable, /<p[^>]*>所在 ·/);
   assert.doesNotMatch(resourcePanel, /点火把/);

@@ -1,5 +1,11 @@
 import { clsx, type ClassValue } from "clsx";
-import { twMerge } from "tailwind-merge";
+import { extendTailwindMerge } from "tailwind-merge";
+
+// The radius tokens in globals.css, so a later radius class replaces an
+// earlier one instead of both applying.
+const twMerge = extendTailwindMerge({
+  extend: { theme: { radius: ["control", "panel", "shell"] } },
+});
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));

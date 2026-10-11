@@ -217,7 +217,7 @@ function VitalsBlock({ vitals }: { vitals: CharacterVitals }) {
         </ul>
       ) : null}
       {vitals.deathSaves ? (
-        <div className="flex flex-wrap items-center gap-3 rounded-[10px] border border-danger/40 bg-danger/10 px-2.5 py-1.5 text-[11px] text-fg" data-character-death-saves>
+        <div className="flex flex-wrap items-center gap-3 rounded-control border border-danger/40 bg-danger/10 px-2.5 py-1.5 text-[11px] text-fg" data-character-death-saves>
           <span>死亡豁免</span>
           <span className="inline-flex items-center gap-1">成功 <Pips current={vitals.deathSaves.successes} maximum={3} label="成功" /></span>
           <span className="inline-flex items-center gap-1">失败 <Pips current={vitals.deathSaves.failures} maximum={3} label="失败" /></span>

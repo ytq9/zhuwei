@@ -22,6 +22,11 @@
   --radius-md: 12px;
   --radius-lg: 18px;
   --radius-xl: 28px;
+  /* The table's three surface radii: controls and rows, panels and cards,
+     and the outer frames and dialogs. */
+  --radius-control: 10px;
+  --radius-panel: 16px;
+  --radius-shell: 24px;
 }
 
 @layer base {

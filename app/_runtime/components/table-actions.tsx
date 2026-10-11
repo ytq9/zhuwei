@@ -1,6 +1,7 @@
 "use client";
 
 import type { TacticalMapActions } from "@/components/tactical-map-actions";
+import { buttonVariants } from "@/components/ui/button";
 import {
   IDLE_TASK,
   NPC_TURN_LABEL,
@@ -23,8 +24,10 @@ import type { CombatAbilityTarget, TacticalProjection } from "@/lib/rules/tactic
 import type { CombatControlAbility, NpcCombatTurnStatus } from "@/lib/table/authoritative";
 import { cn } from "@/lib/utils";
 
-export const ACTION_BUTTON = "min-h-9 rounded-[10px] border border-border bg-bg/40 px-3 py-1.5 text-xs text-fg transition-colors hover:bg-elevated disabled:cursor-not-allowed disabled:opacity-50 aria-pressed:border-brass aria-pressed:bg-brass/15 aria-pressed:text-brass";
-export const PRIMARY_BUTTON = "min-h-9 rounded-[10px] border border-brass/60 bg-brass/15 px-3 py-1.5 text-xs text-brass transition-colors hover:bg-brass/25 disabled:cursor-not-allowed disabled:opacity-50";
+/** The dense buttons of the bars, the action list and the map, from the
+ * shared button levels: one confirm per pick, the rest secondary. */
+export const ACTION_BUTTON = buttonVariants({ variant: "secondary", size: "xs" });
+export const PRIMARY_BUTTON = buttonVariants({ variant: "primary", size: "xs" });
 
 /** SPEC 0012 §8.1 (ADR 0099): the basic actions a Ready can hold besides the
  * actor's own action and attack abilities. */
@@ -172,7 +175,7 @@ function ReadyResponseButtons({
           title={targetHint(ability)}
           disabled={disabled}
           onClick={() => onChoose(ability)}
-          className={cn(ACTION_BUTTON, "max-w-full break-words text-left")}
+          className={cn(ACTION_BUTTON, "max-w-full whitespace-normal break-words text-left")}
         >
           {ability.name}
           <span className="ml-1 text-[10px] text-subtle">{abilityDetail(ability)}</span>
@@ -266,7 +269,7 @@ export function ActionList({
                       aria-label={`${ability.name}，${abilityDetail(ability)}`}
                       disabled={disabled}
                       onClick={() => choose(ability)}
-                      className="flex min-h-11 w-full min-w-0 items-center justify-between gap-3 rounded-[10px] border border-border bg-bg/40 px-3 py-2 text-left transition-colors hover:bg-elevated disabled:cursor-not-allowed disabled:opacity-50 aria-pressed:border-brass aria-pressed:bg-brass/15"
+                      className="flex min-h-11 w-full min-w-0 items-center justify-between gap-3 rounded-control border border-border bg-bg/40 px-3 py-2 text-left transition-colors hover:bg-elevated disabled:cursor-not-allowed disabled:opacity-50 aria-pressed:border-brass aria-pressed:bg-brass/15"
                     >
                       <span className="min-w-0">
                         <span className="block text-sm text-fg">{ability.name}</span>
@@ -372,7 +375,7 @@ export function TurnBar({
           data-tactical-end-turn
           disabled={combatDisabled}
           onClick={() => void commands.finish(actions.endTurn())}
-          className={PRIMARY_BUTTON}
+          className={ACTION_BUTTON}
         >
           结束回合
         </button>
@@ -781,7 +784,7 @@ export function TaskBar({
 
       {busy ? <p role="status" className="text-brass">正在提交……</p> : null}
       {actions.error ? (
-        <div role="alert" data-tactical-action-error className="flex flex-wrap items-start gap-2 rounded-[12px] border border-danger/40 bg-danger/10 p-2">
+        <div role="alert" data-tactical-action-error className="flex flex-wrap items-start gap-2 rounded-control border border-danger/40 bg-danger/10 p-2">
           <p className="min-w-0 flex-1 text-fg">{actions.error}</p>
           <button type="button" onClick={actions.dismissError} className={ACTION_BUTTON}>知道了</button>
         </div>

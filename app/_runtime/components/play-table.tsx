@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/input";
+import { Disclosure } from "@/components/ui/disclosure";
 import { TacticalMap } from "@/components/tactical-map";
 import { useTacticalMapActions } from "@/components/tactical-map-actions";
 import { ActionList, TaskBar, TurnBar } from "@/components/table-actions";
@@ -1068,7 +1069,7 @@ export function PlayTable({
 
   return (
     <div className="relative flex min-h-0 min-w-0 w-full flex-1 gap-3 overflow-hidden">
-      <section className="flex min-h-0 min-w-0 w-full flex-1 flex-col overflow-hidden rounded-[28px] border border-border bg-surface">
+      <section className="flex min-h-0 min-w-0 w-full flex-1 flex-col overflow-hidden rounded-shell border border-border bg-surface">
         <div className="flex shrink-0 items-center justify-between border-b border-border px-5 py-3">
           <div>
             <p className="font-display text-lg">{snap.module.title}</p>
@@ -1396,9 +1397,10 @@ export function PlayTable({
             {playerChoicePending ? (
               <div className="mt-3 grid gap-2">
                 {playerChoicePending.choices.map((choice) => (
-                  <Button
+                  <Button variant="secondary"
                     key={choice.choiceId}
                     type="button"
+                    className="h-auto min-h-11 justify-start whitespace-normal py-2"
                     disabled={sending}
                     onClick={() => void answerTypedPending({
                       pendingInputId: playerChoicePending.pendingInputId,
@@ -1416,7 +1418,7 @@ export function PlayTable({
               </div>
             ) : null}
             {socialResolutionPending ? (
-              <div className="mt-3 space-y-3 rounded-xl border border-border bg-panel/40 p-3">
+              <div className="mt-3 space-y-3 rounded-control border border-border bg-bg/40 p-3">
                 <div className="space-y-1 text-xs text-subtle">
                   {typeof socialResolutionPending.options?.npcName === "string" ? (
                     <p>对象：{socialResolutionPending.options.npcName}</p>
@@ -1529,7 +1531,7 @@ export function PlayTable({
             }}
             onPointerUp={stopRec}
             className={cn(
-              "grid size-12 shrink-0 place-items-center rounded-[14px] border",
+              "grid size-12 shrink-0 place-items-center rounded-control border",
               rec === "rec"
                 ? "border-danger bg-danger text-fg"
                 : "border-border text-muted hover:text-fg",
@@ -1548,7 +1550,7 @@ export function PlayTable({
                 setCharacterTab("actions");
                 setCharacterOpen(true);
               }}
-              className="grid size-12 shrink-0 place-items-center rounded-[14px] border border-border text-muted hover:text-fg"
+              className="grid size-12 shrink-0 place-items-center rounded-control border border-border text-muted hover:text-fg"
             >
               <Swords className="size-5" aria-hidden="true" />
             </button>
@@ -1616,7 +1618,7 @@ export function PlayTable({
               {editableFailedAction ? (
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <p className="basis-full text-subtle">这次行动未生效，原文已保留。参考上面的原因修改内容，再重新提交。</p>
-                  <Button type="button" size="sm" variant="subtle" data-action-edit
+                  <Button type="button" size="sm" variant="secondary" data-action-edit
                     disabled={sending} onClick={(event) => event.currentTarget.form?.querySelector("textarea")?.focus()}>
                     修改内容
                   </Button>
@@ -1636,7 +1638,7 @@ export function PlayTable({
         <aside
           id="character-panel"
           aria-labelledby="character-panel-title"
-          className="flex w-[22rem] shrink-0 flex-col overflow-hidden rounded-[28px] border border-border bg-surface"
+          className="flex w-[22rem] shrink-0 flex-col overflow-hidden rounded-shell border border-border bg-surface"
         >
           <CharacterPanel vitals={characterVitals} pools={characterPools} tab={characterTab} onTabChange={setCharacterTab}>
             {characterContent}
@@ -1658,7 +1660,7 @@ export function PlayTable({
             aria-modal="true"
             aria-labelledby="character-panel-title"
             data-table-character-dialog
-            className="fixed inset-x-2 bottom-2 top-2 z-50 flex min-h-0 min-w-0 flex-col overflow-hidden rounded-[24px] border border-border-strong bg-surface shadow-2xl sm:inset-x-auto sm:right-3 sm:w-[min(26rem,calc(100vw-1.5rem))]"
+            className="fixed inset-x-2 bottom-2 top-2 z-50 flex min-h-0 min-w-0 flex-col overflow-hidden rounded-shell border border-border-strong bg-surface shadow-2xl sm:inset-x-auto sm:right-3 sm:w-[min(26rem,calc(100vw-1.5rem))]"
           >
             <CharacterPanel
               vitals={characterVitals}
@@ -1722,7 +1724,7 @@ function TableWorkIndicator({ kind }: { kind: TableWorkKind }) {
       aria-live="polite"
       aria-atomic="true"
       data-table-loading={kind}
-      className="max-w-[42rem] rounded-[16px] border border-brass/35 bg-brass/[0.07] px-4 py-3"
+      className="max-w-[42rem] rounded-panel border border-brass/35 bg-brass/[0.07] px-4 py-3"
     >
       <div className="flex items-start gap-3">
         <span
@@ -1785,7 +1787,7 @@ function TableJournal({
         aria-modal="true"
         aria-labelledby="table-journal-title"
         data-table-journal
-        className="fixed inset-x-2 bottom-2 top-2 z-50 flex min-h-0 min-w-0 flex-col overflow-hidden rounded-[24px] border border-border-strong bg-surface shadow-2xl sm:inset-x-auto sm:right-3 sm:w-[min(32rem,calc(100vw-1.5rem))]"
+        className="fixed inset-x-2 bottom-2 top-2 z-50 flex min-h-0 min-w-0 flex-col overflow-hidden rounded-shell border border-border-strong bg-surface shadow-2xl sm:inset-x-auto sm:right-3 sm:w-[min(32rem,calc(100vw-1.5rem))]"
       >
         <header className="flex shrink-0 items-start justify-between gap-4 border-b border-border px-4 py-4 sm:px-5">
           <div>
@@ -1882,7 +1884,7 @@ function CombatChoicePanel({
     return (
       <div className="mt-3 flex flex-wrap gap-2">
         {pending.candidateEntityIds.map((entityId) => (
-          <Button
+          <Button variant="secondary"
             key={entityId}
             type="button"
             disabled={sending}
@@ -1910,7 +1912,7 @@ function CombatChoicePanel({
     return (
       <div className="mt-3 flex flex-wrap gap-2">
         {pending.answerOptions.map((option, index) => (
-          <Button
+          <Button variant="secondary"
             key={`${index}:${option.label}`}
             type="button"
             disabled={sending}
@@ -1961,12 +1963,12 @@ function CombatChoicePanel({
     });
   };
   return (
-    <div className="mt-3 rounded-[16px] border border-border bg-bg/40 p-3">
+    <div className="mt-3 rounded-panel border border-border bg-bg/40 p-3">
       <ol className="grid gap-2">
         {initiativeOrder.map((entityId, index) => (
           <li
             key={entityId}
-            className="flex items-center justify-between gap-3 rounded-[10px] border border-border px-3 py-2 text-sm"
+            className="flex items-center justify-between gap-3 rounded-control border border-border px-3 py-2 text-sm"
           >
             <span>{index + 1}. {entityLabel(entityId)}</span>
             <span className="flex gap-2">
@@ -2028,7 +2030,7 @@ function AdvancementChoicePanel({
   const spent = Object.values(increases).reduce((sum, amount) => sum + (amount ?? 0), 0);
   const ready = spent === options.abilityScoreBudget;
   return (
-    <div className="mt-3 rounded-[16px] border border-border bg-bg/40 p-3">
+    <div className="mt-3 rounded-panel border border-border bg-bg/40 p-3">
       <p className="text-xs text-muted">
         采用 2014 固定生命值：最大生命值 +{options.fixedHitPointGain}。
         {options.grantedFeatureIds.length > 0
@@ -2043,7 +2045,7 @@ function AdvancementChoicePanel({
             const capped = current !== undefined
               && current + added >= options.maximumAbilityScore;
             return (
-              <div key={ability} className="flex items-center justify-between rounded-[12px] border border-border px-3 py-2 text-sm">
+              <div key={ability} className="flex items-center justify-between rounded-control border border-border px-3 py-2 text-sm">
                 <span>{ABILITY_LABEL[ability]} {current ?? "?"}{added ? ` +${added}` : ""}</span>
                 <span className="flex gap-2">
                   <button
@@ -2125,12 +2127,12 @@ function ArcaneRecoveryPicker({
           return (
             <div
               key={level}
-              className="flex items-center gap-2 rounded-[10px] border border-border/70 px-2 py-1.5"
+              className="flex items-center gap-2 rounded-control border border-border/70 px-2 py-1.5"
             >
               <span className="min-w-16 text-xs">{level} 环位</span>
               <Button
                 size="sm"
-                variant="subtle"
+                variant="secondary"
                 disabled={disabled || selected === 0}
                 onClick={() => onChange(changeArcaneRecoverySelection(
                   character,
@@ -2142,7 +2144,7 @@ function ArcaneRecoveryPicker({
               <span className="min-w-5 text-center tabular-nums">{selected}</span>
               <Button
                 size="sm"
-                variant="subtle"
+                variant="secondary"
                 disabled={disabled || !canAdd}
                 onClick={() => onChange(changeArcaneRecoverySelection(
                   character,
@@ -2189,7 +2191,7 @@ function GroupRestConsentPanel({
   const [hitDice, setHitDice] = useState(0);
   const [arcaneRecoverySlotLevels, setArcaneRecoverySlotLevels] = useState<number[]>([]);
   return (
-    <div className="mt-3 rounded-[16px] border border-brass/40 bg-brass/10 p-3">
+    <div className="mt-3 rounded-panel border border-brass/40 bg-brass/10 p-3">
       <p className="text-xs text-muted">
         发起者只决定自己的休整。你是否加入由你决定；拒绝或暂不回答都不会替你推进虚构时间。
       </p>
@@ -2199,14 +2201,14 @@ function GroupRestConsentPanel({
             <span>花费生命骰</span>
             <Button
               size="sm"
-              variant="subtle"
+              variant="secondary"
               disabled={sending || hitDice === 0}
               onClick={() => setHitDice((value) => Math.max(0, value - 1))}
             >−</Button>
             <span className="min-w-6 text-center tabular-nums">{hitDice}</span>
             <Button
               size="sm"
-              variant="subtle"
+              variant="secondary"
               disabled={sending || hitDice >= availableHitDice}
               onClick={() => setHitDice((value) => Math.min(availableHitDice, value + 1))}
             >＋</Button>
@@ -2291,14 +2293,14 @@ function CombatStrip({
 
   if (!here) {
     return (
-      <div className="rounded-[16px] border border-border bg-elevated px-4 py-3 text-sm text-muted">
+      <div className="rounded-panel border border-border bg-elevated px-4 py-3 text-sm text-muted">
         别处有人打起来了。你这边听不见刀声的细节。要介入，得先过去。
       </div>
     );
   }
 
   return (
-    <div className="rounded-[16px] border border-border bg-elevated px-4 py-3">
+    <div className="rounded-panel border border-border bg-elevated px-4 py-3">
       <p className="text-[11px] tracking-wide text-brass">
         战斗 · 第 {combat.round} 轮 · {combat.place}
         {combat.waiting === "init" ? " · 先攻" : ""}
@@ -2339,7 +2341,7 @@ function CombatStrip({
       {!rulesV2 && combat.reacts
         ?.filter((r) => r.userId === meId)
         .map((r) => (
-          <div key={r.id} className="mt-3 rounded-[12px] border border-brass/40 px-3 py-2">
+          <div key={r.id} className="mt-3 rounded-control border border-brass/40 px-3 py-2">
             <p className="text-xs text-fg">{r.text}</p>
             <div className="mt-2 flex gap-2">
               <Button
@@ -2380,7 +2382,7 @@ function CombatStrip({
         )}
         {rulesV2 && myTurn && inFight && meSheet?.hp.current === 0 && (
           <Button
-            variant="brass"
+            variant="secondary"
             disabled={busy === "death-save"}
             onClick={() =>
               act(
@@ -2464,7 +2466,7 @@ function CombatStrip({
             {foes.map((o) => (
               <Button
                 key={o.id}
-                variant="brass"
+                variant="secondary"
                 size="sm"
                 disabled={Boolean(busy)}
                 onClick={() =>
@@ -2541,7 +2543,7 @@ function SquadQueueBar({
         {queue.map((q) => (
           <li
             key={q.id}
-            className="rounded-[12px] border border-border bg-elevated px-3 py-2"
+            className="rounded-control border border-border bg-elevated px-3 py-2"
           >
             <p className="text-xs text-subtle">{q.name}</p>
             <p className="text-sm text-fg">{q.body}</p>
@@ -2600,7 +2602,7 @@ function MessageBubble({
       </p>
       <div
         className={cn(
-          "whitespace-pre-wrap rounded-[16px] px-4 py-3 text-sm leading-relaxed",
+          "whitespace-pre-wrap rounded-panel px-4 py-3 text-sm leading-relaxed",
           kp
             ? "border border-border bg-elevated font-display text-[15px] leading-7"
             : mine
@@ -2616,7 +2618,7 @@ function MessageBubble({
           {m.clues.map((c) => (
             <li
               key={c.id}
-              className="flex gap-2 rounded-[12px] border border-brass/35 bg-elevated px-3 py-2"
+              className="flex gap-2 rounded-control border border-brass/35 bg-elevated px-3 py-2"
             >
               <MapPinned className="mt-0.5 size-3.5 shrink-0 text-brass" />
               <div className="min-w-0">
@@ -2783,7 +2785,7 @@ function RollButton({
       : party.find((p) => p.userId === roll.userId)?.sheet.resources?.conc?.id ===
         "guidance");
   return (
-    <div className="rounded-[16px] border border-border bg-elevated px-3 py-3">
+    <div className="rounded-panel border border-border bg-elevated px-3 py-3">
       <p className="text-xs text-muted">{roll.reason}</p>
       {roll.authoritative ? (
         <p className="mt-1 text-xs text-subtle">{roll.dice}{roll.advantage ? " · 优势" : roll.disadvantage ? " · 劣势" : ""}</p>
@@ -2902,7 +2904,7 @@ function PartyBoard({
   return (
     <div className="grid min-w-0 gap-2">
       {inviteToMe ? (
-        <div className="rounded-[12px] border border-brass/40 bg-brass/10 px-3 py-2">
+        <div className="rounded-control border border-brass/40 bg-brass/10 px-3 py-2">
           <p className="text-xs text-fg">{inviteToMe.fromName} 邀请你组队。队长可组织整队移动；你仍可直接个人行动，单独移动或休息时会提示并离队。</p>
           <div className="mt-2 flex gap-2">
             <Button
@@ -2937,7 +2939,7 @@ function PartyBoard({
         );
         const theirGroup = groups.find((g) => g.ids.includes(p.userId));
         return (
-          <li key={p.userId} className="min-w-0 overflow-hidden rounded-[16px] border border-border">
+          <li key={p.userId} className="min-w-0 overflow-hidden rounded-panel border border-border">
             <div className="flex w-full items-start justify-between gap-2 px-3 py-3">
               <div className="min-w-0 flex-1 text-left">
                 <span className="font-medium">{sheet.name || "未名"}</span>
@@ -3002,7 +3004,7 @@ function PartyBoard({
                       取消邀请
                     </Button>
                   ) : (
-                    <Button
+                    <Button variant="secondary"
                       size="sm"
                       disabled={Boolean(busy) || squadInvite?.from === meId}
                       onClick={() =>
@@ -3019,7 +3021,7 @@ function PartyBoard({
                 myGroup &&
                 myGroup.captain === meId &&
                 myGroup.ids.includes(p.userId) ? (
-                  <Button
+                  <Button variant="secondary"
                     size="sm"
                     disabled={Boolean(busy)}
                     onClick={() =>
@@ -3044,7 +3046,7 @@ function PartyBoard({
                 {isHost && p.userId !== meId ? (
                   kickId === p.userId ? (
                     <div className="flex flex-col items-end gap-1">
-                      <Button
+                      <Button variant="danger"
                         size="sm"
                         disabled={Boolean(busy)}
                         onClick={() =>
@@ -3085,33 +3087,6 @@ function PartyBoard({
         );
       })}
       </ul>
-    </div>
-  );
-}
-
-function Fold({
-  title,
-  hint,
-  children,
-}: {
-  title: string;
-  hint?: string;
-  children: ReactNode;
-}) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="min-w-0 max-w-full overflow-hidden rounded-[12px] border border-border">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full min-w-0 items-center justify-between gap-2 px-2.5 py-2 text-left"
-      >
-        <span className="text-xs font-medium">{title}</span>
-        <span className="min-w-0 truncate text-[11px] text-subtle">
-          {open ? "收起" : hint || "展开"}
-        </span>
-      </button>
-      {open && <div className="border-t border-border px-2.5 py-2 min-w-0">{children}</div>}
     </div>
   );
 }
@@ -3173,7 +3148,7 @@ function CharacterDetail({
           {ABILITIES.map((a) => (
             <div
               key={a}
-              className="rounded-[12px] border border-border p-2 text-center"
+              className="rounded-control border border-border p-2 text-center"
             >
               <p className="text-[10px] text-subtle">{ABILITY_LABEL[a]}</p>
               <p className="font-display text-lg tabular-nums">{live.scores[a]}</p>
@@ -3183,7 +3158,7 @@ function CharacterDetail({
             </div>
           ))}
         </div>
-        <Fold
+        <Disclosure
           title="技能"
           hint={`${live.skills.length} 项熟练`}
         >
@@ -3200,10 +3175,10 @@ function CharacterDetail({
               </li>
             ))}
           </ul>
-        </Fold>
+        </Disclosure>
         <ProficiencyFold sheet={live} />
         {live.features.length > 0 && (
-          <Fold title="特性" hint={`${live.features.length} 条`}>
+          <Disclosure title="特性" hint={`${live.features.length} 条`}>
             <ul className="grid min-w-0 gap-2">
               {live.features.map((f) => (
                 <FeatureLine
@@ -3213,10 +3188,10 @@ function CharacterDetail({
                 />
               ))}
             </ul>
-          </Fold>
+          </Disclosure>
         )}
         {spellIds.length > 0 && (
-          <Fold title="法术" hint={`${spellIds.length} 个`}>
+          <Disclosure title="法术" hint={`${spellIds.length} 个`}>
             <ul className="grid min-w-0 gap-2">
               {spellIds.map((id) => {
                 const spell = spellById(id);
@@ -3237,10 +3212,10 @@ function CharacterDetail({
                 );
               })}
             </ul>
-          </Fold>
+          </Disclosure>
         )}
         {(live.appearance || live.trait) && (
-          <Fold title="角色" hint={live.appearance ? "外貌" : "展开"}>
+          <Disclosure title="角色" hint={live.appearance ? "外貌" : "展开"}>
             {live.appearance && (
               <p className="text-xs leading-relaxed text-muted">{live.appearance}</p>
             )}
@@ -3256,7 +3231,7 @@ function CharacterDetail({
             {live.flaw && (
               <p className="mt-1 text-xs text-muted">缺陷：{live.flaw}</p>
             )}
-          </Fold>
+          </Disclosure>
         )}
       </div>
     );
@@ -3291,7 +3266,7 @@ function ProficiencyFold({ sheet }: { sheet: CharacterSheet }) {
     { title: "护甲", entries: armor },
   ];
   return (
-    <Fold title="熟练" hint={`工具 ${tools.length} · 武器 ${weapons.length} · 护甲 ${armor.length}`}>
+    <Disclosure title="熟练" hint={`工具 ${tools.length} · 武器 ${weapons.length} · 护甲 ${armor.length}`}>
       <dl className="grid gap-1 text-xs">
         {rows.map((row) => (
           <div key={row.title} className="flex min-w-0 gap-2">
@@ -3310,7 +3285,7 @@ function ProficiencyFold({ sheet }: { sheet: CharacterSheet }) {
           </div>
         ))}
       </dl>
-    </Fold>
+    </Disclosure>
   );
 }
 
@@ -3370,7 +3345,7 @@ function ResourcePanel({
 
   if (rest === "short") {
     return (
-      <div className="rounded-[12px] border border-brass/40 px-3 py-3">
+      <div className="rounded-control border border-brass/40 px-3 py-3">
         <p className="font-display text-sm">短休 · 约一小时</p>
         <p className="mt-1 text-[11px] leading-relaxed text-muted">
           坐下包扎、换绷带。引导神力、动作如潮、回气、战术骰会回来。法术位不回来。
@@ -3386,11 +3361,11 @@ function ResourcePanel({
             。
           </p>
           <div className="mt-2 flex items-center gap-2">
-            <Button size="sm" variant="subtle" disabled={dice <= 0} onClick={() => setDice((n) => Math.max(0, n - 1))}>
+            <Button size="sm" variant="secondary" disabled={dice <= 0} onClick={() => setDice((n) => Math.max(0, n - 1))}>
               −
             </Button>
             <span className="min-w-8 text-center font-display text-lg tabular-nums text-fg">{dice}</span>
-            <Button size="sm" variant="subtle" disabled={dice >= hdLeft} onClick={() => setDice((n) => Math.min(hdLeft, n + 1))}>
+            <Button size="sm" variant="secondary" disabled={dice >= hdLeft} onClick={() => setDice((n) => Math.min(hdLeft, n + 1))}>
               ＋
             </Button>
             <span className="text-xs text-subtle">颗</span>
@@ -3430,7 +3405,7 @@ function ResourcePanel({
           </Button>
           {needVote ? (
             <Button
-              variant="subtle"
+              variant="secondary"
               disabled={Boolean(busy) || inCombat}
               onClick={() =>
                 go("solo-s", () =>
@@ -3449,7 +3424,7 @@ function ResourcePanel({
               {busy === "solo-s" ? "结算……" : "单独短休"}
             </Button>
           ) : null}
-          <Button disabled={Boolean(busy)} onClick={() => setRest(null)}>
+          <Button variant="ghost" disabled={Boolean(busy)} onClick={() => setRest(null)}>
             返回
           </Button>
         </div>
@@ -3459,7 +3434,7 @@ function ResourcePanel({
 
   if (rest === "long") {
     return (
-      <div className="rounded-[12px] border border-brass/40 px-3 py-3">
+      <div className="rounded-control border border-brass/40 px-3 py-3">
         <p className="font-display text-sm">长休 · 过夜</p>
         <p className="mt-1 text-[11px] leading-relaxed text-muted">
           睡够大约八小时。生命回满，一环/二环、狂暴、战争祭司、引导、如潮都回来。生命骰补回一半。
@@ -3481,7 +3456,7 @@ function ResourcePanel({
           </Button>
           {needVote ? (
             <Button
-              variant="subtle"
+              variant="secondary"
               disabled={Boolean(busy) || inCombat}
               onClick={() =>
                 go("solo-l", () =>
@@ -3492,7 +3467,7 @@ function ResourcePanel({
               {busy === "solo-l" ? "结算……" : "单独长休"}
             </Button>
           ) : null}
-          <Button disabled={Boolean(busy)} onClick={() => setRest(null)}>
+          <Button variant="ghost" disabled={Boolean(busy)} onClick={() => setRest(null)}>
             返回
           </Button>
         </div>
@@ -3501,9 +3476,9 @@ function ResourcePanel({
   }
 
   return (
-    <div className="rounded-[12px] border border-border px-3 py-3">
+    <div className="rounded-control border border-border px-3 py-3">
       {canEdit ? authoritativeActivities?.filter(activity => activity.status === "active" && activity.attention).map(activity => (
-        <div key={activity.activityId} className="mb-3 rounded-[10px] border border-brass/40 bg-brass/10 px-3 py-2" role="status">
+        <div key={activity.activityId} className="mb-3 rounded-control border border-brass/40 bg-brass/10 px-3 py-2" role="status">
           <p className="text-xs text-fg">活动途中有新消息，时间推进已暂停。</p>
           {activity.attention!.messages.map((message, index) => <p key={index} className="mt-1 text-xs">{message}</p>)}
           <p className="mt-1 text-xs text-muted">已经过的时间保留，活动仍在进行。{inCombat ? "当前由战斗回合接管。" : "请选择继续，或结束当前活动后采取其他行动。"}</p>
@@ -3514,7 +3489,7 @@ function ResourcePanel({
         </div>
       )) : null}
       {canEdit && (activeRule?.rest?.status === "resting" || authoritativeRest !== undefined) ? (
-        <div className="mb-3 rounded-[10px] border border-brass/40 bg-brass/10 px-3 py-2">
+        <div className="mb-3 rounded-control border border-brass/40 bg-brass/10 px-3 py-2">
           <p className="text-xs text-fg">
             {activeRule?.rest?.status === "resting"
               ? `你正在${activeRule.rest.kind === "long" ? "长休" : "短休"}。还需约 ${Math.ceil(Math.max(0, activeRule.rest.requiredSeconds - (activeRule.timeline.fictionSeconds - activeRule.rest.startedAt)) / 60)} 分钟虚构时间；拍数不会替代这段时长。`
@@ -3532,7 +3507,7 @@ function ResourcePanel({
         </div>
       ) : null}
       {canEdit && restHold ? (
-        <div className="mb-3 rounded-[10px] border border-brass/40 bg-brass/10 px-3 py-2">
+        <div className="mb-3 rounded-control border border-brass/40 bg-brass/10 px-3 py-2">
           <p className="text-xs text-fg">
             {restHold.fromName}那边正在{restHold.kind === "long" ? "长休" : "短休"}（共 {restHold.needBeats} 拍）。
             {meId && restHold.resters.includes(meId)
@@ -3551,7 +3526,7 @@ function ResourcePanel({
         </div>
       ) : null}
       {canEdit && restVote ? (
-        <div className="mb-3 rounded-[10px] border border-brass/40 bg-brass/10 px-3 py-2">
+        <div className="mb-3 rounded-control border border-brass/40 bg-brass/10 px-3 py-2">
           <p className="text-xs text-fg">
             {restVote.fromName} 提议{restVote.kind === "long" ? "长休" : "短休"}。还差 {restVote.waiting.length} 人同意。
           </p>
@@ -3597,7 +3572,7 @@ function ResourcePanel({
         <div className="mt-2 flex flex-wrap gap-1.5">
           <Button
             size="sm"
-            variant="subtle"
+            variant="secondary"
             disabled={Boolean(busy)}
             onClick={() => {
               setArcaneRecoverySlotLevels([]);
@@ -3606,7 +3581,7 @@ function ResourcePanel({
           >
             短休
           </Button>
-          <Button size="sm" variant="subtle" disabled={Boolean(busy)} onClick={() => setRest("long")}>
+          <Button size="sm" variant="secondary" disabled={Boolean(busy)} onClick={() => setRest("long")}>
             长休
           </Button>
         </div>
@@ -3642,7 +3617,7 @@ function FeatureLine({ text, stock }: { text: string; stock?: StockItem }) {
   }, [open]);
 
   return (
-    <div className="min-w-0 max-w-full rounded-[10px] border border-border bg-bg/40">
+    <div className="min-w-0 max-w-full rounded-control border border-border bg-bg/40">
       <button
         type="button"
         aria-expanded={open}
@@ -3677,7 +3652,7 @@ function FeatureLine({ text, stock }: { text: string; stock?: StockItem }) {
               role="dialog"
               aria-modal="true"
               aria-label={`${title}详情`}
-              className="max-h-[calc(100dvh-2rem)] overflow-y-auto w-full max-w-lg rounded-[20px] border border-border bg-surface shadow-2xl"
+              className="max-h-[calc(100dvh-2rem)] overflow-y-auto w-full max-w-lg rounded-shell border border-border bg-surface shadow-2xl"
             >
               <header className="sticky top-0 flex items-center justify-between gap-3 border-b border-border bg-surface px-4 py-3">
                 <div className="min-w-0">
@@ -3750,7 +3725,7 @@ function PresenceBoard({ people }: { people: PresentCharacter[] }) {
         <li
           key={person.id}
           data-present-character={person.id}
-          className="rounded-[16px] border border-border bg-bg/40 p-3"
+          className="rounded-panel border border-border bg-bg/40 p-3"
         >
           <div className="flex flex-wrap items-center gap-2">
             <p className="font-medium">{person.name}</p>
@@ -3797,7 +3772,7 @@ function ClueBoard({ clues }: { clues: TableSnap["state"]["clues"] }) {
       <p className="mb-3 text-[11px] text-subtle">记录你所控制角色已知的信息。同一对象的观察放在一起，他人的说法与推断保留各自来源。</p>
       {!discoveries.length ? <p className="text-sm text-muted">暂时没有整理出的线索。</p> : null}
       <ul className="grid gap-3">
-        {discoveries.map(card => <li key={card.id} className="rounded-[16px] border border-border bg-bg/40 p-3">
+        {discoveries.map(card => <li key={card.id} className="rounded-panel border border-border bg-bg/40 p-3">
           <p className="font-medium">{card.name}</p>
           {card.notes && card.notes.length > 1 ? <>
             <p className="mt-1 line-clamp-3 text-sm leading-relaxed text-muted">{card.text}</p>

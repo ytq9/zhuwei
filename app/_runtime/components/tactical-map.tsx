@@ -884,7 +884,7 @@ export function TacticalMap({
           aria-controls={desktopContentId}
           disabled={!projection}
           onClick={() => setDesktopExpanded((current) => !current)}
-          className="hidden min-w-0 w-full items-center justify-between gap-4 rounded-[12px] border border-border bg-surface px-3 py-2 text-left transition-colors hover:bg-elevated disabled:cursor-not-allowed disabled:opacity-70 lg:flex"
+          className="hidden min-w-0 w-full items-center justify-between gap-4 rounded-control border border-border bg-surface px-3 py-2 text-left transition-colors hover:bg-elevated disabled:cursor-not-allowed disabled:opacity-70 lg:flex"
         >
           <span className="min-w-0">
             <span className="block truncate font-display text-sm">
@@ -909,7 +909,7 @@ export function TacticalMap({
             mobileReturnFocusRef.current = "mobile";
             setMobileOpen(true);
           }}
-          className="flex min-w-0 w-full items-center justify-between gap-3 rounded-[12px] border border-border bg-surface px-3 py-2 text-left transition-colors hover:bg-elevated disabled:cursor-not-allowed disabled:opacity-70 lg:hidden"
+          className="flex min-w-0 w-full items-center justify-between gap-3 rounded-control border border-border bg-surface px-3 py-2 text-left transition-colors hover:bg-elevated disabled:cursor-not-allowed disabled:opacity-70 lg:hidden"
         >
           <span className="min-w-0">
             <span className="block truncate font-display text-sm">
@@ -966,7 +966,7 @@ export function TacticalMap({
               type="button"
               aria-label="关闭战术地图"
               onClick={() => setMobileOpen(false)}
-              className="shrink-0 rounded-[10px] border border-border px-3 py-2 text-sm text-fg hover:bg-elevated"
+              className="shrink-0 rounded-control border border-border px-3 py-2 text-sm text-fg hover:bg-elevated"
             >
               关闭
             </button>
@@ -1048,7 +1048,7 @@ function TacticalMapExpanded({
           <div
             role="tablist"
             aria-label="战术地图显示方式"
-            className="inline-flex rounded-[10px] border border-border bg-surface p-1"
+            className="inline-flex rounded-control border border-border bg-surface p-1"
           >
             {(["map", "text"] as const).map((candidate) => (
               <button
@@ -1059,7 +1059,7 @@ function TacticalMapExpanded({
                 aria-selected={view === candidate}
                 onClick={() => onViewChange(candidate)}
                 className={cn(
-                  "rounded-[7px] px-3 py-1.5 text-xs transition-colors",
+                  "rounded-sm px-3 py-1.5 text-xs transition-colors",
                   view === candidate
                     ? "bg-elevated text-fg"
                     : "text-subtle hover:text-fg",
@@ -1088,7 +1088,7 @@ function TacticalMapExpanded({
             />
             <aside
               data-tactical-detail="v1"
-              className="flex min-w-0 flex-col gap-3 rounded-[16px] border border-border bg-surface p-3"
+              className="flex min-w-0 flex-col gap-3 rounded-panel border border-border bg-surface p-3"
             >
               <SelectedTacticalDetail
                 projection={projection}
@@ -1101,7 +1101,7 @@ function TacticalMapExpanded({
                   {[projection.self, ...projection.visibleEntities].map(entity => (
                     <button key={entity.id} type="button" onClick={() => onSelect(entitySelectionKey(entity.id))}
                       aria-pressed={effectiveSelectedKey === entitySelectionKey(entity.id)}
-                      className="rounded-lg border border-border px-2 py-1.5 text-xs text-fg hover:bg-elevated aria-pressed:border-brass">
+                      className="rounded-control border border-border px-2 py-1.5 text-xs text-fg hover:bg-elevated aria-pressed:border-brass">
                       {entity.relation === "self" ? "我" : entity.name.split(" / ")[0]}
                     </button>
                   ))}
@@ -1164,7 +1164,7 @@ function TacticalStitchControls({ stitching }: { stitching: TacticalStitching })
     .map((place) => place.sceneId));
   return (
     <div data-tactical-stitch-controls className="flex min-w-0 flex-col gap-2 lg:col-span-2">
-      <details data-tactical-stitch className="min-w-0 rounded-[12px] border border-border bg-surface px-3 py-2 text-xs">
+      <details data-tactical-stitch className="min-w-0 rounded-control border border-border bg-surface px-3 py-2 text-xs">
         <summary className="cursor-pointer text-muted">拼合地图 · 已拼 {view.chosenIds.size} 处</summary>
         <p className="mt-2 text-subtle">选你到过的地点，按总图拼在一起看；拼合只改变显示。</p>
         {placeLevels.map((level) => (
@@ -1354,7 +1354,7 @@ function TacticalMapCanvas({
       data-tactical-canvas="v1"
       data-tactical-picking={!onCurrentLevel ? "none" : gestures.pointPick ? task.kind : gestures.aimPick ? "aim" : gestures.groundPick ? "destination" : "none"}
       data-tactical-stitched-view={stitch === null ? undefined : stitchedView ? String(stitch.level) : "none"}
-      className="aspect-[4/3] min-w-0 overflow-hidden rounded-[16px] border border-border bg-[#151411] p-3 lg:h-[clamp(16rem,34dvh,24rem)] lg:aspect-auto"
+      className="aspect-[4/3] min-w-0 overflow-hidden rounded-panel border border-border bg-[#151411] p-3 lg:h-[clamp(16rem,34dvh,24rem)] lg:aspect-auto"
     >
       <svg
         role="group"
@@ -1712,7 +1712,7 @@ function SelectedTacticalDetail({
 
 function TacticalLegend() {
   return (
-    <details className="rounded-[12px] border border-border px-3 py-2 text-xs">
+    <details className="rounded-control border border-border px-3 py-2 text-xs">
       <summary className="text-muted">查看图例</summary>
       <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-muted">
         <p><span className="mr-1 text-brass">■</span>自己</p>
@@ -1740,7 +1740,7 @@ function TacticalTextReadout({ projection }: { projection: TacticalProjection })
       role="tabpanel"
       aria-label={`${projection.scene.name}文字战术读数`}
       tabIndex={0}
-      className="min-w-0 max-h-[min(50dvh,22rem)] overflow-y-auto break-words rounded-[16px] border border-border bg-surface px-4 py-3 text-sm outline-none [overflow-wrap:anywhere] focus-visible:ring-2 focus-visible:ring-brass lg:col-span-2"
+      className="min-w-0 max-h-[min(50dvh,22rem)] overflow-y-auto break-words rounded-panel border border-border bg-surface px-4 py-3 text-sm outline-none [overflow-wrap:anywhere] focus-visible:ring-2 focus-visible:ring-brass lg:col-span-2"
     >
       <p className="font-display text-base">{projection.scene.name} · 文字战术读数</p>
       <p className="mt-2 text-muted">{projection.textualReadout.summary}</p>
@@ -1865,7 +1865,7 @@ function TacticalPlacePanel({
       aria-label="地图上的移动与地形"
       data-tactical-actions={inEncounter ? "combat" : "exploration"}
       data-tactical-my-turn={String(myTurn)}
-      className="min-w-0 space-y-3 break-words rounded-[16px] border border-border bg-surface p-3 text-xs [overflow-wrap:anywhere] lg:col-span-2"
+      className="min-w-0 space-y-3 break-words rounded-panel border border-border bg-surface p-3 text-xs [overflow-wrap:anywhere] lg:col-span-2"
     >
       {inEncounter ? (
         terrainFeatures.length === 0 ? (
@@ -1899,7 +1899,7 @@ function TacticalPlacePanel({
                   onSelect(featureSelectionKey(door.id));
                   setTask({ kind: "goTo", featureId: door.id, sentence: goToSentence(door), passable: door.leadsTo.passable });
                 }}
-                className={cn(ACTION_BUTTON, "flex max-w-full flex-col items-start gap-1 break-words px-3 py-2.5 text-left")}
+                className={cn(ACTION_BUTTON, "flex max-w-full flex-col items-start gap-1 whitespace-normal break-words px-3 py-2.5 text-left")}
               >
                 <span className="text-fg">{door.label}</span>
                 <span className="text-xs text-muted">
@@ -1920,7 +1920,7 @@ function TacticalPlacePanel({
               onChange={(event) => {
                 if (event.target.value) onSelect(event.target.value);
               }}
-              className="min-h-9 min-w-0 max-w-[14rem] rounded-[10px] border border-border bg-bg px-2 text-xs text-fg"
+              className="min-h-9 min-w-0 max-w-[14rem] rounded-control border border-border bg-bg px-2 text-xs text-fg"
             >
               <option value="" disabled>在地图上点选，或从这里选</option>
               {terrainFeatures.map((feature) => (
@@ -1943,7 +1943,7 @@ function TacticalPlacePanel({
                     void actions.useAbility(jump.abilityRef, { kind: "point", position: structuredClone(jump.landing) })
                       .then((done) => { if (done) setTask(IDLE_TASK); });
                   }}
-                  className={cn(ACTION_BUTTON, "max-w-full break-words text-left")}
+                  className={cn(ACTION_BUTTON, "max-w-full whitespace-normal break-words text-left")}
                 >
                   {jumpLabel(jump, terrainFeature)}
                 </button>
