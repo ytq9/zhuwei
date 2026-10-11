@@ -1677,8 +1677,11 @@ function creaturePushedClaim(event: EventEnvelope, payload: JsonRecord): ClaimMa
   const characterId = stringField(payload, "characterId"), sceneId = stringField(payload, "sceneId");
   const byCharacterId = stringField(payload, "byCharacterId");
   if (characterId === undefined || sceneId === undefined || byCharacterId === undefined) throw new RulesValidationError("CREATURE_PUSHED_CLAIM_INVALID");
+  // How far it moved, in 5-foot steps (ADR 0149: a spell may push farther).
+  const from = isRecord(payload.from) ? payload.from : {}, to = isRecord(payload.to) ? payload.to : {};
+  const feet = Math.max(5, Math.round(Math.hypot(Number(to.x) - Number(from.x), Number(to.y) - Number(from.y)) / 60) * 5);
   return { ...eventClaimBaseWithSeparatedBasis(event, "pushed-away", { requiredViewerRefs: [sceneId, characterId] }), kind: "mechanicalOutcome",
-    actorRef: byCharacterId, targetRefs: [characterId], outcomeCode: "pushedAway", summary: "目标被推开了 5 尺。" };
+    actorRef: byCharacterId, targetRefs: [characterId], outcomeCode: "pushedAway", summary: `目标被推开了 ${feet} 尺。` };
 }
 
 /** SPEC 0014 §4 (ADR 0092): who sees the scene sees the actor jump across

@@ -746,7 +746,8 @@ export function TaskBar({
         </div>
       ) : null}
 
-      {task.kind === "intent" && task.ability.target.kind === "area" && task.ability.target.origin === "point" ? (
+      {task.kind === "intent" && task.ability.target.kind === "area"
+        && (task.ability.target.origin === "point" || task.ability.target.needsDirection) ? (
         <div data-tactical-aim-picker className="space-y-2">
           <p className="text-muted">{task.ability.name}：可以在地图上或下面选一个人，说明朝谁施放。</p>
           <div className="flex flex-wrap gap-1.5">

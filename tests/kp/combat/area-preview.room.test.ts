@@ -34,9 +34,16 @@ const FIGHTER: DraftSheet = {
 const RANGER: DraftSheet = { ...FIGHTER, name: "林间斥候", classId: "ranger", subclassId: "hunter", backgroundId: "outlander",
   scores: { str: 10, dex: 15, con: 13, int: 10, wis: 14, cha: 8 }, prepared: ["fog", "cure", "hunters-mark"] };
 
-async function seedRoom() {
-  const host = "area-preview-host", guest = "area-preview-guest", roomId = "area-preview:room", code = "AREA01";
-  const people: Array<[string, string, DraftSheet, boolean]> = [[host, "斥候", RANGER, true], [guest, "医师", FIGHTER, false]];
+// Thunderwave and Burning Hands are a cube and a cone cast from the wizard;
+// Web waits for its restraint to be carried out (ADR 0149).
+const WIZARD: DraftSheet = { ...FIGHTER, name: "档案学者", raceId: "high-elf", classId: "wizard", subclassId: "evocation", backgroundId: "sage",
+  scores: { str: 8, dex: 14, con: 13, int: 15, wis: 12, cha: 10 }, cantrips: ["fire-bolt"],
+  spellbook: ["thunderwave", "burning-hands", "web"], prepared: ["thunderwave", "burning-hands", "web"] };
+
+async function seedRoom(label = "room", hostDraft: DraftSheet = RANGER) {
+  const host = `area-preview-host-${label}`, guest = `area-preview-guest-${label}`, roomId = `area-preview:${label}`;
+  const code = `AREA${label === "room" ? "01" : "02"}`;
+  const people: Array<[string, string, DraftSheet, boolean]> = [[host, "施法者", hostDraft, true], [guest, "医师", FIGHTER, false]];
   for (const [userId, name] of people) {
     await db.prepare("INSERT INTO auth_users (id, name, email, password_hash, password_salt, password_iterations) VALUES (?, ?, ?, 'unused', 'unused', 1)")
       .bind(userId, name, `${userId}@example.test`).run();
@@ -94,4 +101,29 @@ it("the map's area pick is previewed by Rules through the table and Room, names 
   expect(await previewArea({ userId: guest, data: { code, query } })).toEqual({ ok: true, preview: null });
   expect(await previewArea({ userId: host, data: { code, query: { ...query, targetIds: [`character:${guest}`] } as never } }))
     .toMatchObject({ ok: false });
+});
+
+it("a wizard's cube and cone are in the action list and their preview starts at the wizard's edge", async () => {
+  vi.spyOn(database, "ensureDb").mockResolvedValue(db);
+  const { code, host, guest } = await seedRoom("wizard", WIZARD);
+  const snap = await fetchTable({ userId: host, data: code }) as Data;
+  expect(snap, JSON.stringify(snap).slice(0, 600)).toMatchObject({ ok: true });
+  const abilities = snap.state.authoritative.combatControls.abilities as Data[];
+  const areas = abilities.filter((ability) => ability.target.kind === "area");
+  const shapes = [...new Set(areas.map((ability) => `${ability.name}:${ability.target.shape}:${ability.target.origin}`))].sort();
+  expect(shapes).toEqual(["燃烧之手:cone:self", "雷鸣波:cube:self"]);
+  expect(areas.every((ability) => ability.target.needsDirection === true && ability.target.sizeFeet === 15)).toBe(true);
+
+  const tactical = snap.state.authoritative.tacticalProjection;
+  const companion = (tactical.visibleEntities as Data[]).find((entity) => entity.id === `character:${guest}`)!;
+  const self = tactical.self as Data;
+  const burningHands = areas.find((ability) => ability.name === "燃烧之手")!;
+  const query = { abilityRef: burningHands.abilityRef, origin: structuredClone(self.position), direction: {
+    x: String(Number(companion.position.x) - Number(self.position.x)),
+    y: String(Number(companion.position.y) - Number(self.position.y)), elevation: "0" } };
+  const answered = await previewArea({ userId: host, data: { code, query } }) as Data;
+  expect(answered, JSON.stringify(answered)).toMatchObject({ ok: true });
+  expect(answered.preview.knownAffectedEntityIds).toContain(`character:${guest}`);
+  expect(answered.preview.knownAffectedEntityIds).not.toContain(`character:${host}`);
+  expect(answered.preview.knownSelfEffects).toEqual([]);
 });

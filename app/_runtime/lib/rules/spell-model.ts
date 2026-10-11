@@ -9,10 +9,13 @@ export type SpellRange =
   | { kind: "distance"; feet: number };
 
 export type SpellArea = {
-  shape: "cone" | "cube" | "sphere" | "cylinder" | "emanation";
+  shape: "cone" | "cube" | "line" | "sphere" | "cylinder" | "emanation";
+  /** The radius of a sphere, the edge of a cube, the length of a cone or line. */
   sizeFeet: number;
   origin: "self" | "point";
   perSlotAboveFeet?: number;
+  /** A line's width; 5 feet when the spell does not say. */
+  widthFeet?: number;
 };
 
 export type SpellDuration =

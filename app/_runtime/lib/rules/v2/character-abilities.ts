@@ -3,6 +3,7 @@ import { CLASS_RESOURCE_CATALOG } from "../../dnd/class-resources";
 import { nonItemResources } from "./item-resources";
 import type { GearItemResolver } from "../../dnd/gear";
 import { spellDefinition, formulaAtSlot, spellMaxTargets, spellAreaSize, spellDurationAtSlot, spellEffectValueAtSlot } from "../spell-catalog";
+import { savePushFeet } from "./creature-push";
 import type { DiceFormula, SpellDefinition, SpellRange } from "../spell-model";
 import type { TacticalPosition } from "../tactical-projection";
 import {
@@ -317,15 +318,20 @@ function activation(definition: SpellDefinition, slotLevel: number = definition.
 function spellTarget(definition: SpellDefinition, slotLevel: number = definition.level): JsonRecord | undefined {
   const distance = rangeInches(definition.range);
   if (definition.area !== undefined) {
-    if (!["sphere", "emanation"].includes(definition.area.shape)) return undefined;
+    // SPEC 0013 §5.6 (ADR 0149): a sphere by its radius, a cube by its edge,
+    // a cone or line by its length, a line also by its width.
+    const size = String(spellAreaSize(definition, slotLevel)! * 12);
+    const area = definition.area;
+    const shape = area.shape === "sphere" || area.shape === "emanation" ? { kind: area.shape, radiusInches: size }
+      : area.shape === "cube" ? { kind: "cube", edgeInches: size }
+        : area.shape === "cone" ? { kind: "cone", lengthInches: size }
+          : area.shape === "line" ? { kind: "line", lengthInches: size, widthInches: String((area.widthFeet ?? 5) * 12) }
+            : undefined;
+    if (shape === undefined) return undefined;
     return {
       kind: "area",
       ...(distance === undefined ? {} : { rangeInches: String(distance) }),
-      shape: {
-        kind: definition.area.shape,
-        radiusInches: String(spellAreaSize(definition, slotLevel)! * 12),
-        propagation: "straight",
-      },
+      shape: { ...shape, propagation: "straight" },
     };
   }
   const maximum = spellMaxTargets(definition, slotLevel);
@@ -359,6 +365,13 @@ function compileSpell(
     && target.kind === "area"
     && source.duration.kind !== "instant"
     && resolution.effects?.some((effect) => effect.kind === "area") === true;
+  // ADR 0149: a cube, cone or line spell is compiled only when Rules can carry
+  // out each of its effects -- none, or a push on a failed save. Web's
+  // restraint and difficult terrain wait for their mechanics.
+  if (target.kind === "area" && isRecord(target.shape) && ["cube", "cone", "line"].includes(String(target.shape.kind))
+    && (resolution.effects ?? []).some((effect) => resolution.save === undefined || savePushFeet(effect) === undefined)) {
+    return undefined;
+  }
   if (resolution.special !== undefined || Number(resolution.attacks ?? 1) > 1 || (!isPersistentAreaUtility
     && !["attack", "save", "automatic"].includes(resolution.mode)
     && resolution.healing === undefined)) {

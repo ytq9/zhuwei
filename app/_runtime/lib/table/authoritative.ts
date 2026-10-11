@@ -467,6 +467,8 @@ export type CombatControlTarget =
       origin: "self" | "point";
       rangeFeet?: number;
       needsDirection: boolean;
+      /** A line's width (ADR 0149). */
+      widthFeet?: number;
     }
   /** SPEC 0012 §6.3 (ADR 0099 decision 1): Help names one of `allyRefs`, and
    * for an attack one of `enemyRefs`, the enemies within 5 feet. */
@@ -625,7 +627,9 @@ function combatControlTarget(value: unknown): CombatControlTarget | undefined {
   const areaShape = shape as keyof typeof AREA_SHAPE_SIZE_KEY;
   const sizeFeet = inchesToFeet(value.shape[AREA_SHAPE_SIZE_KEY[areaShape]]);
   const rangeFeet = inchesToFeet(value.rangeInches);
-  if (sizeFeet === undefined || (value.rangeInches !== undefined && rangeFeet === undefined)) return undefined;
+  const widthFeet = areaShape === "line" ? inchesToFeet(value.shape.widthInches) : undefined;
+  if (sizeFeet === undefined || (value.rangeInches !== undefined && rangeFeet === undefined)
+    || (areaShape === "line" && widthFeet === undefined)) return undefined;
   return {
     kind: "area",
     shape: areaShape,
@@ -634,6 +638,7 @@ function combatControlTarget(value: unknown): CombatControlTarget | undefined {
     origin: rangeFeet === undefined || rangeFeet === 0 ? "self" : "point",
     ...(rangeFeet === undefined || rangeFeet === 0 ? {} : { rangeFeet }),
     needsDirection: areaShape === "cube" || areaShape === "cone" || areaShape === "line",
+    ...(widthFeet === undefined ? {} : { widthFeet }),
   };
 }
 

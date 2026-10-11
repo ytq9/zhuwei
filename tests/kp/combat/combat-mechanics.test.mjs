@@ -1659,14 +1659,16 @@ test("Geometry G11 includes a 20-foot sphere boundary sample, excludes one inch 
 
 test("Geometry computes all five closed area shapes and rejects caller-authored affected sets", () => {
   // Areas are geometric (SPEC 0012 §4.2): Alice casts from the origin, so her
-  // own space is inside every shape, and Bob five feet to the +x/+y side is
-  // inside the closed shapes but outside the -x cube, cone and line.
+  // own space is inside the sphere and cylinder, and so is Bob's five feet to
+  // the +x/+y side. A cube, cone or line cast from Alice starts at the edge of
+  // her space and points -x (SPEC 0013 §5.6, ADR 0149), so neither she, Bob
+  // nor the sentinel beside her is inside; the brute ahead is.
   const vectors = [
     ["sphere", "ability:geometry-sphere", undefined, [BRUTE_ID, SENTINEL_ID, ALICE_ID, BOB_ID]],
     ["cylinder", "ability:geometry-cylinder", undefined, [BRUTE_ID, SENTINEL_ID, ALICE_ID, BOB_ID]],
-    ["cube", "ability:geometry-cube", { x: "-2", y: "0", elevation: "0" }, [BRUTE_ID, SENTINEL_ID, ALICE_ID]],
-    ["cone", "ability:geometry-cone", { x: "-2", y: "0", elevation: "0" }, [BRUTE_ID, ALICE_ID]],
-    ["line", "ability:geometry-line", { x: "-2", y: "0", elevation: "0" }, [BRUTE_ID, ALICE_ID]],
+    ["cube", "ability:geometry-cube", { x: "-2", y: "0", elevation: "0" }, [BRUTE_ID]],
+    ["cone", "ability:geometry-cone", { x: "-2", y: "0", elevation: "0" }, [BRUTE_ID]],
+    ["line", "ability:geometry-line", { x: "-2", y: "0", elevation: "0" }, [BRUTE_ID]],
   ];
   for (const [shapeKind, abilityRef, areaDirection, expected] of vectors) {
     const authority = new DeterministicRoomAuthority(commonInitiativeEntropy());
@@ -1714,6 +1716,58 @@ test("Geometry computes all five closed area shapes and rejects caller-authored 
   }, authority), "rejected");
   assert.equal(forgedTargets.result.rejection.code, "invalidRulesInput");
   assert.deepEqual(forgedTargets.events, []);
+});
+
+// SRD 5.1 Thunderwave (ADR 0149): a cube cast from the caster starts at the
+// edge of its space; a creature that fails the save is pushed 10 feet
+// straight away from the caster, one that succeeds is not, and replay lands
+// every push where the event says.
+test("Thunderwave starts at the caster's edge and pushes a creature that fails its save 10 feet away", () => {
+  const THUNDERWAVE = {
+    definitionId: "ability:alice-thunderwave",
+    revision: "1",
+    rulesBasis: "srd5.1-2014",
+    activation: { kind: "action" },
+    target: { kind: "area", rangeInches: "0", shape: { kind: "cube", edgeInches: "180", propagation: "straight" } },
+    save: { ability: "con", halfOnSuccess: true },
+    damage: [{ type: "thunder", formula: "2d8" }],
+    effects: [{ tag: "push-10", label: "失败时推开 10 尺", kind: "movement", value: 10 }],
+  };
+  // The test authority rolls face (entropy mod sides) + 1: a 1 and a 20.
+  for (const [label, saveEntropy, pushed] of [["fails", 0, true], ["succeeds", 19, false]]) {
+    const initialState = structuredClone(INITIAL_STATE);
+    initialState.definitions[THUNDERWAVE.definitionId] = registered(THUNDERWAVE);
+    initialState.entities[ALICE_ID].abilityRefs.push(THUNDERWAVE.definitionId);
+    const authority = new DeterministicRoomAuthority(commonInitiativeEntropy({
+      [`save:${THUNDERWAVE.definitionId}:${BRUTE_ID}`]: [saveEntropy],
+    }));
+    const encounterInput = structuredClone(START_DYNAMIC_ENCOUNTER);
+    const brute = encounterInput.dynamicEntities.find(({ entityId }) => entityId === BRUTE_ID);
+    brute.placement.position = { x: "-111", y: "0", elevation: "0" };
+    brute.mechanics.definition.content.footprint = { width: "56", depth: "56", height: "60" };
+    const sentinel = encounterInput.dynamicEntities.find(({ entityId }) => entityId === SENTINEL_ID);
+    sentinel.placement.position = { x: "0", y: "-111", elevation: "0" };
+    const { scenario } = openEncounterWithInput(authority, encounterInput, geometryGenesis(initialState, `thunderwave-${label}`));
+    const cast = requireKind(invoke(scenario, authority, `root:thunderwave:${label}`, ALICE_ID, THUNDERWAVE.definitionId, {
+      areaOrigin: { x: "0", y: "0", elevation: "0" },
+      areaDirection: { x: "-1", y: "0", elevation: "0" },
+    }), "committed");
+    const area = cast.result.mechanicalResult.area;
+    assert.deepEqual(area.origin, { x: "-30", y: "0", elevation: "0" }, "the cube starts at the edge of Alice's space");
+    assert.deepEqual(area.affectedEntityIds, [BRUTE_ID]);
+    const pushes = eventsOfType(cast.events, "CreaturePushed");
+    if (pushed) {
+      assert.deepEqual(pushes.map(({ payload }) => payload), [{ characterId: BRUTE_ID, sceneId: MODULE_FIXTURE.sceneId,
+        byCharacterId: ALICE_ID, from: { x: "-111", y: "0", elevation: "0" }, to: { x: "-231", y: "0", elevation: "0" }, distanceInches: "120" }]);
+      assert.deepEqual(cast.scenario.state.combatRuntime.entities[BRUTE_ID].position, { x: "-231", y: "0", elevation: "0" });
+      assert.deepEqual(cast.result.mechanicalResult.pushed, { [BRUTE_ID]: true });
+    } else {
+      assert.deepEqual(pushes, []);
+      assert.deepEqual(cast.scenario.state.combatRuntime.entities[BRUTE_ID].position, { x: "-111", y: "0", elevation: "0" });
+    }
+    assert.deepEqual(replayed(cast.scenario.eventLog, geometryGenesis(initialState, `thunderwave-${label}`)).state.combatRuntime,
+      cast.scenario.state.combatRuntime);
+  }
 });
 
 test("Geometry G12 freezes a wall-blocked origin atomically before exposing its target set", () => {

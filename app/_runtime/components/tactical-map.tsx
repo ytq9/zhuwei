@@ -1912,27 +1912,35 @@ function areaShapeHint(projection: TacticalProjection, task: MapTask, pointer: M
   }
   if (task.kind === "intent" && task.ability.target.kind === "area" && task.aimRef !== null) {
     const aimed = [projection.self, ...projection.visibleEntities].find((entity) => entity.id === task.aimRef);
-    return aimed === undefined ? null
-      : { target: task.ability.target, origin: { x: inches(aimed.position.x), y: inches(aimed.position.y) }, toward: null, tentative: true };
+    if (aimed === undefined) return null;
+    const at = { x: inches(aimed.position.x), y: inches(aimed.position.y) };
+    // A cube, cone or line from the player points at the creature aimed at.
+    return task.ability.target.origin === "self" && task.ability.target.needsDirection
+      ? { target: task.ability.target, origin: selfPoint(projection), toward: at, tentative: true }
+      : { target: task.ability.target, origin: at, toward: null, tentative: true };
   }
   return null;
 }
 
 /** A sketch of an area's size and shape at its origin, pointing the way the
  * player chose: a circle for a sphere or cylinder, a square for a cube, a
- * triangle as wide as it is long for a cone, a 5-foot strip for a line.
- * Without a direction yet, a pointed shape shows only how far it reaches.
- * Who is inside is Rules' to settle (SPEC 0014 §§5、8). */
+ * triangle as wide as it is long for a cone, a strip as wide as the line.
+ * A cube, cone or line cast from the player starts at the edge of the
+ * player's token (ADR 0149). Without a direction yet, a pointed shape shows
+ * only how far it reaches. Who is inside is Rules' to settle (SPEC 0014 §§5、8). */
 function AreaShape({
   target,
   origin,
   toward,
   tentative,
+  edge,
 }: {
   target: AreaTarget;
   origin: MapPoint;
   toward: MapPoint | null;
   tentative: boolean;
+  /** Half the player's token, when the area starts at its edge. */
+  edge?: { halfWidth: number; halfDepth: number };
 }) {
   const size = target.sizeFeet * 12;
   const className = cn(
@@ -1955,15 +1963,20 @@ function AreaShape({
   const uy = dy / length;
   const px = -uy;
   const py = ux;
-  const halfWidth = target.shape === "line" ? 30 : size / 2;
-  const far = { x: origin.x + ux * size, y: origin.y + uy * size };
+  const halfWidth = target.shape === "line" ? (target.widthFeet ?? 5) * 6 : size / 2;
+  const step = edge === undefined ? 0 : Math.min(
+    ux === 0 ? Infinity : edge.halfWidth / Math.abs(ux),
+    uy === 0 ? Infinity : edge.halfDepth / Math.abs(uy),
+  );
+  const start = { x: origin.x + ux * step, y: origin.y + uy * step };
+  const far = { x: start.x + ux * size, y: start.y + uy * size };
   const points = target.shape === "cone"
-    ? [origin, { x: far.x + px * halfWidth, y: far.y + py * halfWidth }, { x: far.x - px * halfWidth, y: far.y - py * halfWidth }]
+    ? [start, { x: far.x + px * halfWidth, y: far.y + py * halfWidth }, { x: far.x - px * halfWidth, y: far.y - py * halfWidth }]
     : [
-        { x: origin.x + px * halfWidth, y: origin.y + py * halfWidth },
+        { x: start.x + px * halfWidth, y: start.y + py * halfWidth },
         { x: far.x + px * halfWidth, y: far.y + py * halfWidth },
         { x: far.x - px * halfWidth, y: far.y - py * halfWidth },
-        { x: origin.x - px * halfWidth, y: origin.y - py * halfWidth },
+        { x: start.x - px * halfWidth, y: start.y - py * halfWidth },
       ];
   return <polygon {...common} points={points.map((point) => `${point.x},${point.y}`).join(" ")} className={className} />;
 }
@@ -1992,7 +2005,10 @@ function TacticalTaskHints({
     <g data-tactical-task-hints={task.kind} className="pointer-events-none">
       {range ? <RangeRings projection={projection} range={range} textScale={textScale} /> : null}
       {area ? (
-        <AreaShape target={area.target} origin={area.origin} toward={area.toward} tentative={area.tentative} />
+        <AreaShape target={area.target} origin={area.origin} toward={area.toward} tentative={area.tentative}
+          edge={area.target.origin === "self" && area.target.needsDirection
+            ? { halfWidth: inches(projection.self.footprint.width) / 2, halfDepth: inches(projection.self.footprint.depth) / 2 }
+            : undefined} />
       ) : null}
     </g>
   );
@@ -2085,15 +2101,16 @@ function TacticalTaskMarks({
           className="stroke-danger stroke-[2.5] [stroke-dasharray:6_4] [vector-effect:non-scaling-stroke]"
         />
       ) : null}
+      {/* An area cast from the player needs no origin mark on its token. */}
       {task.kind === "area" && task.origin ? (
         <>
-          <circle
+          {task.ability.target.kind === "area" && task.ability.target.origin === "self" ? null : <circle
             data-tactical-area-origin={`${task.origin.x},${task.origin.y}`}
             cx={task.origin.x}
             cy={task.origin.y}
             r={marker}
             className="fill-violet-300/80 stroke-white stroke-[1] [vector-effect:non-scaling-stroke]"
-          />
+          />}
           {task.direction ? (
             <line
               data-tactical-area-direction={`${task.direction.x},${task.direction.y}`}

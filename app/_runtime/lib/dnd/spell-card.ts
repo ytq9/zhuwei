@@ -25,6 +25,7 @@ const DAMAGE_LABEL: Record<string, string> = {
 const AREA_LABEL: Record<string, string> = {
   cone: "锥状",
   cube: "立方",
+  line: "线状",
   sphere: "半径",
   cylinder: "柱状",
   emanation: "发散",

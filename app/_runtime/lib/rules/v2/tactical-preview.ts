@@ -6,6 +6,7 @@ import {
   entityOccupiesSpace,
   entityWithinPointRange,
   freezeAreaOrigin,
+  selfAreaOrigin,
   type FrozenCombatPoint,
 } from "../profiles/combat-geometry";
 import { RulesValidationError } from "../errors";
@@ -66,8 +67,8 @@ function wholeInches(value: FrozenCombatPoint["x"]): string {
   return String(Math.round(Number(value.numerator) / Number(value.denominator)));
 }
 
-function samePoint(left: FrozenCombatPoint, right: TacticalPosition): boolean {
-  return left.x === right.x && left.y === right.y && left.elevation === right.elevation;
+function samePoint(left: FrozenCombatPoint, right: FrozenCombatPoint): boolean {
+  return JSON.stringify([left.x, left.y, left.elevation]) === JSON.stringify([right.x, right.y, right.elevation]);
 }
 
 /** SPEC 0014 §7 (ADR 0148): what an area would reach, computed only from
@@ -97,23 +98,28 @@ export function tacticalAreaPreview(
     knownCover: [],
     spatialRevision: tactical.spatialRevision,
   };
+  // As the cast reads it (ADR 0149): no range, or range 0, is cast from
+  // where the caster stands.
   const range = inchesValue(definitionTarget.rangeInches);
-  const inRange = range === undefined
+  const fromSelf = range === undefined || range === "0";
+  const inRange = fromSelf
     ? origin.x === tactical.self.position.x && origin.y === tactical.self.position.y
       && origin.elevation === tactical.self.position.elevation
-    : entityWithinPointRange(self, origin, range);
+    : entityWithinPointRange(self, origin, range!);
   if (!inRange) {
     return { ...base, knownAffectedEntityIds: [], knownSelfEffects: [], knownFriendlyEntityIds: [],
       knownBlockerFeatureIds: [], stop: null, readout: ["这一处超出射程。"] };
   }
   const known = tactical.knownFeatures.filter((feature) => feature.opaque);
   const scene = (features: typeof known) => ({ geometry: { obstacles: features } });
-  const frozen = freezeAreaOrigin(scene(known), self, origin);
-  if (frozen === undefined) return undefined;
-  const blocked = !samePoint(frozen, origin);
+  // A cube, cone or line cast from the caster starts at the edge of its space.
+  const start = fromSelf && direction !== undefined ? selfAreaOrigin(self, direction) : origin;
+  const frozen = start === undefined ? undefined : freezeAreaOrigin(scene(known), self, start);
+  if (start === undefined || frozen === undefined) return undefined;
+  const blocked = !samePoint(frozen, start);
   const blocker = blocked
     ? known.find((feature) => {
-        const alone = freezeAreaOrigin(scene([feature]), self, origin);
+        const alone = freezeAreaOrigin(scene([feature]), self, start);
         return alone !== undefined && JSON.stringify(alone) === JSON.stringify(frozen);
       })
     : undefined;

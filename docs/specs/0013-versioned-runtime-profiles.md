@@ -13,6 +13,8 @@ supersedes:
   - spec: "0006"
     scope: "要求保留、迁移或恢复前 0.4 房间的条款"
 revisions:
+  - date: 2026-10-11
+    scope: "§5.6：没有射程或射程为 0 的区域从施法者所在处施放；其中 cube、cone、line 从所选方向离开施法者占位的边缘点展开"
   - date: 2026-10-05
     scope: "§2.3：换用新的完整 manifest 时，按旧 manifest 开的房间退役，不迁移、不再继续"
   - date: 2026-09-25
@@ -23,7 +25,7 @@ revisions:
     scope: "§7.2：Activity 的推进或提醒阶段不是已到达的 due，同一瞬间开始的新行动先执行并可打断该 Activity"
   - date: 2026-08-31
     scope: "0.4 开发重置：放弃全部 0.4 以前房间及可恢复归档，不保留 Adapter、fallback 或 migration"
-adr: ["0120"]
+adr: ["0120", "0149"]
 parts:
   - "0013-part-b-ability-and-geometry.md"
   - "0013-part-c-time-and-conformance.md"

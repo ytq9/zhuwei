@@ -614,8 +614,9 @@ test("picking shows the range ring and the area's shape as a sketch", async () =
     await key("Enter");
     const cube = one({ "data-tactical-area-shape": "cube" });
     assert.equal(cube.props["data-tactical-area-tentative"], "false");
-    // 15 feet from the actor (120, 180) toward the picked square on its right.
-    assert.equal(cube.props.points, "120,270 300,270 300,90 120,90");
+    // 15 feet toward the picked square on the right, from the edge of the
+    // actor's space at (150, 180) (ADR 0149).
+    assert.equal(cube.props.points, "150,270 330,270 330,90 150,90");
   });
 });
 
@@ -688,6 +689,36 @@ test("the map marks who an ability reaches and who an area covers, as Rules answ
     assert.match(text(one({ "data-tactical-area-preview": "npc:warden" })), /范围内你看得见的：守夜人。/);
     await press({ "data-tactical-area-submit": true });
     assert.deepEqual(calls.at(-1).data.target, { kind: "area", origin });
+  }, (command) => command === "previewArea"
+    ? { ok: true, preview }
+    : { action: "committed", narration: "notApplicable" });
+});
+
+// ADR 0149: a cube, cone or line cast from the player is named by its shape,
+// and outside an encounter it is previewed pointing at the creature aimed at.
+test("outside an encounter a cube from the player is previewed toward the creature it is aimed at", async () => {
+  const { targetHint } = await import("../../../app/_runtime/components/tactical-task.ts");
+  const area = (shape, extra = {}) => ({ name: "x", target: { kind: "area", shape, sizeFeet: 15, origin: "self", needsDirection: true, ...extra } });
+  assert.equal(targetHint(area("cube")), "15 尺立方 · 从你身边发出，再点方向");
+  assert.equal(targetHint(area("cone")), "15 尺锥形 · 从你身边发出，再点方向");
+  assert.equal(targetHint(area("line", { sizeFeet: 100, widthFeet: 5 })), "100 尺长、5 尺宽的线形 · 从你身边发出，再点方向");
+
+  const { compileSheet } = await import("../../../app/_runtime/lib/dnd/compute.ts");
+  const preview = { kind: "area", abilityRef: "ability:alice:spell:thunderwave", origin: { x: "120", y: "180", elevation: "60" },
+    direction: { x: "600", y: "0", elevation: "0" }, knownAffectedEntityIds: ["npc:warden"], knownSelfEffects: [],
+    knownFriendlyEntityIds: [], knownBlockerFeatureIds: [], knownCover: [], stop: null,
+    readout: ["范围内你看得见的：守夜人。"], spatialRevision: REVISION };
+  await withTable(snapFor(compileSheet, { combat: false }), async ({ calls, one, press, act, settle }) => {
+    await press({ "data-tactical-ability": "ability:alice:spell:thunderwave" });
+    await press({ "data-tactical-aim-option": "npc:warden" });
+    await act(async () => { await settle(); await settle(); });
+    assert.deepEqual(calls.filter((call) => call.command === "previewArea").at(-1).data.query, {
+      abilityRef: "ability:alice:spell:thunderwave",
+      origin: { x: "120", y: "180", elevation: "60" },
+      direction: { x: "600", y: "0", elevation: "0" },
+    });
+    assert.match(text(one({ "data-tactical-area-preview": "npc:warden" })), /守夜人/);
+    assert.match(text(one({ "data-tactical-intent-preview": true })), /雷鸣波/);
   }, (command) => command === "previewArea"
     ? { ok: true, preview }
     : { action: "committed", narration: "notApplicable" });

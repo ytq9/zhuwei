@@ -104,10 +104,18 @@ export function areaPick(
   projection: TacticalProjection,
   task: MapTask,
 ): { origin: TacticalPosition; direction?: TacticalPosition } | null {
-  if (task.kind === "intent" && task.ability.target.kind === "area" && !task.ability.target.needsDirection) {
-    if (task.ability.target.origin === "self") return { origin: structuredClone(projection.self.position) };
+  if (task.kind === "intent" && task.ability.target.kind === "area") {
+    const target = task.ability.target;
+    if (target.origin === "self" && !target.needsDirection) return { origin: structuredClone(projection.self.position) };
     const aimed = [projection.self, ...projection.visibleEntities].find((entity) => entity.id === task.aimRef);
-    return aimed === undefined ? null : { origin: structuredClone(aimed.position) };
+    if (aimed === undefined) return null;
+    if (!target.needsDirection) return { origin: structuredClone(aimed.position) };
+    // A cube, cone or line cast from the player points at the creature it is
+    // aimed at; one placed at a point is not previewed without its direction.
+    if (target.origin !== "self" || aimed.id === projection.self.id) return null;
+    const self = projection.self.position;
+    return { origin: structuredClone(self),
+      direction: { x: String(inches(aimed.position.x) - inches(self.x)), y: String(inches(aimed.position.y) - inches(self.y)), elevation: "0" } };
   }
   if (task.kind !== "area" || task.ability.target.kind !== "area" || task.origin === null) return null;
   const shape = task.ability.target;
@@ -190,6 +198,18 @@ export function abilityDetail(ability: CombatControlAbility): string {
   return [ACTIVATION_LABEL[ability.activation], spell].filter(Boolean).join(" · ");
 }
 
+/** An area's size and shape in words: a 20-foot-radius sphere, a 15-foot
+ * cube or cone, a 100-foot line 5 feet wide. */
+export function areaShapeLabel(target: Extract<CombatControlAbility["target"], { kind: "area" }>): string {
+  switch (target.shape) {
+    case "sphere": return `半径 ${target.sizeFeet} 尺的球形`;
+    case "cylinder": return `半径 ${target.sizeFeet} 尺的圆柱`;
+    case "cube": return `${target.sizeFeet} 尺立方`;
+    case "cone": return `${target.sizeFeet} 尺锥形`;
+    case "line": return `${target.sizeFeet} 尺长、${target.widthFeet ?? 5} 尺宽的线形`;
+  }
+}
+
 export function targetHint(ability: CombatControlAbility): string {
   const target = ability.target;
   if (target.kind === "creatures") {
@@ -201,8 +221,9 @@ export function targetHint(ability: CombatControlAbility): string {
     return [`选 ${target.count === 1 ? "1 个" : `至多 ${target.count} 个`}目标`, distance].filter(Boolean).join(" · ");
   }
   if (target.kind === "area") {
-    const origin = target.origin === "self" ? "从你所在处出发" : `在 ${target.rangeFeet ?? 0} 尺内点选位置`;
-    return `${target.sizeFeet} 尺范围 · ${origin}${target.needsDirection ? "，再点方向" : ""}`;
+    const origin = target.origin === "self"
+      ? target.needsDirection ? "从你身边发出" : "以你为中心" : `在 ${target.rangeFeet ?? 0} 尺内点选位置`;
+    return `${areaShapeLabel(target)} · ${origin}${target.needsDirection ? "，再点方向" : ""}`;
   }
   if (target.kind === "help") return "选一名同伴；攻击时再选你身边 5 尺内的敌人";
   if (target.kind === "ready") return "选触发的人和时机，再选那时要做的事";
@@ -278,7 +299,9 @@ export function mapGestures(
       else if (task.mode === "attack" && task.ability.target.enemyRefs.includes(entity.id)) interaction.setTask({ ...task, enemyRef: entity.id });
     } else if (task.kind === "ready" && task.ability.target.kind === "ready") {
       if (task.ability.target.triggerRefs.includes(entity.id)) interaction.setTask({ ...task, triggerRef: entity.id });
-    } else if (task.kind === "intent" && task.ability.target.kind === "area" && task.ability.target.origin === "point") {
+    } else if (task.kind === "intent" && task.ability.target.kind === "area"
+      && (task.ability.target.origin === "point" || task.ability.target.needsDirection)) {
+      // A cube, cone or line from the player is aimed at someone too (ADR 0149).
       interaction.setTask({ ...task, aimRef: entity.id });
     } else if (pointPick) {
       // Keyboard users pick a creature's spot from its token.

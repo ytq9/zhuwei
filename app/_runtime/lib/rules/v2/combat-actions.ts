@@ -83,6 +83,7 @@ import {
   entityOccupanciesOverlap,
   entityWithinPointRange,
   freezeAreaOrigin,
+  selfAreaOrigin,
   pathLengthMilliInches,
   rectangularFeatureEntity,
 } from "../profiles/combat-geometry";
@@ -182,7 +183,7 @@ import {
   type HidingActionKey,
   type PostureActionKey,
 } from "./basic-actions";
-import { grapplesEndedByPush, planCreaturePush } from "./creature-push";
+import { grapplesEndedByPush, planCreaturePush, savePushFeet } from "./creature-push";
 import { combatJumpKey, combatJumpOptions, type CombatJumpOption } from "./combat-jump";
 import { movementAfterTerrainMove } from "./terrain-movement";
 
@@ -2416,6 +2417,52 @@ function appendAbilityWorldEffects(
   return { ...result, mechanicalResult } as StepResult;
 }
 
+/** SRD 5.1 Thunderwave (ADR 0149): the push a save-based ability makes on a
+ * failed save, and how far. */
+function abilitySavePush(definition: JsonRecord): { effect: JsonRecord; inches: bigint } | undefined {
+  if (!isRecord(definition.save) || !Array.isArray(definition.effects)) return undefined;
+  for (const effect of definition.effects) {
+    const feet = savePushFeet(effect);
+    if (feet !== undefined && isRecord(effect)) return { effect, inches: BigInt(feet * 12) };
+  }
+  return undefined;
+}
+
+/** ADR 0149: each creature that failed the save is pushed straight away from
+ * the caster, in target order, each against the positions the pushes before
+ * it left; one that cannot move stays. A grapple the push breaks ends. */
+function appendAbilitySavePushes(
+  profiles: RuntimeProfileManifest,
+  transition: StepResult,
+  rootActionId: string,
+  operation: JsonRecord,
+  mechanicalResult: JsonRecord,
+): StepResult {
+  const push = isRecord(operation.definition) ? abilitySavePush(operation.definition) : undefined;
+  if (transition.kind !== "committed" || push === undefined || !Array.isArray(operation.targetEntityIds)
+    || !isNonEmptyString(operation.sourceEntityId)) return transition;
+  let result: StepResult = transition;
+  const pushed: Record<string, boolean> = {};
+  for (const targetEntityId of operation.targetEntityIds.filter(isNonEmptyString)) {
+    const save = isRecord(mechanicalResult.saves) ? mechanicalResult.saves[targetEntityId] : undefined;
+    if (!isRecord(save) || save.success !== false || targetEntityId === operation.sourceEntityId) continue;
+    if (result.kind !== "committed") return result;
+    const target = result.state.combatRuntime.entities[targetEntityId];
+    if (!isRecord(target) || !isNonEmptyString(target.sceneId)) continue;
+    const planned = planCreaturePush(result.state, operation.sourceEntityId, targetEntityId, target.sceneId, push.inches);
+    pushed[targetEntityId] = planned.kind === "push";
+    if (planned.kind !== "push") continue;
+    const drafts: Draft[] = [{ eventType: "CreaturePushed", payload: { characterId: targetEntityId, sceneId: target.sceneId,
+      byCharacterId: operation.sourceEntityId, from: planned.from, to: planned.to, distanceInches: push.inches.toString() } }];
+    const moved = structuredClone(result.state);
+    moved.combatRuntime.entities[targetEntityId]!.position = structuredClone(planned.to);
+    for (const payload of grapplesEndedByPush(moved, targetEntityId)) drafts.push({ eventType: "ConditionChanged", payload });
+    result = appendTransitions(result, sequence("committed", profiles, result.state, rootActionId, drafts, { mechanicalResult }));
+  }
+  if (Object.keys(pushed).length > 0) mechanicalResult.pushed = pushed;
+  return result.kind === "committed" ? { ...result, mechanicalResult } as StepResult : result;
+}
+
 function afterDrafts(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
@@ -3694,6 +3741,9 @@ function abilityEffectsExecutable(definition: JsonRecord, specCount: number): bo
   if (definition.grants !== undefined
     && (!Array.isArray(definition.grants) || definition.grants.length > 0)) return false;
   const executableEffects = new Set(abilityWorldEffects(definition));
+  // ADR 0149: a push on a failed save is carried out after the damage.
+  const savePush = abilitySavePush(definition);
+  if (savePush !== undefined) executableEffects.add(savePush.effect);
   // Match the actual no-dice continuation: its concentration branch runs only
   // for the singular effect and only when no world-effect executor takes over.
   if (specCount === 0 && executableEffects.size === 0
@@ -4108,7 +4158,10 @@ function prepareAbilityExecution(
     }
     const parsedOrigin = canonicalCombatPoint(origin);
     const sourceOrigin = canonicalCombatPoint(source.position);
-    const originInRange = definition.target.rangeInches === undefined
+    // SPEC 0013 §5.6 (ADR 0149): an area with no range, or range 0 ("self"),
+    // is cast from where the caster stands.
+    const fromSelf = definition.target.rangeInches === undefined || definition.target.rangeInches === "0";
+    const originInRange = fromSelf
       ? parsedOrigin !== undefined && sourceOrigin !== undefined
         && parsedOrigin.x === sourceOrigin.x
         && parsedOrigin.y === sourceOrigin.y
@@ -4125,7 +4178,10 @@ function prepareAbilityExecution(
       return rejected("invalidRulesInput", "Area direction is not canonical for this shape.");
     }
     const scene = state.combatRuntime.scenes[String(source.sceneId)];
-    const frozenOrigin = freezeAreaOrigin(isRecord(scene) ? scene : undefined, source, origin);
+    // A cube, cone or line cast from the caster starts at the edge of its
+    // space, the way it points (ADR 0149).
+    const start = fromSelf && directional ? selfAreaOrigin(source, direction) : origin;
+    const frozenOrigin = start === undefined ? undefined : freezeAreaOrigin(isRecord(scene) ? scene : undefined, source, start);
     if (parsedOrigin === undefined || sourceOrigin === undefined || frozenOrigin === undefined) {
       return rejected("invalidRulesInput", "Area origin is not canonical.");
     }
@@ -7145,6 +7201,7 @@ function resolveCombatAbilityRandomnessOnce(
   const resolvedOperation = { ...operation, targetEntityIds: targetIds.filter((targetId) => !deferredTargets.has(targetId)) };
   committed = appendAbilityRecovery(profiles, committed, root, resolvedOperation, faces, mechanicalResult);
   committed = appendAbilityWorldEffects(profiles, committed, root, resolvedOperation, mechanicalResult);
+  committed = appendAbilitySavePushes(profiles, committed, root, resolvedOperation, mechanicalResult);
   if (committed.kind !== "committed") return committed;
   const knockOutPending = knockOutPendings.shift();
   if (knockOutPending !== undefined) {

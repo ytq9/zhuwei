@@ -718,18 +718,19 @@ test("an area preview names the creatures seen inside it and stops at a known wa
   assert.equal(preview(state, { ...sleep, targetIds: [NPC] }).kind, "rejected");
 });
 
-// A cube from the player: its origin is where she stands and it points the
-// way she picked; the creatures seen inside it are named.
-test("a cube from the player covers the creatures seen the way it points", async () => {
+// A cube from the player: it is cast from where she stands, starts at the
+// edge of her space and points the way she picked (ADR 0149); the creatures
+// seen inside it are named, and she is not one of them.
+test("a cube from the player covers the creatures seen the way it points, not the player", async () => {
   const { tacticalAreaPreview } = await import("../../../app/_runtime/lib/rules/v2/tactical-preview.ts");
   const { view } = playerView(genesis({ ally: true }));
   const cube = { kind: "area", shape: { kind: "cube", edgeInches: "180", propagation: "straight" } };
   const east = tacticalAreaPreview(view.tacticalProjection, cube, { abilityRef: "ability:x", origin: { x: "0", y: "0", elevation: "0" },
     direction: { x: "1", y: "0", elevation: "0" } });
-  assert.ok(east.knownAffectedEntityIds.includes(NPC), JSON.stringify(east));
+  // The warden stands right in front of her; Bob beside her is outside.
+  assert.deepEqual(east.knownAffectedEntityIds, [NPC], JSON.stringify(east));
   assert.deepEqual(east.direction, { x: "1", y: "0", elevation: "0" });
-  assert.deepEqual(east.knownSelfEffects, east.knownAffectedEntityIds.includes(PLAYER) ? ["inArea"] : []);
-  assert.deepEqual(east.knownFriendlyEntityIds, east.knownAffectedEntityIds.filter((id) => id === ALLY));
+  assert.deepEqual([east.knownSelfEffects, east.knownFriendlyEntityIds], [[], []]);
   const west = tacticalAreaPreview(view.tacticalProjection, cube, { abilityRef: "ability:x", origin: { x: "0", y: "0", elevation: "0" },
     direction: { x: "-1", y: "0", elevation: "0" } });
   assert.equal(west.knownAffectedEntityIds.includes(NPC), false);

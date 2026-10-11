@@ -1028,6 +1028,38 @@ export function entitiesAffectedByArea(
     .map((entity) => String(entity.id ?? entity.entityId));
 }
 
+/** SPEC 0013 §5.6 (ADR 0149): where a cube, cone or line cast from the
+ * caster itself starts -- the point where the chosen direction, taken along
+ * the floor, leaves the caster's footprint, at the caster's elevation. The
+ * caster's own space then lies behind the area, as SRD 5.1 "originating
+ * from you" reads; whether a body is inside is still decided by geometry
+ * alone (SPEC 0012 §4.2). A direction straight up or down starts at the
+ * caster's position. */
+export function selfAreaOrigin(source: JsonRecord, directionValue: unknown): FrozenCombatPoint | undefined {
+  const at = canonicalCombatPoint(source.position);
+  const direction = canonicalCombatDirection(directionValue);
+  if (at === undefined || direction === undefined || !entityOccupiesSpace(source)) return undefined;
+  const dx = BigInt(direction.x);
+  const dy = BigInt(direction.y);
+  const x = BigInt(at.x);
+  const y = BigInt(at.y);
+  const z = fraction(BigInt(at.elevation), 1n);
+  if (dx === 0n && dy === 0n) return serializePoint({ x: fraction(x, 1n), y: fraction(y, 1n), z });
+  const absolute = (value: bigint) => value < 0n ? -value : value;
+  // The step along the direction to each face: half the footprint over the
+  // direction's component on that axis; the nearer face is the one left by.
+  const steps = [
+    ...(dx === 0n ? [] : [fraction(positiveDimension(source, "width"), 2n * absolute(dx))]),
+    ...(dy === 0n ? [] : [fraction(positiveDimension(source, "depth"), 2n * absolute(dy))]),
+  ];
+  const step = steps.reduce((least, candidate) => compareFractions(candidate, least) < 0 ? candidate : least);
+  return serializePoint({
+    x: addFraction(fraction(x, 1n), fraction(dx * step.numerator, step.denominator)),
+    y: addFraction(fraction(y, 1n), fraction(dy * step.numerator, step.denominator)),
+    z,
+  });
+}
+
 /** Freezes a requested area origin at the first opaque obstacle boundary. */
 export function freezeAreaOrigin(
   scene: JsonRecord | undefined,
