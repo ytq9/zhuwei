@@ -31,6 +31,8 @@
 
 - 补全表单按需加载已完成本地实现（2026-10-06）：[ADR 0129](../adr/0129-completion-schemas-follow-selected-mechanics.md)、[成本与验证回执](receipts/completion-schema-routing-local-20261006.md)。不增加调用阶段；最终 107 个规格测试文件通过，尚未做真实模型调用或部署。
 
+- [玩家桌面统合方案：角色栏、行动、背包与资源](proposals/table-ui-consolidation-plan-20261011.md)（2026-10-11，方案待确认；只调整放置、触发与展示，不改产品规则）
+
 - [动态对象按需补全与使用链路](proposals/dynamic-object-completion-plan-20261006.md)（2026-10-06，已按批准范围完成本地实现；确定性链路通过，整套门的异步桌面用例波动及真实模型验证见[回执](receipts/dynamic-object-completion-local-20261006.md)）
 
 - [同一模组的沙盒剧情实施方案](proposals/sandbox-story-continuity-plan-20261006.md)（2026-10-06，实施中；本地整合、收束与感知记忆已实现，真实路线预算及剧本候选的本人采纳调用待确认，多路线长期验收未完成）
