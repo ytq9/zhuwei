@@ -19,17 +19,20 @@ import { archiveSha256, buildAuthoritativeArchive, roomServiceCapabilities } fro
 import { buildStoryArchive } from "../../../app/_runtime/lib/room/story-archive";
 import { exportStoryArchiveHostBindings } from "../../../app/_runtime/lib/room/story-archive-host";
 
+import { completeDraft } from "./complete-draft";
+
 export type HttpRecord = Record<string, unknown>;
 export type HttpAccount = { userId: string; cookie: string };
 export const historyHttpDb = (env as unknown as { DB: D1Database }).DB;
-export const historyHttpDraft: DraftSheet = {
+// Complete cards: the server refuses one that owes a choice (ADR 0156).
+export const historyHttpDraft: DraftSheet = completeDraft({
   name: "河港医师", raceId: "human", classId: "fighter", subclassId: "champion", backgroundId: "soldier",
   scores: { str: 15, dex: 13, con: 14, int: 8, wis: 10, cha: 12 }, extraSkillIds: [], cantrips: [], prepared: [], spellbook: [],
   equipmentChoice: 0, appearance: "带着药包的旅人", trait: "谨慎", ideal: "救助", bond: "故乡", flaw: "好奇",
-};
-export const historyHttpWizard: DraftSheet = { ...historyHttpDraft, name: "档案学者", raceId: "high-elf", classId: "wizard",
+});
+export const historyHttpWizard: DraftSheet = completeDraft({ ...historyHttpDraft, name: "档案学者", raceId: "high-elf", classId: "wizard",
   subclassId: "evocation", backgroundId: "sage", scores: { str: 8, dex: 14, con: 13, int: 15, wis: 12, cha: 10 },
-  cantrips: ["fire-bolt"], spellbook: ["magic-missile"], prepared: ["magic-missile"] };
+  extraSkillIds: [], toolChoices: undefined, cantrips: ["fire-bolt"], spellbook: ["magic-missile"], prepared: ["magic-missile"] });
 export function httpRecord(value: unknown): HttpRecord {
   expect(value).not.toBeNull(); expect(typeof value).toBe("object"); expect(Array.isArray(value)).toBe(false);
   return value as HttpRecord;

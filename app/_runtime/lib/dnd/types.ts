@@ -214,6 +214,8 @@ export type CharacterSheet = {
   expertise: (SkillId | ToolId)[];
   /** The tool picked for each "one of your choice" grant; older sheets lack it. */
   toolChoices?: ToolChoices;
+  /** A dragonborn's Draconic Ancestry; older sheets lack it. */
+  dragonAncestry?: string;
   cantrips: string[];
   prepared: string[];
   spellbook: string[];
@@ -245,6 +247,10 @@ export type DraftSheet = {
   backgroundId: string;
   scores: AbilityScores;
   extraSkillIds: SkillId[];
+  /** A half-elf's two abilities, other than Charisma, that rise by 1. */
+  halfElfPicks?: Ability[];
+  /** A dragonborn's Draconic Ancestry (`DRAGON_ANCESTRIES`). */
+  dragonAncestry?: string;
   /** The tool picked for each "one of your choice" grant. */
   toolChoices?: ToolChoices;
   /** The rogue's Expertise, or the Knowledge cleric's two skills. */

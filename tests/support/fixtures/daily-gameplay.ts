@@ -2,6 +2,7 @@ import { expect } from "vitest";
 import { assertDailyActionAuthority, assertDailyWitnessAuthority } from "./daily-gameplay-authority.mjs";
 import { canonicalHash } from "../../../app/_runtime/lib/kp/vnext/canonical-json";
 import { historyHttpDraft, historyHttpPost, httpRecord } from "./story-history-http";
+import { completeDraft } from "./complete-draft";
 import { RETRY_DECLINE_TEXT } from "../../../app/_runtime/lib/kp/vnext/retry-question";
 import type { historyHttpAuthority, historyHttpSource, HttpRecord } from "./story-history-http";
 import { nextTo } from "../../../app/_runtime/lib/rules/v2/scene-approach";
@@ -9,15 +10,15 @@ import { authorityGeometryFeatureComposite } from "../../../app/_runtime/lib/rul
 import { rectangularFeatureEntity } from "../../../app/_runtime/lib/rules/profiles/combat-geometry";
 import { assertCarriedReferenceStep, assertContainerLiveStep, type CarriedScenario } from "./dynamic-object-live";
 
-export const dailyClericDraft = { ...historyHttpDraft, classId: "cleric", subclassId: "life", backgroundId: "acolyte",
-  scores: { str: 12, dex: 10, con: 13, int: 8, wis: 15, cha: 14 },
-  cantrips: ["sacred-flame"], prepared: ["cure"], spellbook: [] };
+export const dailyClericDraft = completeDraft({ ...historyHttpDraft, classId: "cleric", subclassId: "life", backgroundId: "acolyte",
+  scores: { str: 12, dex: 10, con: 13, int: 8, wis: 15, cha: 14 }, extraSkillIds: [], toolChoices: undefined,
+  cantrips: ["sacred-flame"], prepared: ["cure"], spellbook: [] });
 /** SPEC 0004 §4: a rogue from the criminal background, proficient with
  * thieves' tools by class and background and with Expertise in them;
  * Dexterity 16 (+3), so picking a lock is +3 and twice the bonus of 2. */
-export const dailyRogueDraft = { ...historyHttpDraft, name: "码头锁匠", classId: "rogue", subclassId: "thief", backgroundId: "criminal",
+export const dailyRogueDraft = completeDraft({ ...historyHttpDraft, name: "码头锁匠", classId: "rogue", subclassId: "thief", backgroundId: "criminal",
   scores: { str: 8, dex: 15, con: 14, int: 10, wis: 12, cha: 10 }, extraSkillIds: ["acrobatics", "perception", "sleight", "investigation"],
-  expertiseIds: ["stealth", "thieves-tools"], toolChoices: { background: "dice-set" } };
+  expertiseIds: ["stealth", "thieves-tools"], toolChoices: { background: "dice-set" } });
 type Snapshot = NonNullable<Awaited<ReturnType<typeof historyHttpAuthority>>>;
 /** A later player step: words for the table; words pressing again, sent
  * only while no question waits; or the answer to the KP's waiting question

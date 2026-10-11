@@ -3,11 +3,17 @@ import {
   BACKGROUNDS,
   CLASSES,
   CLASS_KITS,
+  CLERIC_CANTRIPS,
+  CLERIC_SPELLS,
   RACES,
+  RANGER_SPELLS,
   SPELLS,
+  WIZARD_CANTRIPS,
+  WIZARD_SPELLS,
   armorProficiencies,
   backgroundById,
   classById,
+  dragonAncestryById,
   listFreeBoosts,
   raceById,
   toolChoiceOptions,
@@ -177,7 +183,7 @@ export function compileSheet(draft: DraftSheet): CharacterSheet {
   const cls = classById(draft.classId) ?? CLASSES[0];
   const race = raceById(draft.raceId) ?? RACES[0];
   const bg = BACKGROUNDS.find((b) => b.id === draft.backgroundId);
-  const scores = finalScores(draft.scores, draft.raceId);
+  const scores = finalScores(draft.scores, draft.raceId, validHalfElfPicks(draft) ? draft.halfElfPicks : undefined);
   const kits = CLASS_KITS[cls.id] ?? [[]];
   const kit = kits[Math.min(draft.equipmentChoice, kits.length - 1)] ?? kits[0];
   const equipment = [...kit, ...(bg?.equipment ?? [])];
@@ -200,12 +206,22 @@ export function compileSheet(draft: DraftSheet): CharacterSheet {
   const hpMax = maxHp(cls.id, abilityMod(scores.con), race.id);
   const gear = kitToGear(equipment);
   const ac = acFromGear(cls.id, scores, gear.equipped);
+  const ancestry = race.id === "dragonborn" ? dragonAncestryById(draft.dragonAncestry) : undefined;
   const features = [
-    ...race.traits,
+    // SRD 5.1 Draconic Ancestry: the breath and the resistance of the chosen dragon.
+    ...(ancestry === undefined ? race.traits : [
+      `龙种：${ancestry.name}`,
+      `吐息武器：动作，${ancestry.breath}，${ancestry.save}豁免 DC＝8＋熟练＋体质调整，失败受 2d6 ${ancestry.damage}伤害，成功减半。短休或长休后可再用`,
+      `${ancestry.damage}伤害抗性`,
+      ...race.traits.slice(2),
+    ]),
     ...cls.features,
     ...(subclass?.features ?? []),
   ];
-  const cantrips = [...draft.cantrips];
+  // Only the spells the class offers, in the counts it allows; a race's own
+  // cantrip is added below (SPEC 0004 §4 counts, ADR 0156).
+  const spells = draftSpells(draft);
+  const cantrips = [...spells.cantrips];
   if (race.extraCantrip && !cantrips.includes("prestidigitation")) {
     cantrips.push("prestidigitation");
   }
@@ -225,8 +241,9 @@ export function compileSheet(draft: DraftSheet): CharacterSheet {
     expertise,
     toolChoices,
     cantrips,
-    prepared: draft.prepared,
-    spellbook: draft.spellbook,
+    prepared: spells.prepared,
+    spellbook: spells.spellbook,
+    ...(ancestry === undefined ? {} : { dragonAncestry: ancestry.id }),
     equipment,
     equipped: gear.equipped,
     backpack: gear.backpack,
@@ -430,12 +447,86 @@ export function proficientKitChoice(draft: ProficiencySource & Pick<DraftSheet, 
  * proficient with when the chosen one is not. */
 export function normalizeDraftChoices(draft: DraftSheet): DraftSheet {
   const choice = expertiseChoice(draft);
+  const { halfElfPicks, dragonAncestry, ...rest } = draft;
   return {
-    ...draft,
+    ...rest,
+    // A half-elf's +1 picks and a dragonborn's ancestry belong to that race only.
+    ...(draft.raceId === "half-elf" && halfElfPicks !== undefined
+      ? { halfElfPicks: halfElfPicks.filter((ability, index) => ability !== "cha" && halfElfPicks.indexOf(ability) === index).slice(0, 2) }
+      : {}),
+    ...(draft.raceId === "dragonborn" && dragonAncestry !== undefined ? { dragonAncestry } : {}),
+    ...draftSpells(draft),
     toolChoices: validToolChoices(draft),
     expertiseIds: choice === undefined ? [] : chosenExpertise(draft, choice),
     equipmentChoice: proficientKitChoice(draft),
   };
+}
+
+/** A half-elf's picks: two different abilities other than Charisma. */
+export function validHalfElfPicks(draft: Pick<DraftSheet, "raceId" | "halfElfPicks">): boolean {
+  const picks = draft.halfElfPicks ?? [];
+  return draft.raceId === "half-elf" && picks.length === 2 && picks[0] !== picks[1]
+    && picks.every((ability) => ability !== "cha" && (ABILITIES as readonly string[]).includes(ability));
+}
+
+/** SRD 5.1 (2014), 3rd level: what a class picks of its spells. A wizard's
+ * spellbook holds 10 spells (6 at 1st level, 2 more each level) and it
+ * prepares Intelligence modifier + 3 of them; a cleric prepares Wisdom
+ * modifier + 3 of its list; a ranger knows 3. Wizards and clerics know 3
+ * cantrips, rangers none. A race's own cantrip (the high elf's
+ * Prestidigitation, the tiefling's Thaumaturgy) is not one of the picks.
+ * Null for a class without spellcasting. */
+export type SpellRequirement = {
+  cantrips: { pool: readonly string[]; count: number };
+  spellbook: { pool: readonly string[]; count: number } | null;
+  prepared: { pool: readonly string[]; count: number; label: "已准备" | "已知法术" };
+};
+
+const RACIAL_CANTRIP: Readonly<Record<string, string>> = { "high-elf": "prestidigitation", tiefling: "thaumaturgy" };
+
+export function spellRequirement(draft: Pick<DraftSheet, "classId" | "raceId" | "scores" | "halfElfPicks" | "spellbook">): SpellRequirement | null {
+  const kind = classById(draft.classId)?.spellcasting;
+  if (kind === undefined) return null;
+  const finals = finalScores(draft.scores, draft.raceId, validHalfElfPicks(draft) ? draft.halfElfPicks : undefined);
+  const racial = RACIAL_CANTRIP[draft.raceId];
+  const cantripPool = (kind === "cleric" ? CLERIC_CANTRIPS : kind === "wizard" ? WIZARD_CANTRIPS : []).filter((id) => id !== racial);
+  if (kind === "ranger") return { cantrips: { pool: [], count: 0 }, spellbook: null, prepared: { pool: RANGER_SPELLS, count: 3, label: "已知法术" } };
+  if (kind === "cleric") {
+    return { cantrips: { pool: cantripPool, count: 3 }, spellbook: null,
+      prepared: { pool: CLERIC_SPELLS, count: Math.max(1, abilityMod(finals.wis) + 3), label: "已准备" } };
+  }
+  const book = draft.spellbook.filter((id) => WIZARD_SPELLS.includes(id));
+  return { cantrips: { pool: cantripPool, count: 3 }, spellbook: { pool: WIZARD_SPELLS, count: 10 },
+    prepared: { pool: book, count: Math.max(1, abilityMod(finals.int) + 3), label: "已准备" } };
+}
+
+/** The draft's spells kept to what its class offers and allows: a wizard
+ * prepares only from its spellbook, a ranger's known spells are its
+ * prepared list, and a class without spellcasting picks none. */
+export function draftSpells(draft: Pick<DraftSheet, "classId" | "raceId" | "scores" | "halfElfPicks" | "cantrips" | "prepared" | "spellbook">):
+  Pick<DraftSheet, "cantrips" | "prepared" | "spellbook"> {
+  // A ranger draft from before kept its known spells in the spellbook.
+  const known = classById(draft.classId)?.spellcasting === "ranger" && draft.prepared.length === 0 ? draft.spellbook : draft.prepared;
+  const need = spellRequirement(draft);
+  if (need === null) return { cantrips: [], prepared: [], spellbook: [] };
+  const keep = (ids: readonly string[], pool: readonly string[], count: number) =>
+    [...new Set(ids)].filter((id) => pool.includes(id)).slice(0, count);
+  const spellbook = need.spellbook === null ? [] : keep(draft.spellbook, need.spellbook.pool, need.spellbook.count);
+  const preparedPool = need.spellbook === null ? need.prepared.pool : spellbook;
+  return {
+    cantrips: keep(draft.cantrips, need.cantrips.pool, need.cantrips.count),
+    spellbook,
+    prepared: keep(known, preparedPool, need.prepared.count),
+  };
+}
+
+/** The class skill picks a draft makes: how many, from which list, and how
+ * many of them may come from outside it (a human's or half-elf's extra
+ * skills, which can be any). */
+export function skillPickRule(draft: Pick<DraftSheet, "classId" | "raceId">): { count: number; classList: readonly SkillId[]; anyCount: number } {
+  const cls = classById(draft.classId);
+  const anyCount = raceById(draft.raceId)?.extraSkills ?? 0;
+  return { count: (cls?.skillPicks ?? 0) + anyCount, classList: cls?.skillList ?? [], anyCount };
 }
 
 export type DraftChoiceStep = "race" | "class" | "background" | "skills";
@@ -465,6 +556,112 @@ export function pendingDraftChoices(draft: DraftSheet): PendingDraftChoice[] {
     pending.push({ step: choice.source === "subclass" ? "class" : "skills", text: `${missing} 项专精` });
   }
   return pending;
+}
+
+/** Where a draft issue is fixed in the wizard. */
+export type DraftIssueStep = DraftChoiceStep | "scores" | "spells" | "equipment" | "identity";
+export type DraftIssue = { step: DraftIssueStep; text: string };
+
+/** Everything a draft must settle before it is locked, in the wizard's step
+ * order: the race's choices, a legal point buy, the full count of class
+ * skills, the class's spells in their counts, a kit the character is
+ * proficient with, and a name. The wizard shows these and the server refuses
+ * a draft that has any (ADR 0156). */
+export function draftIssues(draft: DraftSheet): DraftIssue[] {
+  const issues: DraftIssue[] = pendingDraftChoices(draft).map((choice) => ({ step: choice.step, text: `选${choice.text}` }));
+  if (draft.raceId === "half-elf" && !validHalfElfPicks(draft)) {
+    issues.push({ step: "race", text: "选半精灵另外两项各 +1 的属性" });
+  }
+  if (draft.raceId === "dragonborn" && dragonAncestryById(draft.dragonAncestry) === undefined) {
+    issues.push({ step: "race", text: "选龙种" });
+  }
+  const spent = pointsSpent(draft.scores);
+  if (ABILITIES.some((ability) => !Number.isInteger(draft.scores[ability]) || draft.scores[ability] < 8 || draft.scores[ability] > 15)) {
+    issues.push({ step: "scores", text: "把每项属性的点买基础定在 8 到 15 之间" });
+  } else if (spent > POINT_BUY_CAP) {
+    issues.push({ step: "scores", text: `点买超出 ${spent - POINT_BUY_CAP} 点（上限 ${POINT_BUY_CAP} 点）` });
+  }
+  const rule = skillPickRule(draft);
+  const granted = new Set<string>(grantedSkills(draft));
+  const picks = draft.extraSkillIds;
+  const outside = picks.filter((id) => !rule.classList.includes(id)).length;
+  if (new Set(picks).size !== picks.length || picks.some((id) => granted.has(id))) {
+    issues.push({ step: "skills", text: "去掉重复或已经熟练的技能" });
+  } else if (outside > rule.anyCount) {
+    issues.push({ step: "skills", text: `职业技能表以外的技能最多选 ${rule.anyCount} 项` });
+  } else if (picks.length !== rule.count) {
+    issues.push({ step: "skills", text: picks.length < rule.count ? `再选 ${rule.count - picks.length} 项技能` : `技能多选了 ${picks.length - rule.count} 项` });
+  }
+  const need = spellRequirement(draft);
+  const kept = draftSpells(draft);
+  if (need === null) {
+    if (draft.cantrips.length + draft.prepared.length + draft.spellbook.length > 0) {
+      issues.push({ step: "spells", text: "这个职业不选法术" });
+    }
+  } else {
+    const counts: Array<[string[], readonly string[], number, string]> = [
+      [draft.cantrips, kept.cantrips, need.cantrips.count, "个戏法"],
+      ...(need.spellbook === null ? [] : [[draft.spellbook, kept.spellbook, need.spellbook.count, "个法术书里的法术"] as [string[], readonly string[], number, string]]),
+      [draft.prepared, kept.prepared, need.prepared.count, need.prepared.label === "已知法术" ? "个已知法术" : "个准备的法术"],
+    ];
+    for (const [picked, legal, count, noun] of counts) {
+      if (legal.length !== picked.length) issues.push({ step: "spells", text: `去掉不能选或多选的${noun.slice(1)}` });
+      else if (legal.length < count) issues.push({ step: "spells", text: `再选 ${count - legal.length} ${noun}` });
+    }
+    if (need.spellbook === null && draft.spellbook.length > 0) {
+      issues.push({ step: "spells", text: "去掉法术书（只有法师有）" });
+    }
+  }
+  const gaps = kitProficiencyGaps(draft);
+  if (gaps.some((gap) => gap.length === 0) && (gaps[draft.equipmentChoice]?.length ?? 0) > 0) {
+    issues.push({ step: "equipment", text: "换一套你熟练的行装" });
+  }
+  if (!draft.name.trim()) issues.push({ step: "identity", text: "填写姓名" });
+  return issues;
+}
+
+function plainRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function shortText(value: unknown, max: number): value is string {
+  return typeof value === "string" && value.length <= max;
+}
+
+const DRAFT_KEYS: readonly string[] = ["name", "raceId", "classId", "subclassId", "backgroundId", "scores", "extraSkillIds",
+  "halfElfPicks", "dragonAncestry", "toolChoices", "expertiseIds", "cantrips", "prepared", "spellbook", "equipmentChoice",
+  "appearance", "trait", "ideal", "bond", "flaw"];
+
+/** Whether a value from the network is a wizard draft at all: known keys of
+ * the right types, catalog ids, and lists of known skills and spells. It
+ * says nothing of whether the choices are complete (`draftIssues`). */
+export function isDraftSheet(value: unknown): value is DraftSheet {
+  if (!plainRecord(value) || !Object.keys(value).every((key) => DRAFT_KEYS.includes(key))) return false;
+  if (!shortText(value.name, 120) || !shortText(value.raceId, 100) || !shortText(value.classId, 100)
+    || !shortText(value.subclassId, 100) || !shortText(value.backgroundId, 100)
+    || !["appearance", "trait", "ideal", "bond", "flaw"].every((key) => shortText(value[key], 4_000))) return false;
+  const cls = classById(value.classId);
+  if (!cls || !raceById(value.raceId) || !BACKGROUNDS.some((item) => item.id === value.backgroundId)
+    || !(cls.subclasses.length === 0 && value.subclassId === "")
+      && !cls.subclasses.some((item) => item.id === value.subclassId)) return false;
+  if (!plainRecord(value.scores) || !ABILITIES.every((key) => Number.isInteger((value.scores as Record<string, unknown>)[key]))
+    || Object.keys(value.scores).length !== ABILITIES.length) return false;
+  if (!Number.isInteger(value.equipmentChoice) || Number(value.equipmentChoice) < 0
+    || Number(value.equipmentChoice) >= (CLASS_KITS[cls.id]?.length ?? 1)) return false;
+  const list = (entries: unknown, known: (id: unknown) => boolean, max = 100) => Array.isArray(entries) && entries.length <= max
+    && new Set(entries).size === entries.length && entries.every((entry) => typeof entry === "string" && known(entry));
+  if (!list(value.extraSkillIds, (id) => SKILLS.some((skill) => skill.id === id))
+    || !["cantrips", "prepared", "spellbook"].every((key) => list(value[key], (id) => SPELLS.some((spell) => spell.id === id)))) return false;
+  if (value.halfElfPicks !== undefined && !list(value.halfElfPicks, (id) => (ABILITIES as readonly unknown[]).includes(id), 2)) return false;
+  if (value.dragonAncestry !== undefined && dragonAncestryById(value.dragonAncestry) === undefined) return false;
+  // SPEC 0004 §4: each tool picked for a "one of your choice" grant is one that grant offers.
+  const offeredTools: Record<string, unknown> = validToolChoices(value as DraftSheet);
+  if (value.toolChoices !== undefined && (!plainRecord(value.toolChoices)
+    || !Object.keys(value.toolChoices).every((key) => (TOOL_CHOICE_SOURCES as readonly string[]).includes(key))
+    || !Object.entries(value.toolChoices).every(([source, tool]) => tool === undefined || offeredTools[source] === tool))) return false;
+  if (value.expertiseIds !== undefined && !list(value.expertiseIds,
+    (id) => SKILLS.some((skill) => skill.id === id) || TOOLS.some((tool) => tool.id === id), 4)) return false;
+  return true;
 }
 
 export type ProficiencyEntry = { id: string; label: string; expertise: boolean };

@@ -7,7 +7,7 @@ import {
 } from "@/lib/platform/server-fn";
 import { getSql } from "@/lib/db";
 import { roomCode, uid } from "@/lib/utils";
-import { compileSheet, ensureGear } from "@/lib/dnd/compute";
+import { compileSheet, draftIssues, ensureGear, isDraftSheet, normalizeDraftChoices } from "@/lib/dnd/compute";
 import type { CharacterSheet, DraftSheet } from "@/lib/dnd/types";
 import { GEAR_SLOTS, type GearSlot } from "@/lib/dnd/gear";
 import { getModule, listModules } from "@/lib/module";
@@ -1179,10 +1179,16 @@ export const lockCharacter = createServerFn({ method: "POST" })
     worldEntry?: string;
   }) => input)
   .handler(async ({ context, data }) => {
+    // ADR 0156: the server checks the card the way the wizard does; a draft
+    // that is not one, or that owes a choice, is refused before it compiles.
+    if (!isDraftSheet(data.draft)) return { ok: false as const, error: "人物卡数据无效" };
+    const draft = normalizeDraftChoices(data.draft);
+    const issues = draftIssues(draft);
+    if (issues.length > 0) return { ok: false as const, error: `人物卡还没完成：${issues.map((issue) => issue.text).join("；")}。` };
     const room = await roomByCode(data.code);
     if (!room) return { ok: false as const, error: "找不到这间房" };
     await memberOf(room.id, context.userId);
-    const sheet = compileSheet(data.draft);
+    const sheet = compileSheet(draft);
     const sql = await getSql();
     const rules = await roomRuleset(sql, room.id);
     if (rules?.ruleset_version !== AUTHORITATIVE_RULESET_VERSION) {

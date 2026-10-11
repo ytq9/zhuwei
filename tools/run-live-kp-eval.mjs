@@ -247,6 +247,8 @@ function fighterDraft(role) {
       backgroundId: "soldier",
       scores: { str: 15, dex: 13, con: 14, int: 8, wis: 12, cha: 10 },
       extraSkillIds: ["perception", "insight", "survival"],
+      // The server refuses a card that owes a choice (ADR 0156).
+      toolChoices: { background: "playing-card-set" },
       cantrips: [],
       prepared: [],
       spellbook: [],
@@ -266,6 +268,7 @@ function fighterDraft(role) {
     backgroundId: "soldier",
     scores: { str: 14, dex: 12, con: 15, int: 8, wis: 13, cha: 10 },
     extraSkillIds: ["perception", "survival"],
+    toolChoices: { race: "smiths-tools", subclass: "cartographers-tools", background: "dice-set" },
     cantrips: [],
     prepared: [],
     spellbook: [],

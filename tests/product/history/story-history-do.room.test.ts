@@ -3,6 +3,7 @@ import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { beforeAll, expect, it } from "vitest";
 import { compileSheet } from "../../../app/_runtime/lib/dnd/compute";
 import type { DraftSheet } from "../../../app/_runtime/lib/dnd/types";
+import { completeDraft } from "../../support/fixtures/complete-draft";
 import { buildAuthoritativeCharacterSeed } from "../../../app/_runtime/lib/table/authoritative";
 import { createStoryHistoryServer } from "../../../app/_runtime/lib/room/story-history-server";
 import { storyHistoricalTargetRoomId, storyRoomIdentityIds } from "../../../app/_runtime/lib/room/story-history-identity";
@@ -20,11 +21,13 @@ beforeAll(async () => {
     for (const statement of sql.split("--> statement-breakpoint").map(value => value.trim()).filter(Boolean)) await db.prepare(statement).run();
   }
 }, 30_000);
-const draft: DraftSheet = { name: "河港医师", raceId: "human", classId: "fighter", subclassId: "champion", backgroundId: "soldier",
+// Complete cards: the server refuses one that owes a choice (ADR 0156).
+const draft: DraftSheet = completeDraft({ name: "河港医师", raceId: "human", classId: "fighter", subclassId: "champion", backgroundId: "soldier",
   scores: { str: 15, dex: 13, con: 14, int: 8, wis: 10, cha: 12 }, extraSkillIds: [], cantrips: [], prepared: [], spellbook: [],
-  equipmentChoice: 0, appearance: "带着药包的旅人", trait: "谨慎", ideal: "救助", bond: "故乡", flaw: "好奇" };
-const wizard: DraftSheet = { ...draft, name: "档案学者", raceId: "high-elf", classId: "wizard", subclassId: "evocation", backgroundId: "sage",
-  scores: { str: 8, dex: 14, con: 13, int: 15, wis: 12, cha: 10 }, cantrips: ["fire-bolt"], spellbook: ["magic-missile"], prepared: ["magic-missile"] };
+  equipmentChoice: 0, appearance: "带着药包的旅人", trait: "谨慎", ideal: "救助", bond: "故乡", flaw: "好奇" });
+const wizard: DraftSheet = completeDraft({ ...draft, name: "档案学者", raceId: "high-elf", classId: "wizard", subclassId: "evocation", backgroundId: "sage",
+  scores: { str: 8, dex: 14, con: 13, int: 15, wis: 12, cha: 10 }, extraSkillIds: [], toolChoices: undefined,
+  cantrips: ["fire-bolt"], spellbook: ["magic-missile"], prepared: ["magic-missile"] });
 
 async function source(workflowManifest = VNEXT_KP_WORKFLOW_MANIFEST_JSON) {
   const suffix = crypto.randomUUID(), roomId = `room:history-rpc:${suffix}`, userId = `account:${suffix}`;

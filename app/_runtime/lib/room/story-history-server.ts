@@ -1,8 +1,7 @@
 import { env } from "cloudflare:workers";
 import { getD1 } from "../../../../db";
-import { BACKGROUNDS, CLASS_KITS, SPELLS, classById, raceById, validToolChoices } from "../dnd/catalog";
-import { compileSheet, pointsSpent, POINT_BUY_CAP } from "../dnd/compute";
-import { ABILITIES, SKILLS, TOOL_CHOICE_SOURCES, TOOLS, type DraftSheet } from "../dnd/types";
+import { compileSheet, draftIssues, isDraftSheet, normalizeDraftChoices } from "../dnd/compute";
+import type { DraftSheet } from "../dnd/types";
 import { DISABLED_CONTEXT_PLANNER_PROFILE_REF } from "../kp/model-registry";
 import { isRegisteredModuleRef } from "../module/registry";
 import { AUTHORITATIVE_RULESET_VERSION } from "../rules/ruleset";
@@ -67,45 +66,11 @@ function startsInput(value: unknown): value is ListHistoricalStartsInput {
   return roomInput(value) && exactKeys(value, ["code", "cursor"]) && cursor(value.cursor);
 }
 
-/** Validate the ordinary wizard's transport and catalog choices before its
- * compiler (which otherwise has fallback choices). Rules still owns builds. */
+/** Validate the ordinary wizard's draft before its compiler: a draft at all
+ * (`isDraftSheet`) and one that owes no choice, as the table's lock does
+ * (ADR 0156). Rules still owns builds. */
 function draftInput(value: unknown): value is DraftSheet {
-  if (!record(value) || !exactKeys(value, ["name", "raceId", "classId", "subclassId", "backgroundId",
-    "scores", "extraSkillIds", "toolChoices", "expertiseIds", "cantrips", "prepared", "spellbook", "equipmentChoice",
-    "appearance", "trait", "ideal", "bond", "flaw"])) return false;
-  if (!string(value.name, 120) || !string(value.raceId, 100) || !string(value.classId, 100)
-    || !string(value.subclassId, 100, true) || !string(value.backgroundId, 100)
-    || !["appearance", "trait", "ideal", "bond", "flaw"].every(key => string(value[key], 4_000, true))) return false;
-  const cls = classById(value.classId);
-  if (!cls || !raceById(value.raceId) || !BACKGROUNDS.some(item => item.id === value.backgroundId)
-    || !(cls.subclasses.length === 0 && value.subclassId === "")
-      && !cls.subclasses.some(item => item.id === value.subclassId)) return false;
-  if (!record(value.scores) || !exactKeys(value.scores, ABILITIES)
-    || !ABILITIES.every(key => Number.isInteger((value.scores as Record<string, unknown>)[key])
-      && Number((value.scores as Record<string, unknown>)[key]) >= 8
-      && Number((value.scores as Record<string, unknown>)[key]) <= 15)
-    || pointsSpent(value.scores as DraftSheet["scores"]) > POINT_BUY_CAP) return false;
-  if (!Number.isInteger(value.equipmentChoice) || Number(value.equipmentChoice) < 0
-    || Number(value.equipmentChoice) >= (CLASS_KITS[cls.id]?.length ?? 1)) return false;
-  for (const key of ["extraSkillIds", "cantrips", "prepared", "spellbook"]) {
-    const entries = value[key];
-    if (!Array.isArray(entries) || entries.length > 100 || new Set(entries).size !== entries.length
-      || !entries.every(entry => string(entry, 100) && (key === "extraSkillIds"
-        ? SKILLS.some(skill => skill.id === entry) : SPELLS.some(spell => spell.id === entry)))) return false;
-  }
-  // SPEC 0004 §4: each tool picked for a "one of your choice" grant (race,
-  // subclass or background) is one that grant of this draft offers.
-  const offeredTools: Record<string, unknown> = validToolChoices(value);
-  if (value.toolChoices !== undefined && (!record(value.toolChoices)
-    || !exactKeys(value.toolChoices, TOOL_CHOICE_SOURCES)
-    || !Object.entries(value.toolChoices).every(([source, tool]) => offeredTools[source] === tool))) return false;
-  // Expertise names skills or tools; compileSheet keeps those the draft offers.
-  const expertise = value.expertiseIds;
-  if (expertise !== undefined && (!Array.isArray(expertise) || expertise.length > 4
-    || new Set(expertise).size !== expertise.length
-    || !expertise.every(id => string(id, 100)
-      && (SKILLS.some(skill => skill.id === id) || TOOLS.some(tool => tool.id === id))))) return false;
-  return true;
+  return isDraftSheet(value) && draftIssues(normalizeDraftChoices(value)).length === 0;
 }
 function creationInput(value: unknown): value is CreateHistoricalRoomInput {
   return roomInput(value) && exactKeys(value, ["code", "submissionId", "startToken", "nickname", "draft"])
@@ -227,7 +192,7 @@ export function createStoryHistoryServer(deps: {
       }
       const targetRoomId = storyHistoricalTargetRoomId(userId, data.submissionId);
       const identity = storyRoomIdentityIds(targetRoomId, userId);
-      const sheet = compileSheet(data.draft);
+      const sheet = compileSheet(normalizeDraftChoices(data.draft));
       const character = buildAuthoritativeCharacterSeed({ characterId: identity.characterId,
         controllerPrincipalId: userId, sheet, runtimeProfiles,
         sceneId: "scene:historical-origin-pending" });

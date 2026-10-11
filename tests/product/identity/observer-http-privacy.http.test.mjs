@@ -133,7 +133,9 @@ function characterDraft(name, flaw = "多疑") {
     subclassId: "champion",
     backgroundId: "soldier",
     scores: { str: 15, dex: 13, con: 14, int: 8, wis: 10, cha: 12 },
-    extraSkillIds: [],
+    // A complete card: the server refuses one that owes a choice (ADR 0156).
+    extraSkillIds: ["perception", "insight", "survival"],
+    toolChoices: { background: "dice-set" },
     cantrips: [],
     prepared: [],
     spellbook: [],

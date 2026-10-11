@@ -1008,6 +1008,25 @@ export const CLASS_KITS: Record<string, string[][]> = {
   ],
 };
 
+/** SRD 5.1 Draconic Ancestry: the dragonborn's dragon, the damage its
+ * breath deals and resists, the breath's shape and the save against it. */
+export const DRAGON_ANCESTRIES = [
+  { id: "black", name: "黑龙", damage: "强酸", breath: "5 尺宽、30 尺长的直线", save: "敏捷" },
+  { id: "blue", name: "蓝龙", damage: "闪电", breath: "5 尺宽、30 尺长的直线", save: "敏捷" },
+  { id: "brass", name: "黄铜龙", damage: "火焰", breath: "5 尺宽、30 尺长的直线", save: "敏捷" },
+  { id: "bronze", name: "青铜龙", damage: "闪电", breath: "5 尺宽、30 尺长的直线", save: "敏捷" },
+  { id: "copper", name: "赤铜龙", damage: "强酸", breath: "5 尺宽、30 尺长的直线", save: "敏捷" },
+  { id: "gold", name: "金龙", damage: "火焰", breath: "15 尺锥形", save: "敏捷" },
+  { id: "green", name: "绿龙", damage: "毒素", breath: "15 尺锥形", save: "体质" },
+  { id: "red", name: "红龙", damage: "火焰", breath: "15 尺锥形", save: "敏捷" },
+  { id: "silver", name: "银龙", damage: "寒冷", breath: "15 尺锥形", save: "体质" },
+  { id: "white", name: "白龙", damage: "寒冷", breath: "15 尺锥形", save: "体质" },
+] as const;
+
+export function dragonAncestryById(id: unknown) {
+  return DRAGON_ANCESTRIES.find((ancestry) => ancestry.id === id);
+}
+
 export function raceById(id: string) {
   return RACES.find((r) => r.id === id);
 }

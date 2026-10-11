@@ -5,6 +5,7 @@ import { storyHistoricalTargetRoomId, storyRoomIdentityIds } from "../../../app/
 import type { CreateHistoricalRoomInput, InitializeHistoricalAuthoritativeInput, InitializeHistoricalAuthoritativeResult, StoryHistoryRpc } from "../../../app/_runtime/lib/room/story-history-api-types";
 import type { StoryViewerExport } from "../../../app/_runtime/lib/room/story-history/contracts";
 import type { DraftSheet } from "../../../app/_runtime/lib/dnd/types";
+import { completeDraft } from "../../support/fixtures/complete-draft";
 import { canonicalSha256 } from "../../../app/_runtime/lib/rules/profiles/canonical";
 import { VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST } from "../../../app/_runtime/lib/rules/profiles/vnext-world-interaction";
 import { VNEXT_KP_PROFILE, VNEXT_KP_WORKFLOW_MANIFEST_JSON } from "../../../app/_runtime/lib/kp/vnext/runtime-policy";
@@ -27,11 +28,12 @@ beforeAll(async () => {
 }, 30_000);
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-const draft: DraftSheet = {
+// A complete card: the server refuses one that owes a choice (ADR 0156).
+const draft: DraftSheet = completeDraft({
   name: "林舟", raceId: "human", classId: "fighter", subclassId: "champion", backgroundId: "soldier",
   scores: { str: 15, dex: 13, con: 14, int: 8, wis: 10, cha: 12 }, extraSkillIds: [], cantrips: [], prepared: [],
   spellbook: [], equipmentChoice: 0, appearance: "旅行者", trait: "谨慎", ideal: "求知", bond: "故乡", flaw: "好奇",
-};
+});
 const moduleRef = (await authoritativeModuleProfile("black-oak-will", "social-resolution-v1")).moduleRef;
 type Initialized = Extract<InitializeHistoricalAuthoritativeResult, { kind: "initialized" }>;
 
@@ -84,9 +86,9 @@ it("creates two ordinary builds through the same adapter with distinct room-scop
   const f = await fixture();
   const starts = await f.api.listHistoricalStarts({ userId: f.userId, data: { code: f.code, cursor: null } });
   expect(starts.kind).toBe("listed");
-  const wizard: DraftSheet = { ...draft, name: "沈星", raceId: "high-elf", classId: "wizard", subclassId: "evocation",
-    backgroundId: "sage", scores: { str: 8, dex: 14, con: 13, int: 15, wis: 12, cha: 10 },
-    cantrips: ["fire-bolt"], spellbook: ["magic-missile"], prepared: ["magic-missile"] };
+  const wizard: DraftSheet = completeDraft({ ...draft, name: "沈星", raceId: "high-elf", classId: "wizard", subclassId: "evocation",
+    backgroundId: "sage", scores: { str: 8, dex: 14, con: 13, int: 15, wis: 12, cha: 10 }, extraSkillIds: [], toolChoices: undefined,
+    cantrips: ["fire-bolt"], spellbook: ["magic-missile"], prepared: ["magic-missile"] });
   for (const character of [draft, wizard]) {
     const request = { ...f.request, submissionId: crypto.randomUUID(), draft: character };
     const result = await f.api.createHistoricalRoom({ userId: f.userId, data: request });

@@ -5,13 +5,9 @@ import {
   BACKGROUNDS,
   CLASSES,
   CLASS_KITS,
-  CLERIC_CANTRIPS,
-  CLERIC_SPELLS,
-  RANGER_SPELLS,
+  DRAGON_ANCESTRIES,
   RACES,
   SPELLS,
-  WIZARD_CANTRIPS,
-  WIZARD_SPELLS,
   backgroundById,
   classById,
   raceById,
@@ -21,17 +17,20 @@ import {
   POINT_BUY_CAP,
   chosenExpertise,
   compileSheet,
+  draftIssues,
   expertiseChoice,
   finalScores,
   grantedSkills,
   kitProficiencyGaps,
   normalizeDraftChoices,
-  pendingDraftChoices,
   pointsSpent,
   sheetProficiencies,
   skillOrToolLabel,
+  skillPickRule,
+  spellRequirement,
   toolChoiceLabel,
-  type DraftChoiceStep,
+  validHalfElfPicks,
+  type DraftIssueStep,
 } from "@/lib/dnd/compute";
 import {
   ABILITIES,
@@ -83,12 +82,16 @@ export const DEFAULT_DRAFT: DraftSheet = {
   flaw: "",
 };
 
-/** The step where each owed proficiency choice is made. */
-const CHOICE_STEP: Record<DraftChoiceStep, number> = {
+/** The step where each thing a draft still owes is settled (ADR 0156). */
+const ISSUE_STEP: Record<DraftIssueStep, number> = {
   race: STEPS.indexOf("种族"),
   class: STEPS.indexOf("职业"),
+  scores: STEPS.indexOf("属性"),
   background: STEPS.indexOf("背景"),
   skills: STEPS.indexOf("技能"),
+  spells: STEPS.indexOf("法术"),
+  equipment: STEPS.indexOf("装备"),
+  identity: STEPS.indexOf("身份"),
 };
 
 export function CharacterWizard({
@@ -108,12 +111,13 @@ export function CharacterWizard({
   const setDraft = (next: DraftSheet) => setDraftState(normalizeDraftChoices(next));
   const cls = classById(draft.classId)!;
   const spent = pointsSpent(draft.scores);
-  const finals = finalScores(draft.scores, draft.raceId);
-  const skipSpell = !cls.spellcasting && draft.raceId !== "high-elf" && draft.raceId !== "tiefling";
+  const finals = finalScores(draft.scores, draft.raceId, validHalfElfPicks(draft) ? draft.halfElfPicks : undefined);
+  // A race's own cantrip comes with the race; only a spellcasting class picks spells.
+  const skipSpell = !cls.spellcasting;
   const toolOptions = toolChoiceOptions(draft);
   const expertise = expertiseChoice(draft);
-  const pending = pendingDraftChoices(draft);
-  const stepPending = pending.filter((choice) => CHOICE_STEP[choice.step] === step);
+  const pending = draftIssues(draft);
+  const stepPending = pending.filter((issue) => ISSUE_STEP[issue.step] === step);
   const kitGaps = kitProficiencyGaps(draft);
   const anyKitAllowed = kitGaps.some((gap) => gap.length === 0);
   const pickTool = (source: ToolChoiceSource, tool: ToolId | undefined) =>
@@ -181,6 +185,27 @@ export function CharacterWizard({
               selected={draft.toolChoices?.race ? [draft.toolChoices.race] : []}
               max={1}
               onChange={([tool]) => pickTool("race", tool as ToolId | undefined)}
+            />
+          )}
+          {draft.raceId === "half-elf" && (
+            <ChoicePick
+              title="属性：另外两项各 +1"
+              hint="魅力已 +2；再从其他属性中选两项，各 +1。"
+              options={ABILITIES.filter((ability) => ability !== "cha").map((id) => ({ id, label: ABILITY_LABEL[id] }))}
+              selected={draft.halfElfPicks ?? []}
+              max={2}
+              onChange={(ids) => setDraft({ ...draft, halfElfPicks: ids as Ability[] })}
+            />
+          )}
+          {draft.raceId === "dragonborn" && (
+            <ChoicePick
+              title="龙种"
+              hint="决定吐息武器的伤害类型和形状，以及你抵抗的伤害。"
+              options={DRAGON_ANCESTRIES.map((ancestry) => ({ id: ancestry.id,
+                label: `${ancestry.name} · ${ancestry.damage} · ${ancestry.breath}（${ancestry.save}豁免）` }))}
+              selected={draft.dragonAncestry ? [draft.dragonAncestry] : []}
+              max={1}
+              onChange={([id]) => setDraft({ ...draft, dragonAncestry: id })}
             />
           )}
         </div>
@@ -382,18 +407,15 @@ export function CharacterWizard({
           </p>
           <ProficiencySummary sheet={preview} draft={draft} />
           <p className="text-muted">装备：{preview.equipment.join("、")}</p>
-          {!draft.name.trim() && (
-            <p className="text-danger">锁定前请填写姓名。</p>
-          )}
           {pending.length > 0 && (
-            <p className="text-danger">锁定前还要选：{pending.map((choice) => choice.text).join("；")}。</p>
+            <p data-wizard-issues className="text-danger">锁定前还要：{pending.map((issue) => issue.text).join("；")}。</p>
           )}
         </div>
       )}
 
-      {stepPending.length > 0 && (
-        <p className="mt-6 text-sm text-danger">
-          还要选：{stepPending.map((choice) => choice.text).join("；")}。
+      {stepPending.length > 0 && step !== STEPS.length - 1 && (
+        <p data-wizard-step-issues className="mt-6 text-sm text-danger">
+          这一步还要：{stepPending.map((issue) => issue.text).join("；")}。
         </p>
       )}
       <div className="mt-8 flex justify-between gap-3">
@@ -404,7 +426,7 @@ export function CharacterWizard({
           <Button onClick={next} disabled={stepPending.length > 0}>下一步</Button>
         ) : (
           <Button
-            disabled={busy || !draft.name.trim() || pending.length > 0}
+            disabled={busy || pending.length > 0}
             onClick={() => onLock(draft)}
           >
             {busy ? "写入人物卡……" : "锁定人物卡"}
@@ -617,46 +639,40 @@ function SkillsStep({
   draft: DraftSheet;
   onChange: (d: DraftSheet) => void;
 }) {
-  const cls = classById(draft.classId)!;
-  const race = RACES.find((r) => r.id === draft.raceId);
   // Background, race and Knowledge domain skills are already proficient.
   const granted = grantedSkills(draft);
   const locked = new Set<SkillId>(granted);
-  const extra = (race?.extraSkills ?? 0) + cls.skillPicks;
+  const rule = skillPickRule(draft);
   const chosen = draft.extraSkillIds;
+  const outside = chosen.filter((id) => !rule.classList.includes(id)).length;
   const expertise = expertiseChoice(draft);
+  // A class pick comes from the class list; a race's extra picks may be any skill.
+  const pickable = (id: SkillId) => !locked.has(id) && !chosen.includes(id) && chosen.length < rule.count
+    && (rule.classList.includes(id) || outside < rule.anyCount);
   function toggle(id: SkillId) {
-    if (locked.has(id)) return;
-    if (chosen.includes(id)) {
-      onChange({ ...draft, extraSkillIds: chosen.filter((x) => x !== id) });
-      return;
-    }
-    if (chosen.length >= extra) return;
-    if (cls.skillList.length && !cls.skillList.includes(id) && !(race?.extraSkills && !cls.skillList.includes(id))) {
-      if (!cls.skillList.includes(id) && !(race?.extraSkills)) return;
-    }
-    const fromClass = cls.skillList.includes(id);
-    const fromRaceExtra = Boolean(race?.extraSkills);
-    if (!fromClass && !fromRaceExtra) return;
-    onChange({ ...draft, extraSkillIds: [...chosen, id] });
+    if (chosen.includes(id)) onChange({ ...draft, extraSkillIds: chosen.filter((x) => x !== id) });
+    else if (pickable(id)) onChange({ ...draft, extraSkillIds: [...chosen, id] });
   }
   return (
     <div>
       <h2 className="font-display text-2xl">技能</h2>
       <p className="mt-1 text-sm text-muted">
-        已有熟练 {granted.map(skillOrToolLabel).join("、")}。
-        再选 {extra} 项（已选 {chosen.length}）。
+        已有熟练 {granted.map(skillOrToolLabel).join("、") || "无"}。
+        再选 {rule.count} 项（已选 {chosen.length}）
+        {rule.anyCount > 0 ? `，其中 ${rule.anyCount} 项可以不在职业技能表里` : "，都从职业技能表里选"}。
       </p>
       <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-3">
         {SKILLS.map((s) => {
           const isLocked = locked.has(s.id);
           const isOn = isLocked || chosen.includes(s.id);
-          const allowed = isLocked || cls.skillList.includes(s.id) || Boolean(race?.extraSkills);
+          const allowed = isOn || pickable(s.id);
           return (
             <button
               key={s.id}
               type="button"
-              disabled={!allowed || (isLocked as boolean)}
+              aria-pressed={isOn}
+              data-wizard-skill={s.id}
+              disabled={isLocked || !allowed}
               onClick={() => toggle(s.id)}
               className={cn(
                 "rounded-[12px] border px-3 py-2 text-left text-sm",
@@ -686,6 +702,7 @@ function SkillsStep({
   );
 }
 
+/** SRD 5.1 (2014), 3rd level, as `spellRequirement` counts it (ADR 0156). */
 function SpellsStep({
   draft,
   onChange,
@@ -693,90 +710,64 @@ function SpellsStep({
   draft: DraftSheet;
   onChange: (d: DraftSheet) => void;
 }) {
-  const cls = classById(draft.classId);
-  const kind = cls?.spellcasting;
-  const cantripPool = kind === "cleric" ? CLERIC_CANTRIPS : WIZARD_CANTRIPS;
-  const spellPool =
-    kind === "cleric" ? CLERIC_SPELLS : kind === "ranger" ? RANGER_SPELLS : WIZARD_SPELLS;
-  const cantripNeed = kind === "ranger" ? 0 : 3;
-  const bookNeed = kind === "wizard" ? 8 : 0;
-  const prepNeed =
-    kind === "wizard" || kind === "cleric"
-      ? Math.max(1, abilityMod(finalScores(draft.scores, draft.raceId)[kind === "wizard" ? "int" : "wis"]) + 3)
-      : kind === "ranger"
-        ? 3
-        : 0;
-
+  const need = spellRequirement(draft);
+  if (need === null) return <p className="text-sm text-muted">此职业不选法术。</p>;
   function toggle(list: string[], id: string, cap: number) {
     if (list.includes(id)) return list.filter((x) => x !== id);
     if (list.length >= cap) return list;
     return [...list, id];
   }
-
+  const wizard = need.spellbook !== null;
   return (
     <div className="grid gap-6">
       <h2 className="font-display text-2xl">法术</h2>
-      {cantripNeed > 0 && (
+      {need.cantrips.count > 0 && (
         <SpellGroup
-          title={`戏法（${draft.cantrips.length}/${cantripNeed}）`}
-          ids={cantripPool}
+          title={`戏法（${draft.cantrips.length}/${need.cantrips.count}）`}
+          ids={need.cantrips.pool}
           selected={draft.cantrips}
-          onToggle={(id) =>
-            onChange({
-              ...draft,
-              cantrips: toggle(draft.cantrips, id, cantripNeed),
-            })
-          }
+          onToggle={(id) => onChange({ ...draft, cantrips: toggle(draft.cantrips, id, need.cantrips.count) })}
         />
       )}
-      {kind === "wizard" && (
+      {need.spellbook !== null && (
         <SpellGroup
-          title={`法术书（${draft.spellbook.length}/${bookNeed}）`}
-          ids={spellPool}
+          title={`法术书（${draft.spellbook.length}/${need.spellbook.count}）`}
+          hint="3 级法师的法术书里有 10 个法术，每天从中准备一部分。"
+          ids={need.spellbook.pool}
           selected={draft.spellbook}
-          onToggle={(id) =>
-            onChange({
-              ...draft,
-              spellbook: toggle(draft.spellbook, id, bookNeed),
-            })
-          }
+          onToggle={(id) => onChange({ ...draft, spellbook: toggle(draft.spellbook, id, need.spellbook!.count) })}
         />
       )}
-      {prepNeed > 0 && (
-        <SpellGroup
-          title={`${kind === "ranger" ? "已知法术" : "已准备"}（${(kind === "wizard" ? draft.prepared : kind === "ranger" ? draft.spellbook : draft.prepared).length}/${prepNeed}）`}
-          ids={kind === "wizard" ? draft.spellbook.length ? draft.spellbook : spellPool : spellPool}
-          selected={kind === "ranger" ? draft.spellbook : draft.prepared}
-          onToggle={(id) =>
-            onChange(
-              kind === "ranger"
-                ? { ...draft, spellbook: toggle(draft.spellbook, id, prepNeed) }
-                : { ...draft, prepared: toggle(draft.prepared, id, prepNeed) },
-            )
-          }
-        />
-      )}
-      {!kind && (
-        <p className="text-sm text-muted">此职业不以法术见长。高精灵仍会获得一个戏法。</p>
-      )}
+      <SpellGroup
+        title={`${need.prepared.label}（${draft.prepared.length}/${need.prepared.count}）`}
+        hint={wizard
+          ? need.prepared.pool.length === 0 ? "先在上面的法术书里选法术，再从书里准备。" : "只能准备法术书里的法术；数量＝智力调整值＋3。"
+          : need.prepared.label === "已知法术" ? "3 级游侠知道 3 个法术。" : "数量＝感知调整值＋3。"}
+        ids={need.prepared.pool}
+        selected={draft.prepared}
+        onToggle={(id) => onChange({ ...draft, prepared: toggle(draft.prepared, id, need.prepared.count) })}
+      />
     </div>
   );
 }
 
 function SpellGroup({
   title,
+  hint,
   ids,
   selected,
   onToggle,
 }: {
   title: string;
-  ids: string[];
+  hint?: string;
+  ids: readonly string[];
   selected: string[];
   onToggle: (id: string) => void;
 }) {
   return (
     <div>
       <h3 className="mb-2 text-sm text-muted">{title}</h3>
+      {hint ? <p className="-mt-1 mb-2 text-xs text-subtle">{hint}</p> : null}
       <div className="grid gap-2 sm:grid-cols-2">
         {ids.map((id) => {
           const sp = SPELLS.find((s) => s.id === id);
@@ -787,6 +778,8 @@ function SpellGroup({
             <button
               key={id}
               type="button"
+              aria-pressed={on}
+              data-wizard-spell={id}
               onClick={() => onToggle(id)}
               className={cn(
                 "rounded-[12px] border p-3 text-left",

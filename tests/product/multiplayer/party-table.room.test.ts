@@ -6,6 +6,7 @@ import * as room from "../../../app/_runtime/lib/room/server";
 import { answerSquad, cancelSquadInvite, fetchTable, inviteSquad, joinRoom, leaveSquadNow, lockCharacter, passCaptain } from "../../../app/_runtime/lib/table/server";
 import { compileSheet } from "../../../app/_runtime/lib/dnd/compute";
 import type { DraftSheet } from "../../../app/_runtime/lib/dnd/types";
+import { completeDraft } from "../../support/fixtures/complete-draft";
 import { buildAuthoritativeCharacterSeed } from "../../../app/_runtime/lib/table/authoritative";
 import { VNEXT_KP_PROFILE, VNEXT_KP_WORKFLOW_MANIFEST_JSON } from "../../../app/_runtime/lib/kp/vnext/runtime-policy";
 import { VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST } from "../../../app/_runtime/lib/rules/profiles/vnext-world-interaction";
@@ -32,15 +33,17 @@ beforeAll(async () => {
 }, 30_000);
 afterEach(() => vi.restoreAllMocks());
 
-const DRAFT: DraftSheet = {
+// Complete cards: the server refuses one that owes a choice (ADR 0156).
+const BASE: DraftSheet = {
   name: "河港医师", raceId: "human", classId: "fighter", subclassId: "champion", backgroundId: "soldier",
   scores: { str: 15, dex: 13, con: 14, int: 8, wis: 10, cha: 12 }, extraSkillIds: [], cantrips: [], prepared: [], spellbook: [],
   equipmentChoice: 0, appearance: "带着药包的旅人", trait: "谨慎", ideal: "救助", bond: "故乡", flaw: "好奇",
 };
-const WIZARD: DraftSheet = { ...DRAFT, name: "档案学者", raceId: "high-elf", classId: "wizard", subclassId: "evocation", backgroundId: "sage",
-  scores: { str: 8, dex: 14, con: 13, int: 15, wis: 12, cha: 10 }, cantrips: ["fire-bolt"], spellbook: ["magic-missile"], prepared: ["magic-missile"] };
-const ROGUE: DraftSheet = { ...DRAFT, name: "码头小贼", raceId: "human", classId: "rogue", subclassId: "thief", backgroundId: "criminal",
-  scores: { str: 10, dex: 15, con: 12, int: 13, wis: 10, cha: 14 } };
+const DRAFT: DraftSheet = completeDraft(BASE);
+const WIZARD: DraftSheet = completeDraft({ ...BASE, name: "档案学者", raceId: "high-elf", classId: "wizard", subclassId: "evocation", backgroundId: "sage",
+  scores: { str: 8, dex: 14, con: 13, int: 15, wis: 12, cha: 10 }, cantrips: ["fire-bolt"], spellbook: ["magic-missile"], prepared: ["magic-missile"] });
+const ROGUE: DraftSheet = completeDraft({ ...BASE, name: "码头小贼", raceId: "human", classId: "rogue", subclassId: "thief", backgroundId: "criminal",
+  scores: { str: 10, dex: 15, con: 12, int: 13, wis: 10, cha: 13 } });
 
 let counter = 0;
 function scriptedNarration(calls: string[]) {
