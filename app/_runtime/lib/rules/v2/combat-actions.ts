@@ -38,7 +38,7 @@ import {
   conditionMovementCost,
 } from "./condition-mechanics";
 import { effectiveConditions, isWorldEffectRecord, modifierEffectDefinition, planModifierEffect, planWorldEffect, planWorldEffectEnd, repeatSaveEffects, worldEffectDefinition, worldEffectEndDefinition, worldEffectEndDrafts, worldEffectsEndingWhen } from "./world-effects";
-import { attacksAgainstHaveAdvantage, d20BonusDie, effectiveArmorClass as modifiedArmorClass, reactionsBlocked, wearsBodyArmor } from "./effect-modifiers";
+import { attacksAgainstHaveAdvantage, d20BonusDie, effectiveArmorClass as modifiedArmorClass, reactionsBlocked, weaponDamageDieFrom, wearsBodyArmor } from "./effect-modifiers";
 import { combatPhaseExpiryAnchor, initiativePhaseOrder, phaseSlotForEntity } from "./effect-phase";
 
 import { canonicalSha256, sameCanonical } from "../profiles/canonical";
@@ -2939,6 +2939,27 @@ function concentrationPurpose(abilityRef: string, definition: JsonRecord, target
 }
 
 /** The dice a damage roll draws; a flat component (an unarmed strike) draws none (ADR 0113). */
+/** SRD Hunter's Mark: the extra damage a weapon attack by `source` deals
+ * each target it has marked, of the weapon's own first damage type, frozen
+ * with the attack. Kept only for targets that have one. */
+function markedTargetDamage(state: AuthoritativeWorldState, source: JsonRecord, definition: JsonRecord,
+  targetIds: readonly string[]): Record<string, JsonRecord[]> {
+  const weaponAttack = isRecord(definition.attack) && definition.attack.kind !== "spellAttack";
+  const first = Array.isArray(definition.damage) ? definition.damage[0] : undefined;
+  if (!weaponAttack || !isRecord(first)) return {};
+  return Object.fromEntries(targetIds.flatMap((targetId) => {
+    const sides = weaponDamageDieFrom(state, targetId, entityId(source));
+    return sides === undefined ? [] : [[targetId, [{ type: first.type, formula: `1d${sides}` }]]];
+  }));
+}
+
+/** The damage a hit on `targetId` rolls: the definition's own components,
+ * then the extra ones frozen for that target. */
+function damageDefinition(definition: JsonRecord, frozen: JsonRecord, targetId: string | undefined): JsonRecord {
+  const extra = targetId !== undefined && isRecord(frozen.markDamage) ? frozen.markDamage[targetId] : undefined;
+  return Array.isArray(extra) && Array.isArray(definition.damage) ? { ...definition, damage: [...definition.damage, ...extra] } : definition;
+}
+
 function damageDice(definition: JsonRecord, reserveCriticalDice = false): Array<{ count: string; sides: string }> {
   if (!Array.isArray(definition.damage)) return [];
   return definition.damage.flatMap((component) => {
@@ -4405,13 +4426,18 @@ function prepareAbilityExecution(
       specs.push(aimedAttackSpec(abilityRef, source, definition, selection.aimedPoint));
     }
     if (Array.isArray(definition.damage) && definition.damage.length > 0) {
-      if (manyAttacks) for (const targetId of targetIds) specs.push({
-        purposeKey: `damage:${purposeStem(abilityRef)}:${targetId}`, dice: damageDice(definition, true),
-        frozenParameters: { targetEntityIds: [targetId], components: structuredClone(definition.damage), reservedCriticalDice: true },
-      });
-      else specs.push({ purposeKey: `damage:${purposeStem(abilityRef)}`, dice: damageDice(definition, isRecord(definition.attack)),
-        frozenParameters: { targetEntityIds: targetIds, components: structuredClone(definition.damage),
-          sharedAcrossTargets: targetIds.length > 1, reservedCriticalDice: isRecord(definition.attack) } });
+      const marked = markedTargetDamage(state, source, definition, targetIds);
+      if (Object.keys(marked).length > 0) mechanical.markDamage = marked;
+      if (manyAttacks) for (const targetId of targetIds) {
+        const rolled = damageDefinition(definition, mechanical, targetId);
+        specs.push({ purposeKey: `damage:${purposeStem(abilityRef)}:${targetId}`, dice: damageDice(rolled, true),
+          frozenParameters: { targetEntityIds: [targetId], components: structuredClone(rolled.damage), reservedCriticalDice: true } });
+      } else {
+        const rolled = damageDefinition(definition, mechanical, targetIds.length === 1 ? targetIds[0] : undefined);
+        specs.push({ purposeKey: `damage:${purposeStem(abilityRef)}`, dice: damageDice(rolled, isRecord(definition.attack)),
+          frozenParameters: { targetEntityIds: targetIds, components: structuredClone(rolled.damage),
+            sharedAcrossTargets: targetIds.length > 1, reservedCriticalDice: isRecord(definition.attack) } });
+      }
     }
   }
   if (isRecord(definition.healing) && isNonEmptyString(definition.healing.formula)) {
@@ -6731,11 +6757,16 @@ function postAttackDiceSpecs(
       for (const targetId of targetIds) {
         const attack = attacks[targetId];
         if (!isRecord(attack) || attack.hit !== true) continue;
+        const rolled = damageDefinition(definition, isRecord(operation.mechanical) ? operation.mechanical : {}, targetId);
         specs.push({ purposeKey: `damage:${purposeStem(String(operation.abilityRef))}:${targetId}`,
-          dice: damageDice(definition), frozenParameters: { targetEntityIds: [targetId], components: structuredClone(definition.damage) } });
+          dice: damageDice(rolled), frozenParameters: { targetEntityIds: [targetId], components: structuredClone(rolled.damage) } });
       }
-    } else specs.push({ purposeKey: `damage:${purposeStem(String(operation.abilityRef))}`,
-      dice: damageDice(definition), frozenParameters: { targetEntityIds: targetIds, components: structuredClone(definition.damage) } });
+    } else {
+      const rolled = damageDefinition(definition, isRecord(operation.mechanical) ? operation.mechanical : {},
+        targetIds.length === 1 ? targetIds[0] : undefined);
+      specs.push({ purposeKey: `damage:${purposeStem(String(operation.abilityRef))}`,
+        dice: damageDice(rolled), frozenParameters: { targetEntityIds: targetIds, components: structuredClone(rolled.damage) } });
+    }
   }
   return specs;
 }
@@ -7193,7 +7224,8 @@ function resolveCombatAbilityRandomnessOnce(
   if (attackHit && Array.isArray(definition.damage) && definition.damage.length > 0) {
     const manyAttacks = isRecord(mechanicalResult.attacks);
     const sharedDamage = manyAttacks ? undefined
-      : rolledDamageComponents(definition, faces, `damage:${purposeStem(String(operation.abilityRef))}`, {
+      : rolledDamageComponents(damageDefinition(definition, mechanicalResult, targetIds.length === 1 ? targetIds[0] : undefined),
+        faces, `damage:${purposeStem(String(operation.abilityRef))}`, {
           reservedCriticalDice: operation.reservedCriticalDice === true,
           critical: isRecord(mechanicalResult.attack) && (Number(mechanicalResult.attack.selected) === 20 || mechanicalResult.attack.criticalIfHit === true),
         });
@@ -7206,7 +7238,8 @@ function resolveCombatAbilityRandomnessOnce(
       const target = targetId === operation.sourceEntityId && operation.invocationCommitted !== true && isRecord(operation.sourcePatch)
         ? operation.sourcePatch : currentTarget;
       if (target === undefined) continue;
-      const baseRolled = sharedDamage ?? rolledDamageComponents(definition, faces, `damage:${purposeStem(String(operation.abilityRef))}:${targetId}`, {
+      const baseRolled = sharedDamage ?? rolledDamageComponents(damageDefinition(definition, mechanicalResult, targetId),
+        faces, `damage:${purposeStem(String(operation.abilityRef))}:${targetId}`, {
         reservedCriticalDice: operation.reservedCriticalDice === true,
         critical: isRecord(attack) && (Number(attack.selected) === 20 || attack.criticalIfHit === true),
       });
@@ -9756,6 +9789,9 @@ function answerReaction(
   const armorClass = effectiveArmorClass(state, target) + (cover === "half" ? 2 : cover === "threeQuarters" ? 5 : 0);
   const criticalIfHit = mode.criticalIfHit
     || (entitiesWithinRange(reactor, target, "60") && (condition(state, target, "unconscious") || condition(state, target, "paralyzed")));
+  // SRD Hunter's Mark: the reactor's weapon hit on a creature it marked.
+  const marked = markedTargetDamage(state, reactor, definition, [entityId(target)]);
+  const markedDefinition = damageDefinition(definition, { markDamage: marked }, entityId(target));
   const save = isRecord(definition.save) ? prepareAbilitySavingThrow(profiles, state, reactor,
     `opportunity:${entityId(reactor)}`, definition.save, entityId(target)) : undefined;
   return awaitRandomness(profiles, state, String(pending.rootActionId), {
@@ -9765,6 +9801,7 @@ function answerReaction(
     ...(attackAbilityRef === null ? {} : { attackAbilityRef }),
     definition,
     ...(save === undefined ? {} : { savingThrows: { [entityId(target)]: save.frozen } }),
+    ...(Object.keys(marked).length === 0 ? {} : { markDamage: marked }),
     mode: mode.mode,
     armorClass,
     criticalIfHit,
@@ -9776,8 +9813,8 @@ function answerReaction(
     { purposeKey: `attack:opportunity:${entityId(reactor)}`, dice: attackDice(mode.mode), frozenParameters: { sourceEntityId: entityId(reactor),
       targetEntityId: entityId(target), mode: mode.mode, attackBonus: attackBonus(reactor, definition), armorClass } },
     ...bonusDieSpecs(state, `attack:opportunity:${entityId(reactor)}`, entityId(reactor), "attack"),
-    { purposeKey: `damage:opportunity:${entityId(reactor)}`, dice: damageDice(definition, true),
-      frozenParameters: { targetEntityId: entityId(target), components: structuredClone(definition.damage), reservedCriticalDice: true } },
+    { purposeKey: `damage:opportunity:${entityId(reactor)}`, dice: damageDice(markedDefinition, true),
+      frozenParameters: { targetEntityId: entityId(target), components: structuredClone(markedDefinition.damage), reservedCriticalDice: true } },
     ...(save?.specs ?? []),
   ], prefix);
 }
@@ -9823,7 +9860,8 @@ function resolveOpportunityAndMovement(
   }
   const drafts: Draft[] = [{ eventType: "AbilityInvoked", payload: { sourceEntityId: operation.sourceEntityId, abilityRef: "action:opportunity-attack", mechanicalResult, sourcePatch: operation.sourcePatch }, resolutionId: String(resolution.resolutionId) }];
   if (hit) {
-    const rolled = rolledDamageComponents(operation.definition, faces, `damage:opportunity:${operation.sourceEntityId}`,
+    const rolled = rolledDamageComponents(damageDefinition(operation.definition, operation, operation.targetEntityId),
+      faces, `damage:opportunity:${operation.sourceEntityId}`,
       { critical, reservedCriticalDice: operation.reservedCriticalDice === true });
     const save = isRecord(mechanicalResult.saves) ? mechanicalResult.saves[operation.targetEntityId] : undefined;
     const saveDefinition = operation.definition.save;

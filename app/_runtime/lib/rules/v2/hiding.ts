@@ -2,6 +2,7 @@ import { RulesValidationError } from "../errors";
 import { coverLevel, type CoverLevel } from "../profiles/combat-geometry";
 import type { RuntimeProfileManifest } from "../profiles/types";
 import { activeEncounter } from "./combat-encounters";
+import { weaponDamageDieFrom } from "./effect-modifiers";
 import { conditionAbilityCheck, conditionMechanics, conditionSourceRefs, type ConditionRollMode } from "./condition-mechanics";
 import { passivePerception } from "./concealment";
 import type { AuthoritativeWorldState, EventEnvelope, JsonRecord } from "./model";
@@ -148,8 +149,11 @@ export function hiddenPerceptionDiceSpecs(state: AuthoritativeWorldState, sceneR
  * ability check, so its conditions set the mode as they do any other's --
  * poisoned or exhausted, disadvantage; a source of its fear in sight, too. A
  * fear source without a body on the map is left out, as unknown. */
-export function perceptionCheckMode(state: AuthoritativeWorldState, perceiverRef: string): ConditionRollMode {
-  return conditionAbilityCheck(state, perceiverRef, { visibleFearSourceRefs: fearSourcesInSight(state, perceiverRef) }).mode;
+export function perceptionCheckMode(state: AuthoritativeWorldState, perceiverRef: string, hiderRef?: string): ConditionRollMode {
+  // SRD Hunter's Mark: Perception to find the creature the perceiver marked.
+  const marked = hiderRef !== undefined && weaponDamageDieFrom(state, hiderRef, perceiverRef) !== undefined;
+  return conditionAbilityCheck(state, perceiverRef, { visibleFearSourceRefs: fearSourcesInSight(state, perceiverRef),
+    ...(marked ? { advantageReasons: ["markedQuarry2014"] } : {}) }).mode;
 }
 
 function fearSourcesInSight(state: AuthoritativeWorldState, perceiverRef: string): string[] | undefined {
@@ -171,7 +175,7 @@ function fearSourcesInSight(state: AuthoritativeWorldState, perceiverRef: string
 /** One perceiver's d20s against one hider: two when its conditions give the
  * roll advantage or disadvantage, which the spec freezes beside them. */
 function perceptionSpec(state: AuthoritativeWorldState, hiderRef: string, perceiverRef: string, sceneRef: string): WorldInteractionDiceSpec {
-  const mode = perceptionCheckMode(state, perceiverRef);
+  const mode = perceptionCheckMode(state, perceiverRef, hiderRef);
   return { purposeKey: `${PERCEPTION_PURPOSE_PREFIX}${hiderRef}:${perceiverRef}`, dice: [{ count: mode === "normal" ? "1" : "2", sides: "20" }],
     frozenParameters: { hiderRef, perceiverRef, sceneRef, ...(mode === "normal" ? {} : { mode }) } };
 }

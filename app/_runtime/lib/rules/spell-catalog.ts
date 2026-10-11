@@ -226,7 +226,8 @@ export const SPELL_DEFINITIONS = {
     id: "hunters-mark", level: 1, actionCost: "bonusAction", castingSeconds: 6,
     range: feet(90), targets: targets("creature", 1, { requiresSight: true }), duration: timed(60 * 60, { concentration: true,
       higherSlots: [{ minimumLevel: 3, seconds: 8 * 60 * 60 }, { minimumLevel: 5, seconds: 24 * 60 * 60 }] }),
-    resolution: { mode: "automatic", effects: [effect("hunters-mark", "武器命中额外 1d6；追踪检定优势", "modifier")] },
+    resolution: { mode: "automatic", effects: [{ ...effect("hunters-mark", "武器命中额外 1d6；追踪检定优势", "modifier"),
+      modifier: { kind: "weaponDamageDieFromSource", sides: 6 } }] },
   },
   goodberry: {
     id: "goodberry", level: 1, actionCost: "action", castingSeconds: 6,

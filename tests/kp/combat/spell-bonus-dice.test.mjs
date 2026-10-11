@@ -125,3 +125,38 @@ test('Guidance adds a d4 to the target\'s next ability check -- here the initiat
   assert.deepEqual(f.events.filter((event) => ['EffectEnded', 'ConcentrationEnded'].includes(event.eventType)).map((event) => event.payload.reason),
     ['bonusDieUsed', 'spellEnded']);
 });
+
+// A ranger who knows Hunter's Mark, side by side with the peer, a dagger in hand.
+function rangerFixture(name) {
+  const ranger = { classId: 'ranger', level: 3, cantripIds: [], preparedSpellIds: ['hunters-mark'],
+    resources: { slot1: 3 }, resourceMaximums: { slot1: 3 },
+    characterBuild: { classId: 'ranger', raceId: 'human', cantrips: [], prepared: ['hunters-mark'] },
+    loadout: { equipped: { main: 'dagger' }, backpack: [], armorClass: 10, speedFeet: 30 } };
+  const f = createAuthoredProbeFixture(name, { spawnPoints: [{ x: '100', y: '100', elevation: '0' }, { x: '160', y: '100', elevation: '0' }],
+    characterOverrides: { [ACTOR]: ranger } });
+  f.events = [];
+  assert.equal(startEncounter(f).kind, 'committed');
+  return f;
+}
+
+test('Hunter\'s Mark adds a d6 of the weapon\'s damage type to the caster\'s weapon hits on the marked creature', () => {
+  const f = rangerFixture('hunters-mark');
+  const marked = cast(f, 'hunters-mark', 1, { targetEntityId: PEER });
+  assert.equal(marked.kind, 'committed', JSON.stringify(marked));
+  const [mark] = Object.values(f.state.combatRuntime.effects);
+  assert.deepEqual([mark.targetEntityId, mark.sourceRef, mark.modifier, mark.lifecycle],
+    [PEER, ACTOR, { kind: 'weaponDamageDieFromSource', sides: 6 }, { concentration: true }]);
+  const dagger = Object.values(f.state.combatRuntime.definitions).find((definition) => definition.weaponUse?.slot === 'main'
+    && definition.weaponUse?.mode === 'melee' && !definition.weaponUse?.bonusAttack).definitionId;
+  const requests = [];
+  const stab = settle(f, apply(f, { kind: 'invokeAbility', rootActionId: 'root:stab', sourceEntityId: ACTOR, abilityRef: dagger,
+    parameters: { targetEntityId: PEER } }), { 'attack:': 15, 'damage:': 3 }, requests);
+  assert.equal(stab.kind, 'committed', JSON.stringify(stab));
+  const damage = requests.find((request) => request.purposeKey.startsWith('damage:'));
+  // Each die is reserved twice over for a critical hit.
+  assert.equal(damage.diceExpression, '2d4+2d6');
+  assert.deepEqual(damage.frozenParameters.components.map((component) => component.formula), ['1d4', '1d6']);
+  const packet = stab.events.find((event) => event.eventType === 'DamagePacketResolved').payload;
+  assert.equal(packet.totalApplied, 6);
+  assert.equal(f.state.entities[PEER].hitPoints.current, 14);
+});

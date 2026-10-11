@@ -86,3 +86,11 @@ export function d20BonusDie(state: AuthoritativeWorldState, entityId: string, ro
     .sort((left, right) => Number(left.once) - Number(right.once))[0]!;
   return { sides, effectIds: [chosen.effect.effectId], spentEffectIds: chosen.once ? [chosen.effect.effectId] : [] };
 }
+
+/** SRD Hunter's Mark: the die `sourceId`'s weapon hits deal a creature it has
+ * marked, beyond the weapon's own damage; undefined when it has none there. */
+export function weaponDamageDieFrom(state: AuthoritativeWorldState, targetId: string, sourceId: string): number | undefined {
+  const sides = modifierEffectsOn(state, targetId).flatMap((effect) => effect.modifier.kind === "weaponDamageDieFromSource"
+    && effect.sourceRef === sourceId ? [effect.modifier.sides] : []);
+  return sides.length === 0 ? undefined : Math.max(...sides);
+}
