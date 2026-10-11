@@ -14,6 +14,7 @@ import {
 } from "@/lib/rules/tactical-projection";
 import type { CombatControlAbility, CombatJumpChoice, NpcCombatTurnStatus, ReadyTriggerEvent } from "@/lib/table/authoritative";
 import type { TacticalMapActions } from "@/components/tactical-map-actions";
+import { CONDITION_LABEL } from "@/lib/dnd/condition-labels";
 import { cn } from "@/lib/utils";
 
 const FEATURE_STYLE: Record<TacticalKnownFeature["kind"], string> = {
@@ -103,27 +104,6 @@ const TACTICAL_STATE_LABEL: Record<string, string> = {
   intact: "完整",
   open: "开启",
   triggered: "已触发",
-  unconscious: "昏迷",
-};
-
-const CONDITION_LABEL: Record<string, string> = {
-  blinded: "目盲",
-  charmed: "魅惑",
-  deafened: "耳聋",
-  dodging: "闪避",
-  frightened: "恐慌",
-  grappled: "被擒抱",
-  grappledBy: "被擒抱",
-  hidden: "躲藏中",
-  incapacitated: "失能",
-  invisible: "隐形",
-  paralyzed: "麻痹",
-  petrified: "石化",
-  poisoned: "中毒",
-  prone: "倒地",
-  restrained: "束缚",
-  stable: "伤势稳定",
-  stunned: "震慑",
   unconscious: "昏迷",
 };
 

@@ -1428,6 +1428,32 @@ function controlledCombatControls(
       abilityRef: option.abilityRef, featureId: option.featureId, to: structuredClone(option.to), running: option.running,
       costMilliInches: option.costMilliInches, clearCheck: option.clearCheck, landingCheck: option.landingCheck,
     })),
+    vitals: controlledVitals(state, entity),
+  };
+}
+
+/** SPEC 0010 §7: the actor's own temporary hit points, what it concentrates
+ * on and its death saves, for the character panel. Kept beside the controls
+ * and out of `controlledCharacter` like the turn grants. */
+function controlledVitals(state: AuthoritativeWorldState, entity: JsonRecord) {
+  const count = (value: unknown) => typeof value === "string" && CANONICAL_COUNT.test(value) ? value
+    : Number.isSafeInteger(value) && Number(value) >= 0 ? String(value) : "0";
+  const concentration = isRecord(entity.concentration) ? entity.concentration : undefined;
+  const abilityRef = concentration !== undefined && isNonEmptyString(concentration.abilityRef)
+    ? concentration.abilityRef : undefined;
+  const stored = abilityRef === undefined ? undefined : state.combatRuntime.definitions[abilityRef];
+  const definition = isRecord(stored) ? isRecord(stored.mechanicGraph) ? registeredAbilityDefinition(stored) : stored : undefined;
+  const sourceSpellId = definition !== undefined && isNonEmptyString(definition.sourceSpellId)
+    ? definition.sourceSpellId : undefined;
+  const deathSaves = isRecord(entity.deathSaves) ? entity.deathSaves : {};
+  return {
+    temporaryHitPoints: count(isRecord(entity.hitPoints) ? entity.hitPoints.temporary : undefined),
+    concentration: concentration === undefined ? null : {
+      ...(abilityRef === undefined ? {} : { abilityRef }),
+      ...(sourceSpellId === undefined ? {} : { sourceSpellId }),
+    },
+    lifeState: entity.lifeState === "unconscious" || entity.lifeState === "dead" ? entity.lifeState : "alive",
+    deathSaves: { successes: count(deathSaves.successes), failures: count(deathSaves.failures) },
   };
 }
 

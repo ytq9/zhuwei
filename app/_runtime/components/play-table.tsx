@@ -1,6 +1,6 @@
 import type { KnowledgeCard } from "../lib/table/knowledge-notebook";
 import { DiagnosticCopy } from "./diagnostic-copy";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,14 @@ import { Textarea } from "@/components/ui/input";
 import { TacticalMap } from "@/components/tactical-map";
 import { useTacticalMapActions } from "@/components/tactical-map-actions";
 import { InventoryPanel } from "@/components/inventory-panel";
+import {
+  CharacterPanel,
+  CharacterVitalsStrip,
+  characterResourcePools,
+  characterVitalsOf,
+  useCharacterPanelDocked,
+  type CharacterPanelTab,
+} from "@/components/character-panel";
 import type { Ability, CharacterSheet, SkillId } from "@/lib/dnd/types";
 import { ABILITIES, ABILITY_LABEL, SKILLS } from "@/lib/dnd/types";
 import { classById, raceById, spellById } from "@/lib/dnd/catalog";
@@ -28,6 +36,7 @@ import {
   publicNarrationRecoveryReason,
   type ArcaneRecoverySlotLevel,
   type AuthoritativeInventory,
+  type CharacterCondition,
   type CombatControls,
   type NpcCombatTurnStatus,
 } from "@/lib/table/authoritative";
@@ -42,14 +51,11 @@ import { toast } from "sonner";
 import {
   BookOpenText,
   CircleDot,
-  HeartPulse,
   LoaderCircle,
   MapPin,
   MapPinned,
   Mic,
-  ScrollText,
   Send,
-  Shield,
   UserRound,
   Users,
   X,
@@ -182,6 +188,7 @@ type AuthoritativeControlledCharacter = {
   name?: string;
   sceneId?: string;
   hitPoints?: { current: number; maximum: number };
+  conditions?: CharacterCondition[];
   resources?: Record<string, number>;
   resourceMaximums?: Record<string, number>;
   classId?: string;
@@ -411,8 +418,12 @@ export function PlayTable({
   snap: TableSnap;
   syncing?: boolean;
 }) {
-  const [tab, setTab] = useState<"sheet" | "npcs" | "clues" | "log">("sheet");
+  const [tab, setTab] = useState<TableJournalTab>("npcs");
   const [journalOpen, setJournalOpen] = useState(false);
+  const [characterTab, setCharacterTab] = useState<CharacterPanelTab>("actions");
+  const [characterOpen, setCharacterOpen] = useState(false);
+  const [leaveConfirm, setLeaveConfirm] = useState(false);
+  const characterDocked = useCharacterPanelDocked();
   const draftStorageKey = `zhuwei-draft-${snap.me.userId}-${code}`;
   const actionRecoveryStorageKey = `zhuwei:v2-action-recovery:${snap.me.userId}:${code}`;
   const [text, setText] = useState(() => {
@@ -539,13 +550,15 @@ export function PlayTable({
   }, [conversationMessages.length, sending, snap.state.kpBusy, rec]);
 
   useEffect(() => {
-    if (!journalOpen || typeof window === "undefined") return;
+    if ((!journalOpen && !characterOpen) || typeof window === "undefined") return;
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setJournalOpen(false);
+      if (event.key !== "Escape") return;
+      setJournalOpen(false);
+      setCharacterOpen(false);
     };
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [journalOpen]);
+  }, [journalOpen, characterOpen]);
 
   useEffect(() => {
     if (!NARRATION_SPEECH_ENABLED) return;
@@ -959,13 +972,46 @@ export function PlayTable({
     ...(currentPending ? { intentUnavailable: "请先完成当前待你决定的选择，再从地图发出新行动。" } : {}),
     sendIntent: submitText,
   });
-  const mySheet = snap.characters.find((character) => character.userId === snap.me.userId)?.sheet;
   const controlledCharacter = snap.state.authoritative?.controlledCharacter;
-  const currentHitPoints = controlledCharacter?.hitPoints?.current ?? mySheet?.hp.current;
-  const maximumHitPoints = controlledCharacter?.hitPoints?.maximum ?? mySheet?.hp.max;
-  const armorClass = controlledCharacter?.loadout?.armorClass
-    ?? snap.state.ruleProjection?.viewer.ac
-    ?? mySheet?.ac;
+  // SPEC 0010 §7: the character panel reads the authority's own state and
+  // pools; the locked sheet fills in only what the authority lacks.
+  const myCard = snap.characters.find((character) => character.userId === snap.me.userId
+    && character.visibility !== "identityOnly");
+  const characterVitals = myCard === undefined ? undefined : characterVitalsOf({
+    sheet: myCard.sheet,
+    level: controlledCharacter?.level,
+    hitPoints: controlledCharacter?.hitPoints,
+    armorClass: controlledCharacter?.loadout?.armorClass,
+    speedFeet: controlledCharacter?.loadout?.speedFeet,
+    conditions: controlledCharacter?.conditions,
+    combat: snap.state.authoritative?.combatControls?.vitals,
+  });
+  const characterPools = characterResourcePools({
+    resources: controlledCharacter?.resources,
+    maximums: controlledCharacter?.resourceMaximums,
+    hitDieSides: controlledCharacter?.restRecoveryOptions?.shortRest?.hitDieSides
+      ?? myCard?.sheet.resources?.hitDice.die,
+  });
+  const myGroupSize = snap.state.squads?.find((group) => group.ids.includes(snap.me.userId))?.ids.length ?? 1;
+  const characterContent = myCard === undefined ? null : (
+    <CharacterDetail
+      tab={characterTab}
+      sheet={myCard.sheet}
+      canEdit
+      code={code}
+      inCombat={Boolean(snap.state.combat) || snap.state.authoritative?.inCombat === true}
+      restVote={snap.state.restVote}
+      restHold={snap.state.restHold}
+      meId={snap.me.userId}
+      partyCount={myGroupSize}
+      activeRule={snap.state.ruleProjection?.viewer}
+      authoritativeCharacter={controlledCharacter ?? undefined}
+      authoritativeActivities={snap.state.authoritative?.activities}
+      visibleEntities={snap.state.ruleProjection?.visibleEntities}
+      actorPosition={snap.state.ruleProjection?.combat?.order
+        .find((entry) => entry.entityId === snap.me.userId)?.positionFeet}
+    />
+  );
   const currentPlace = snap.state.placeNames?.[snap.me.userId]
     ?? tacticalProjection?.scene.name
     ?? snap.state.sceneName;
@@ -996,7 +1042,7 @@ export function PlayTable({
             : "等待你的行动";
 
   return (
-    <div className="relative flex min-h-0 min-w-0 w-full flex-1 overflow-hidden">
+    <div className="relative flex min-h-0 min-w-0 w-full flex-1 gap-3 overflow-hidden">
       <section className="flex min-h-0 min-w-0 w-full flex-1 flex-col overflow-hidden rounded-[28px] border border-border bg-surface">
         <div className="flex shrink-0 items-center justify-between border-b border-border px-5 py-3">
           <div>
@@ -1020,17 +1066,34 @@ export function PlayTable({
             <p className="font-mono text-xs tracking-widest text-brass">
               {snap.room.code}
             </p>
-            <button
-              type="button"
-              className="text-[11px] text-subtle hover:text-danger"
-              onClick={() => {
-                void leaveTable({ data: { code } }).then((res) => {
-                  if (res && "ok" in res && !res.ok) toast.error(res.error);
-                });
-              }}
-            >
-              离开这一桌
-            </button>
+            {leaveConfirm ? (
+              <span className="flex items-center gap-2 text-[11px]" data-table-leave-confirm>
+                <span className="text-muted">确定离开这一桌？</span>
+                <button
+                  type="button"
+                  className="text-danger hover:text-fg"
+                  onClick={() => {
+                    setLeaveConfirm(false);
+                    void leaveTable({ data: { code } }).then((res) => {
+                      if (res && "ok" in res && !res.ok) toast.error(res.error);
+                    });
+                  }}
+                >
+                  离开
+                </button>
+                <button type="button" autoFocus className="text-subtle hover:text-fg" onClick={() => setLeaveConfirm(false)}>
+                  留下
+                </button>
+              </span>
+            ) : (
+              <button
+                type="button"
+                className="text-[11px] text-subtle hover:text-danger"
+                onClick={() => setLeaveConfirm(true)}
+              >
+                离开这一桌
+              </button>
+            )}
           </div>
         </div>
         <div
@@ -1063,18 +1126,6 @@ export function PlayTable({
               <MapPin className="size-3.5 text-brass" aria-hidden="true" />
               {currentPlace}
             </span>
-            {currentHitPoints !== undefined && maximumHitPoints !== undefined ? (
-              <span className="hidden shrink-0 items-center gap-1 text-[11px] text-muted sm:inline-flex">
-                <HeartPulse className="size-3.5 text-brass" aria-hidden="true" />
-                生命 <span className="tabular-nums text-fg">{currentHitPoints}/{maximumHitPoints}</span>
-              </span>
-            ) : null}
-            {armorClass !== undefined ? (
-              <span className="hidden shrink-0 items-center gap-1 text-[11px] text-muted sm:inline-flex">
-                <Shield className="size-3.5 text-brass" aria-hidden="true" />
-                护甲 <span className="tabular-nums text-fg">{armorClass}</span>
-              </span>
-            ) : null}
           </div>
           <button
             type="button"
@@ -1092,6 +1143,14 @@ export function PlayTable({
             </span>
           </button>
         </div>
+        {!characterDocked && characterVitals !== undefined ? (
+          <CharacterVitalsStrip
+            vitals={characterVitals}
+            pools={characterPools}
+            expanded={characterOpen}
+            onOpen={() => setCharacterOpen(true)}
+          />
+        ) : null}
         <LocationHistoryBar
           threads={snap.locationThreads}
           meId={snap.me.userId}
@@ -1510,6 +1569,58 @@ export function PlayTable({
         <DiagnosticCopy key={submissionError ?? recoverableSubmission?.lastError ?? ""}
           message={submissionError ?? recoverableSubmission?.lastError ?? ""} />
       </section>
+      {characterDocked && characterVitals !== undefined ? (
+        <aside
+          id="character-panel"
+          aria-labelledby="character-panel-title"
+          className="flex w-[22rem] shrink-0 flex-col overflow-hidden rounded-[28px] border border-border bg-surface"
+        >
+          <CharacterPanel vitals={characterVitals} pools={characterPools} tab={characterTab} onTabChange={setCharacterTab}>
+            {characterContent}
+          </CharacterPanel>
+        </aside>
+      ) : null}
+      {!characterDocked && characterOpen && characterVitals !== undefined ? (
+        <>
+          <button
+            type="button"
+            aria-label="关闭角色栏"
+            tabIndex={-1}
+            className="fixed inset-0 z-40 cursor-default bg-bg/75 backdrop-blur-[2px]"
+            onClick={() => setCharacterOpen(false)}
+          />
+          <aside
+            id="character-panel"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="character-panel-title"
+            data-table-character-dialog
+            className="fixed inset-x-2 bottom-2 top-2 z-50 flex min-h-0 min-w-0 flex-col overflow-hidden rounded-[24px] border border-border-strong bg-surface shadow-2xl sm:inset-x-auto sm:right-3 sm:w-[min(26rem,calc(100vw-1.5rem))]"
+          >
+            <CharacterPanel
+              vitals={characterVitals}
+              pools={characterPools}
+              tab={characterTab}
+              onTabChange={setCharacterTab}
+              headerAction={(
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  autoFocus
+                  aria-label="收起角色栏"
+                  className="size-9 shrink-0"
+                  onClick={() => setCharacterOpen(false)}
+                >
+                  <X className="size-4" aria-hidden="true" />
+                </Button>
+              )}
+            >
+              {characterContent}
+            </CharacterPanel>
+          </aside>
+        </>
+      ) : null}
       {journalOpen ? (
         <TableJournal
           code={code}
@@ -1571,7 +1682,7 @@ function TableWorkIndicator({ kind }: { kind: TableWorkKind }) {
   );
 }
 
-type TableJournalTab = "sheet" | "npcs" | "clues" | "log";
+type TableJournalTab = "party" | "npcs" | "clues";
 
 function TableJournal({
   code,
@@ -1586,13 +1697,15 @@ function TableJournal({
   onTabChange: (tab: TableJournalTab) => void;
   onClose: () => void;
 }) {
+  // The journal holds what the character has met; the character itself is in
+  // the character panel. Companions get a tab only when there are others.
   const tabs = [
-    ["sheet", UserRound, "人物", snap.characters.length],
-    ["npcs", Users, "在场", (snap.state.present ?? []).length],
-    ["clues", MapPinned, "线索", snap.state.clues.filter((clue) => !clue.background).length],
-    ["log", ScrollText, "日志", snap.logs.length],
-  ] as const;
-  const activeLabel = tabs.find(([id]) => id === tab)?.[2] ?? "桌边册";
+    ...(snap.characters.length > 1 ? [["party", UserRound, "同伴", snap.characters.length - 1] as const] : []),
+    ["npcs", Users, "在场", (snap.state.present ?? []).length] as const,
+    ["clues", MapPinned, "线索", snap.state.clues.filter((clue) => !clue.background).length] as const,
+  ];
+  const activeTab = tabs.some(([id]) => id === tab) ? tab : "npcs";
+  const activeLabel = tabs.find(([id]) => id === activeTab)?.[2] ?? "桌边册";
 
   return (
     <>
@@ -1641,13 +1754,13 @@ function TableJournal({
               id={`table-journal-tab-${id}`}
               type="button"
               role="tab"
-              aria-selected={tab === id}
+              aria-selected={activeTab === id}
               aria-controls={`table-journal-panel-${id}`}
-              tabIndex={tab === id ? 0 : -1}
+              tabIndex={activeTab === id ? 0 : -1}
               onClick={() => onTabChange(id)}
               className={cn(
                 "flex min-w-20 flex-1 items-center justify-center gap-1.5 border-b-2 px-2 py-3 text-xs transition sm:text-sm",
-                tab === id
+                activeTab === id
                   ? "border-brass text-fg"
                   : "border-transparent text-subtle hover:text-muted",
               )}
@@ -1659,33 +1772,28 @@ function TableJournal({
           ))}
         </div>
         <div
-          id={`table-journal-panel-${tab}`}
+          id={`table-journal-panel-${activeTab}`}
           role="tabpanel"
-          aria-labelledby={`table-journal-tab-${tab}`}
+          aria-labelledby={`table-journal-tab-${activeTab}`}
           className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-4 [overflow-wrap:anywhere] sm:p-5"
         >
-          {tab === "sheet" ? (
-            <SheetView
+          {activeTab === "party" ? (
+            <PartyBoard
               party={snap.characters}
               meId={snap.me.userId}
               isHost={snap.me.is_host}
               code={code}
-              inCombat={Boolean(snap.state.combat) || snap.state.authoritative?.inCombat === true}
               placeNames={snap.state.placeNames}
               clocks={snap.state.clocks}
               partySplit={snap.state.partySplit}
-              restVote={snap.state.restVote}
-              restHold={snap.state.restHold}
               squads={snap.state.squads}
               squadInvite={snap.state.squadInvite}
               places={snap.state.places}
-              ruleProjection={snap.state.ruleProjection}
-              authoritative={snap.state.authoritative}
+              myHitPoints={snap.state.authoritative?.controlledCharacter?.hitPoints}
             />
           ) : null}
-          {tab === "npcs" ? <PresenceBoard people={snap.state.present ?? []} /> : null}
-          {tab === "clues" ? <ClueBoard clues={snap.state.clues} /> : null}
-          {tab === "log" ? <LogView logs={snap.logs} party={snap.characters} /> : null}
+          {activeTab === "npcs" ? <PresenceBoard people={snap.state.present ?? []} /> : null}
+          {activeTab === "clues" ? <ClueBoard clues={snap.state.clues} /> : null}
         </div>
       </aside>
     </>
@@ -2676,40 +2784,33 @@ function RollButton({
   );
 }
 
-function SheetView({
+/** The other players at the table and the squad controls between them; the
+ * viewer's own character is in the character panel. */
+function PartyBoard({
   party,
   meId,
   isHost,
   code,
-  inCombat,
   placeNames,
   clocks,
   partySplit,
-  restVote,
-  restHold,
   squads,
   squadInvite,
   places,
-  ruleProjection,
-  authoritative,
+  myHitPoints,
 }: {
   party: TableSnap["characters"];
   meId: string;
   isHost?: boolean;
   code: string;
-  inCombat: boolean;
   placeNames?: Record<string, string>;
   clocks?: Record<string, { beats: number; minutes: number; lag: number }>;
   partySplit?: boolean;
-  restVote?: TableSnap["state"]["restVote"];
-  restHold?: TableSnap["state"]["restHold"];
   squads?: { ids: string[]; captain: string }[];
   squadInvite?: { from: string; to: string; fromName: string } | null;
   places?: Record<string, string>;
-  ruleProjection?: TableSnap["state"]["ruleProjection"];
-  authoritative?: TableSnap["state"]["authoritative"];
+  myHitPoints?: { current: number; maximum: number };
 }) {
-  const [openId, setOpenId] = useState<string | null>(meId);
   const [busy, setBusy] = useState<string | null>(null);
   const [kickId, setKickId] = useState<string | null>(null);
   const someoneAhead = Object.values(clocks ?? {}).some((c) => c.lag > 0);
@@ -2765,7 +2866,6 @@ function SheetView({
         const identityOnly = p.visibility === "identityOnly";
         const race = raceById(sheet.raceId)?.name;
         const cls = classById(sheet.classId)?.name;
-        const open = openId === p.userId;
         const together =
           (places?.[meId] ?? "") !== "" &&
           places?.[meId] === places?.[p.userId];
@@ -2776,13 +2876,7 @@ function SheetView({
         return (
           <li key={p.userId} className="min-w-0 overflow-hidden rounded-[16px] border border-border">
             <div className="flex w-full items-start justify-between gap-2 px-3 py-3">
-              <button
-                type="button"
-                onClick={() => {
-                  if (!identityOnly) setOpenId(open ? null : p.userId);
-                }}
-                className="min-w-0 flex-1 text-left"
-              >
+              <div className="min-w-0 flex-1 text-left">
                 <span className="font-medium">{sheet.name || "未名"}</span>
                 {p.userId === meId && (
                   <span className="ml-2 text-[10px] text-brass">你</span>
@@ -2824,23 +2918,16 @@ function SheetView({
                       {cls}
                       {" · 生命 "}
                       <span className="font-display tabular-nums text-fg">
-                        {p.userId === meId
-                          ? authoritative?.controlledCharacter?.hitPoints?.current ?? sheet.hp.current
-                          : sheet.hp.current}
+                        {p.userId === meId ? myHitPoints?.current ?? sheet.hp.current : sheet.hp.current}
                       </span>
                       <span className="tabular-nums">/
-                        {p.userId === meId
-                          ? authoritative?.controlledCharacter?.hitPoints?.maximum ?? sheet.hp.max
-                          : sheet.hp.max}
+                        {p.userId === meId ? myHitPoints?.maximum ?? sheet.hp.max : sheet.hp.max}
                       </span>
                     </>
                   )}
                 </span>
-              </button>
+              </div>
               <div className="flex shrink-0 flex-col items-end gap-1">
-                {!identityOnly ? (
-                  <span className="text-xs text-subtle">{open ? "收起" : "展开"}</span>
-                ) : null}
                 {p.userId !== meId && together && !groupedWithMe ? (
                   squadInvite?.from === meId && squadInvite.to === p.userId ? (
                     <Button
@@ -2931,31 +3018,6 @@ function SheetView({
                 ) : null}
               </div>
             </div>
-            {open && !identityOnly && (
-              <CharacterDetail
-                sheet={sheet}
-                canEdit={p.userId === meId}
-                code={code}
-                inCombat={inCombat}
-                restVote={restVote}
-                restHold={restHold}
-                meId={meId}
-                partyCount={myGroup?.ids.length ?? 1}
-                activeRule={p.userId === meId ? ruleProjection?.viewer : undefined}
-                authoritativeCharacter={p.userId === meId
-                  ? authoritative?.controlledCharacter ?? undefined
-                  : undefined}
-                authoritativeActivities={p.userId === meId
-                  ? authoritative?.activities
-                  : undefined}
-                visibleEntities={p.userId === meId ? ruleProjection?.visibleEntities : undefined}
-                actorPosition={
-                  p.userId === meId
-                    ? ruleProjection?.combat?.order.find((entry) => entry.entityId === meId)?.positionFeet
-                    : undefined
-                }
-              />
-            )}
           </li>
         );
       })}
@@ -2991,7 +3053,10 @@ function Fold({
   );
 }
 
+/** One tab of the character panel: what the character can do now (rests,
+ * class features, spells), what it carries, and who it is. */
 function CharacterDetail({
+  tab,
   sheet,
   canEdit,
   code,
@@ -3006,6 +3071,7 @@ function CharacterDetail({
   visibleEntities,
   actorPosition,
 }: {
+  tab: CharacterPanelTab;
   sheet: CharacterSheet;
   canEdit: boolean;
   code: string;
@@ -3021,46 +3087,93 @@ function CharacterDetail({
   actorPosition?: number;
 }) {
   const live = ensureGear(sheet);
-  const race = raceById(live.raceId);
-  const cls = classById(live.classId);
-  const sub = cls?.subclasses.find((s) => s.id === live.subclassId);
   const spellIds = [
     ...new Set([...live.cantrips, ...live.prepared, ...live.spellbook]),
   ];
   const stocks = listStocks(live);
   const packed = ensureResources(live);
-  const liveConditions = [
-    ...live.conditions,
-    ...(activeRule?.activeEffects ?? []),
-    ...(activeRule?.spellEffects.map((effect) =>
-      `${effect.label}${effect.concentration ? "（专注）" : ""}`,
-    ) ?? []),
-  ];
-  return (
-    <div className="grid min-w-0 gap-3 border-t border-border px-3 py-3 text-sm">
-      <p className="text-muted">
-        {race?.name}
-        {cls?.name}
-        {sub ? ` · ${sub.name}` : ""} {authoritativeCharacter?.level ?? 3} 级
-      </p>
-      <div className="flex gap-3 tabular-nums">
-        <Stat k="AC" v={activeRule?.ac ?? live.ac} />
-        <Stat
-          k="生命"
-          remain={authoritativeCharacter?.hitPoints?.current ?? activeRule?.hp?.current ?? live.hp.current}
-          max={authoritativeCharacter?.hitPoints?.maximum ?? activeRule?.hp?.max ?? live.hp.max}
-        />
-        <Stat k="速度" v={`${activeRule?.speedFeet ?? live.speed}尺`} />
-      </div>
-      {liveConditions.length > 0 && (
-        <Fold title="状态" hint={`${liveConditions.length} 项生效`}>
-          <ul className="grid gap-1 text-xs text-muted">
-            {[...new Set(liveConditions)].map((condition) => (
-              <li key={condition}>· {condition}</li>
+  if (tab === "inventory") {
+    return (
+      <InventoryPanel
+        inventory={authoritativeCharacter?.inventory}
+        canEdit={canEdit}
+        code={code}
+      />
+    );
+  }
+  if (tab === "profile") {
+    return (
+      <div className="grid min-w-0 gap-3 text-sm">
+        <div className="grid grid-cols-3 gap-2">
+          {ABILITIES.map((a) => (
+            <div
+              key={a}
+              className="rounded-[12px] border border-border p-2 text-center"
+            >
+              <p className="text-[10px] text-subtle">{ABILITY_LABEL[a]}</p>
+              <p className="font-display text-lg tabular-nums">{live.scores[a]}</p>
+              <p className="text-xs text-muted tabular-nums">
+                {signed(abilityMod(live.scores[a]))}
+              </p>
+            </div>
+          ))}
+        </div>
+        <Fold
+          title="技能"
+          hint={`${live.skills.length} 项熟练`}
+        >
+          <ul className="grid grid-cols-2 gap-x-2 gap-y-1 text-xs">
+            {SKILLS.filter((s) => live.skills.includes(s.id)).map((s) => (
+              <li key={s.id}>
+                {s.label}{" "}
+                <span className="tabular-nums text-muted">
+                  {signed(skillBonus(live, s.id as SkillId))}
+                </span>
+                {live.expertise.includes(s.id as SkillId) && (
+                  <span className="ml-1 text-[10px] text-brass">专精</span>
+                )}
+              </li>
             ))}
           </ul>
         </Fold>
-      )}
+        <ProficiencyFold sheet={live} />
+        {live.features.length > 0 && (
+          <Fold title="特性" hint={`${live.features.length} 条`}>
+            <ul className="grid min-w-0 gap-2">
+              {live.features.map((f) => (
+                <FeatureLine
+                  key={f.slice(0, 24)}
+                  text={f}
+                  stock={stockForFeature(f, stocks)}
+                />
+              ))}
+            </ul>
+          </Fold>
+        )}
+        {(live.appearance || live.trait) && (
+          <Fold title="角色" hint={live.appearance ? "外貌" : "展开"}>
+            {live.appearance && (
+              <p className="text-xs leading-relaxed text-muted">{live.appearance}</p>
+            )}
+            {live.trait && (
+              <p className="mt-2 text-xs text-muted">特质：{live.trait}</p>
+            )}
+            {live.ideal && (
+              <p className="mt-1 text-xs text-muted">理想：{live.ideal}</p>
+            )}
+            {live.bond && (
+              <p className="mt-1 text-xs text-muted">羁绊：{live.bond}</p>
+            )}
+            {live.flaw && (
+              <p className="mt-1 text-xs text-muted">缺陷：{live.flaw}</p>
+            )}
+          </Fold>
+        )}
+      </div>
+    );
+  }
+  return (
+    <div className="grid min-w-0 gap-3 text-sm">
       <ResourcePanel
         sheet={packed}
         canEdit={canEdit}
@@ -3074,61 +3187,9 @@ function CharacterDetail({
         authoritativeCharacter={authoritativeCharacter}
         authoritativeActivities={authoritativeActivities}
       />
-      <div className="grid grid-cols-3 gap-2">
-        {ABILITIES.map((a) => (
-          <div
-            key={a}
-            className="rounded-[12px] border border-border p-2 text-center"
-          >
-            <p className="text-[10px] text-subtle">{ABILITY_LABEL[a]}</p>
-            <p className="font-display text-lg tabular-nums">{live.scores[a]}</p>
-            <p className="text-xs text-muted tabular-nums">
-              {signed(abilityMod(live.scores[a]))}
-            </p>
-          </div>
-        ))}
-      </div>
-      <Fold
-        title="技能"
-        hint={`${live.skills.length} 项熟练`}
-      >
-        <ul className="grid grid-cols-2 gap-x-2 gap-y-1 text-xs">
-          {SKILLS.filter((s) => live.skills.includes(s.id)).map((s) => (
-            <li key={s.id}>
-              {s.label}{" "}
-              <span className="tabular-nums text-muted">
-                {signed(skillBonus(live, s.id as SkillId))}
-              </span>
-              {live.expertise.includes(s.id as SkillId) && (
-                <span className="ml-1 text-[10px] text-brass">专精</span>
-              )}
-            </li>
-          ))}
-        </ul>
-      </Fold>
-      <ProficiencyFold sheet={live} />
-      {live.features.length > 0 && (
-        <Fold title="动作" hint={`${live.features.length} 条`}>
-          <ul className="grid min-w-0 gap-2">
-            {live.features.map((f) => (
-              <FeatureLine
-                key={f.slice(0, 24)}
-                text={f}
-                stock={stockForFeature(f, stocks)}
-              />
-            ))}
-          </ul>
-        </Fold>
-      )}
       {spellIds.length > 0 && (
-        <Fold
-          title="法术"
-          hint={
-            packed.resources?.slot1.max
-              ? `一环 ${left(packed.resources.slot1)}/${packed.resources.slot1.max}`
-              : `${spellIds.length} 个`
-          }
-        >
+        <section className="grid min-w-0 gap-2" aria-labelledby="character-spells-title">
+          <p id="character-spells-title" className="text-xs font-medium">法术</p>
           <ul className="grid gap-2">
             {spellIds.map((id) => (
               <SpellLine
@@ -3145,31 +3206,7 @@ function CharacterDetail({
               />
             ))}
           </ul>
-        </Fold>
-      )}
-      <InventoryPanel
-        inventory={authoritativeCharacter?.inventory}
-        canEdit={canEdit}
-        code={code}
-      />
-      {(live.appearance || live.trait) && (
-        <Fold title="角色" hint={live.appearance ? "外貌" : "展开"}>
-          {live.appearance && (
-            <p className="text-xs leading-relaxed text-muted">{live.appearance}</p>
-          )}
-          {live.trait && (
-            <p className="mt-2 text-xs text-muted">特质：{live.trait}</p>
-          )}
-          {live.ideal && (
-            <p className="mt-1 text-xs text-muted">理想：{live.ideal}</p>
-          )}
-          {live.bond && (
-            <p className="mt-1 text-xs text-muted">羁绊：{live.bond}</p>
-          )}
-          {live.flaw && (
-            <p className="mt-1 text-xs text-muted">缺陷：{live.flaw}</p>
-          )}
-        </Fold>
+        </section>
       )}
     </div>
   );
@@ -3486,25 +3523,12 @@ function ResourcePanel({
           )}
         </div>
       ) : null}
-      <p className="text-xs font-medium">库存</p>
-      {r.conc && (
-        <p className="mt-1 text-xs text-muted">
-          专注中：<span className="text-fg">{r.conc.name}</span>
-        </p>
-      )}
-      <div className="mt-2 grid grid-cols-3 gap-2">
-        {listStocks(sheet).map((s) => (
-          <StockChip key={s.id} item={s} />
-        ))}
-      </div>
-      {r.warPriest.max > 0 && (
-        <p className="mt-2 text-xs text-subtle">
-          战争祭司：动作打过一次后，战斗条会出现「再攻」。掷出才扣次数。
-        </p>
-      )}
+      <p className="text-xs font-medium">休整与职业能力</p>
       {canEdit && (
         <div className="mt-2 flex flex-wrap gap-1.5">
           <Button
+            size="sm"
+            variant="subtle"
             disabled={Boolean(busy)}
             onClick={() => {
               setArcaneRecoverySlotLevels([]);
@@ -3513,21 +3537,21 @@ function ResourcePanel({
           >
             短休
           </Button>
-          <Button disabled={Boolean(busy)} onClick={() => setRest("long")}>
+          <Button size="sm" variant="subtle" disabled={Boolean(busy)} onClick={() => setRest("long")}>
             长休
           </Button>
           {r.rage.max > 0 && (
-            <Button disabled={Boolean(busy) || left(r.rage) <= 0} onClick={() => go("rg", () => useFeature({ data: { code, feat: "rage" } }))}>
+            <Button size="sm" variant="subtle" disabled={Boolean(busy) || left(r.rage) <= 0} onClick={() => go("rg", () => useFeature({ data: { code, feat: "rage" } }))}>
               狂暴
             </Button>
           )}
           {r.surge.max > 0 && (
-            <Button disabled={Boolean(busy) || left(r.surge) <= 0} onClick={() => go("sg", () => useFeature({ data: { code, feat: "surge" } }))}>
+            <Button size="sm" variant="subtle" disabled={Boolean(busy) || left(r.surge) <= 0} onClick={() => go("sg", () => useFeature({ data: { code, feat: "surge" } }))}>
               动作如潮
             </Button>
           )}
           {r.secondWind.max > 0 && (
-            <Button disabled={Boolean(busy) || left(r.secondWind) <= 0} onClick={() => go("sw", () => useFeature({ data: { code, feat: "secondWind" } }))}>
+            <Button size="sm" variant="subtle" disabled={Boolean(busy) || left(r.secondWind) <= 0} onClick={() => go("sw", () => useFeature({ data: { code, feat: "secondWind" } }))}>
               回气
             </Button>
           )}
@@ -3996,50 +4020,6 @@ function PresenceBoard({ people }: { people: PresentCharacter[] }) {
   );
 }
 
-function StockChip({ item }: { item: StockItem }) {
-  const empty = item.remain <= 0;
-  return (
-    <div className="rounded-[8px] border border-border bg-bg/40 px-2 py-2">
-      <p className="text-[10px] leading-none text-subtle">{item.label}</p>
-      <p className="mt-1 font-display text-xl leading-none tabular-nums text-fg">
-        {item.remain}
-        {item.max != null && (
-          <span className="ml-0.5 text-xs font-sans text-subtle">/{item.max}</span>
-        )}
-      </p>
-      <p className="mt-1 text-[10px] leading-none text-subtle">
-        {empty && item.max != null ? "用尽" : item.note ?? "\u00a0"}
-      </p>
-    </div>
-  );
-}
-
-function Stat({
-  k,
-  v,
-  remain,
-  max,
-}: {
-  k: string;
-  v?: string | number;
-  remain?: number;
-  max?: number;
-}) {
-  return (
-    <div className="rounded-[12px] border border-border px-3 py-2">
-      <p className="text-[10px] text-subtle">{k}</p>
-      {remain != null && max != null ? (
-        <p className="font-display tabular-nums">
-          <span className="text-fg">{remain}</span>
-          <span className="text-sm text-subtle">/{max}</span>
-        </p>
-      ) : (
-        <p className="font-display tabular-nums text-fg">{v}</p>
-      )}
-    </div>
-  );
-}
-
 function ClueBoard({ clues }: { clues: TableSnap["state"]["clues"] }) {
   const discoveries = clues.filter((clue) => !clue.background);
   const background = clues.filter((clue) => clue.background);
@@ -4069,38 +4049,6 @@ function ClueBoard({ clues }: { clues: TableSnap["state"]["clues"] }) {
         <summary className="cursor-pointer text-xs text-subtle">其他见闻 · {card.notes?.length ?? 1} 条</summary>
         {notes(card)}
       </details>)}
-    </div>
-  );
-}
-
-function LogView({
-  logs,
-  party,
-}: {
-  logs: TableSnap["logs"];
-  party: TableSnap["characters"];
-}) {
-  const hp = useMemo(
-    () =>
-      party
-        .filter((p) => p.visibility !== "identityOnly")
-        .map((p) => `${p.sheet.name} ${p.sheet.hp.current}/${p.sheet.hp.max}`)
-        .join(" · "),
-    [party],
-  );
-  return (
-    <div className="grid gap-3 text-sm">
-      <p className="text-xs text-subtle">生命 {hp}</p>
-      <ol className="space-y-2">
-        {logs.map((l) => (
-          <li key={l.id} className="border-l-2 border-brass/40 pl-3 text-muted">
-            {l.entry}
-          </li>
-        ))}
-      </ol>
-      {logs.length === 0 && (
-        <p className="text-muted">日志将在行动之后生长。</p>
-      )}
     </div>
   );
 }

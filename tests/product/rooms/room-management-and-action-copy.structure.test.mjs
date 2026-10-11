@@ -69,7 +69,7 @@ test("on-demand table journal omits redundant controls and wraps action copy", a
     catalog,
     /吐息武器：动作，3 级 2d6（对应龙种伤害）。15 尺锥或 30 尺线，豁免 DC＝8＋熟练＋体质。短休后可用/,
   );
-  assert.match(playTable, /<Fold title="动作"/);
+  assert.match(playTable, /<Fold title="特性"/);
   assert.doesNotMatch(characterDetail, /所在 ·/);
   assert.doesNotMatch(playTable, /<p[^>]*>所在 ·/);
   assert.doesNotMatch(resourcePanel, /点火把/);

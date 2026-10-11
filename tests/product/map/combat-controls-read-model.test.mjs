@@ -177,7 +177,7 @@ const DEFINITIONS = {
 const ALLY = "pc:bob";
 
 function genesis({ spentMilliInches = "120000", grappled = false, prone = false, ally = false, hidden = false, readied = false,
-  gutter = false, allyDying = false } = {}) {
+  gutter = false, allyDying = false, concentrating = false } = {}) {
   const player = combatant(PLAYER, 1, "player");
   player.abilityRefs = Object.keys(DEFINITIONS).sort();
   player.resources = {
@@ -191,6 +191,11 @@ function genesis({ spentMilliInches = "120000", grappled = false, prone = false,
   if (grappled) player.conditions = { grappled: true };
   if (prone) player.conditions = { ...player.conditions, prone: true };
   if (hidden) player.conditions = { ...player.conditions, hidden: { stealthTotal: "17" } };
+  // SPEC 0010 §7: temporary hit points and a concentration for the panel.
+  if (concentrating) {
+    player.hitPoints = { current: "20", maximum: "20", temporary: "5" };
+    player.concentration = { abilityRef: "ability:alice:spell:sleep", durationMicros: "60000000" };
+  }
   const npc = combatant(NPC, 2, "npc");
   // ADR 0099: with an ally beside her and the warden in reach, Help applies.
   const bob = combatant(ALLY, 3, "player");
@@ -298,7 +303,10 @@ function playerView(world) {
 
 test("Rules projects the player's own combat controls outside the actor's delta fields", () => {
   const { view, state } = playerView(genesis());
-  assert.deepEqual(Object.keys(view.combatControls).sort(), ["abilities", "hidden", "jumps", "movement", "offers", "prone", "turn"]);
+  assert.deepEqual(Object.keys(view.combatControls).sort(), ["abilities", "hidden", "jumps", "movement", "offers", "prone", "turn", "vitals"]);
+  assert.deepEqual(view.combatControls.vitals, {
+    temporaryHitPoints: "0", concentration: null, lifeState: "alive", deathSaves: { successes: "0", failures: "0" },
+  });
   assert.equal(view.combatControls.prone, false);
   assert.equal(view.combatControls.hidden, false);
   assert.deepEqual(view.combatControls.jumps, [], "nothing in the yard is in jumping range");
@@ -529,18 +537,19 @@ test("a weapon attack is named by the held item and a malformed budget fails clo
     mechanicalKey: "weapon:item-entry:alice:longsword",
   };
   const offers = { hide: false, search: false, help: null, ready: null, stabilize: null };
+  const vitals = { temporaryHitPoints: "0", concentration: null, lifeState: "alive", deathSaves: { successes: "0", failures: "0" } };
   const projected = projectAuthoritativeTableObservation({
     userId: "principal:alice",
     members: ["principal:alice"],
     locationLabels: {},
     observation: syntheticObservation({ abilities: { "ability:alice:weapon": weapon }, turn: null, movement: null, prone: false,
-      hidden: false, offers, jumps: [] }),
+      hidden: false, offers, jumps: [], vitals }),
   });
   assert.equal(projected.combatControls.abilities[0].name, "旧长剑");
   assert.equal(projected.combatControls.turn, null);
   assert.equal(projected.combatControls.movement, null);
 
-  const closed = { hidden: false, offers, jumps: [] };
+  const closed = { hidden: false, offers, jumps: [], vitals };
   const jump = { abilityRef: "action:long-jump", featureId: "feature:yard:gutter", to: { x: "96", y: "0", elevation: "0" }, running: true,
     costMilliInches: "96000", clearCheck: false, landingCheck: false };
   for (const malformed of [
@@ -552,8 +561,12 @@ test("a weapon attack is named by the held item and a malformed budget fails clo
       offers: { ...offers, help: { allyRefs: "pc:bob", enemyRefs: [] } } },
     { abilities: {}, turn: null, movement: null, prone: false, hidden: false, jumps: [],
       offers: { ...offers, stabilize: { targetRefs: ["pc:bob"], dc: 10 } } },
-    { abilities: {}, turn: null, movement: null, prone: false, hidden: "no", offers, jumps: [] },
-    { abilities: {}, turn: null, movement: null, prone: false, hidden: false, offers },
+    { abilities: {}, turn: null, movement: null, prone: false, hidden: "no", offers, jumps: [], vitals },
+    { abilities: {}, turn: null, movement: null, prone: false, hidden: false, offers, vitals },
+    { abilities: {}, turn: null, movement: null, prone: false, hidden: false, offers, jumps: [] },
+    { abilities: {}, turn: null, movement: null, prone: false, ...closed, vitals: { ...vitals, temporaryHitPoints: "-1" } },
+    { abilities: {}, turn: null, movement: null, prone: false, ...closed, vitals: { ...vitals, lifeState: "dying" } },
+    { abilities: {}, turn: null, movement: null, prone: false, ...closed, vitals: { ...vitals, deathSaves: { successes: "1" } } },
     { abilities: {}, turn: null, movement: null, prone: false, ...closed, jumps: [{ ...jump, abilityRef: "action:pole-vault" }] },
     { abilities: {}, turn: null, movement: null, prone: false, ...closed, jumps: [{ ...jump, to: { x: "96", y: "0" } }] },
     { abilities: {}, turn: null, movement: null, prone: false, ...closed, jumps: [{ ...jump, damage: "1d6" }] },
@@ -569,6 +582,31 @@ test("a weapon attack is named by the held item and a malformed budget fails clo
 
 // SPEC 0006 §§6、7 (ADR 0101): the Room's NPC turn status reaches the table
 // state the page reads, as given; anything else is dropped.
+// SPEC 0010 §7: the character panel reads the actor's own temporary hit
+// points, the spell it concentrates on and its conditions from the same
+// projection; who grapples it stays with the map.
+test("the table shows the actor's temporary hit points, concentration and conditions", () => {
+  const { view } = playerView(genesis({ concentrating: true, grappled: true }));
+  assert.deepEqual(view.combatControls.vitals, {
+    temporaryHitPoints: "5",
+    concentration: { abilityRef: "ability:alice:spell:sleep", sourceSpellId: "sleep" },
+    lifeState: "alive",
+    deathSaves: { successes: "0", failures: "0" },
+  });
+  const projected = projectAuthoritativeTableObservation({ userId: "principal:alice", members: ["principal:alice"], locationLabels: {},
+    observation: { readModel: view, delivery: { kind: "none" } } });
+  assert.deepEqual(projected.combatControls.vitals, {
+    temporaryHitPoints: 5, concentration: { name: "睡眠术" }, lifeState: "alive", deathSaves: { successes: 0, failures: 0 },
+  });
+  assert.deepEqual(projected.controlledCharacter.conditions, [{ id: "grappled" }]);
+
+  const marked = structuredClone(view);
+  marked.controlledCharacter.conditions = { grappled: true, grappledBy: NPC, exhaustion: "2", prone: false, poisoned: true };
+  const markedTable = projectAuthoritativeTableObservation({ userId: "principal:alice", members: ["principal:alice"], locationLabels: {},
+    observation: { readModel: marked, delivery: { kind: "none" } } });
+  assert.deepEqual(markedTable.controlledCharacter.conditions, [{ id: "exhaustion", level: 2 }, { id: "grappled" }, { id: "poisoned" }]);
+});
+
 test("the table forwards the NPC combat turn status the Room reports", () => {
   const { view } = playerView(genesis());
   const table = readModel => buildAuthoritativeTableState({ rulesetVersion: AUTHORITATIVE_RULESET_VERSION,

@@ -26,7 +26,7 @@ test("the table exposes honest initial and delayed sync loading states", async (
   assert.match(client, /<PlayTable code=\{code\} snap=\{data\} syncing=\{showSlowSync\}/);
 });
 
-test("the play surface shows useful context, loads in place, and opens four details on demand", async () => {
+test("the play surface shows useful context, loads in place, and opens the character and journal on demand", async () => {
   const previousActEnvironment = globalThis.IS_REACT_ACT_ENVIRONMENT;
   const originalFetch = globalThis.fetch;
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -67,6 +67,13 @@ test("the play surface shows useful context, loads in place, and opens four deta
         { id: "inference", text: "像是用利器割断的。", hint: "角色推断", layer: "full" }],
     }, { id: "background", name: "其他见闻", text: "你来到钟楼。", hint: "感官证据", layer: "full", background: true }];
     snap.logs = [{ id: "log:one", entry: "阿莱莎走进庭院。", created_at: "" }];
+    // SPEC 0010 §7: the character's own pools and conditions as Rules counts
+    // them; item stocks such as coins stay with the inventory.
+    Object.assign(snap.state.authoritative.controlledCharacter, {
+      resources: { slot1: 1, slot3: 2, surge: 0, hitDice: 3, gold: 15 },
+      resourceMaximums: { slot1: 4, slot3: 2, surge: 1, hitDice: 3 },
+      conditions: [{ id: "poisoned" }, { id: "exhaustion", level: 1 }],
+    });
     queryClient = new QueryClient();
     const tree = (value, syncing = false) => createElement(
       QueryClientProvider,
@@ -80,8 +87,45 @@ test("the play surface shows useful context, loads in place, and opens four deta
     const context = renderer.root.findByProps({ "data-table-context-bar": true });
     assert.match(renderedText(context), /等待你的行动/);
     assert.match(renderedText(context), /钟楼庭院/);
-    assert.match(renderedText(context), /生命 \d+\/\d+/);
-    assert.match(renderedText(context), /护甲 \d+/);
+
+    // Where the panel does not fit beside the scene, one line of the
+    // character's state opens it.
+    const vitalsTrigger = renderer.root.findByProps({ "data-table-vitals-trigger": true });
+    assert.match(renderedText(vitalsTrigger), /生命 \d+\/\d+/);
+    assert.match(renderedText(vitalsTrigger), /护甲 \d+/);
+    assert.match(renderedText(vitalsTrigger), /一环 1\/4/);
+    assert.match(renderedText(vitalsTrigger), /状态 2/);
+    assert.equal(renderer.root.findAllByProps({ "data-table-character-dialog": true }).length, 0);
+    await act(async () => {
+      vitalsTrigger.props.onClick();
+    });
+    const characterPanel = renderer.root.findByProps({ "data-table-character-dialog": true });
+    assert.equal(characterPanel.props.role, "dialog");
+    assert.match(renderedText(characterPanel), /阿莱莎/);
+    assert.match(renderedText(characterPanel), /生命/);
+    assert.deepEqual(characterPanel.findByProps({ "aria-label": "当前状态" }).findAllByType("li").map(renderedText),
+      ["中毒", "力竭 1 级"]);
+    assert.deepEqual(
+      characterPanel.findByProps({ "data-character-pools": true })
+        .findAll((node) => node.props.role === "img").map((node) => node.props["aria-label"]),
+      ["一环 1/4", "三环 2/2", "动作如潮 0/1", "生命骰 3/3"],
+    );
+    const characterTabs = characterPanel.findAll((node) => node.props.role === "tab");
+    assert.deepEqual(characterTabs.map(renderedText), ["行动", "背包", "角色"]);
+    assert.match(renderedText(characterPanel.findByProps({ role: "tabpanel" })), /休整与职业能力/);
+    await act(async () => {
+      characterTabs[1].props.onClick();
+    });
+    assert.match(renderedText(renderer.root.findByProps({ role: "tabpanel" })), /物品资料不可用/);
+    await act(async () => {
+      renderer.root.findByProps({ "data-table-character-dialog": true })
+        .findAll((node) => node.props.role === "tab")[2].props.onClick();
+    });
+    assert.match(renderedText(renderer.root.findByProps({ role: "tabpanel" })), /力量/);
+    await act(async () => {
+      renderer.root.findByProps({ "aria-label": "收起角色栏" }).props.onClick();
+    });
+    assert.equal(renderer.root.findAllByProps({ "data-table-character-dialog": true }).length, 0);
 
     const journalTrigger = renderer.root.findByProps({ "data-table-journal-trigger": true });
     assert.equal(journalTrigger.props["aria-expanded"], false);
@@ -97,10 +141,10 @@ test("the play surface shows useful context, loads in place, and opens four deta
     const journal = renderer.root.findByProps({ "data-table-journal": true });
     assert.equal(journal.props.role, "dialog");
     const tabs = journal.findAll((node) => node.props.role === "tab");
-    assert.deepEqual(tabs.map(renderedText), ["人物1", "在场1", "线索1", "日志1"]);
+    assert.deepEqual(tabs.map(renderedText), ["在场1", "线索1"]);
 
     await act(async () => {
-      tabs[1].props.onClick();
+      tabs[0].props.onClick();
     });
     const presentPanel = renderer.root.findByProps({ role: "tabpanel" });
     assert.match(renderedText(presentPanel), /守夜人/);
@@ -108,7 +152,7 @@ test("the play surface shows useful context, loads in place, and opens four deta
       ["在场", "在任", "存活", "失去意识"]);
 
     await act(async () => {
-      tabs[2].props.onClick();
+      tabs[1].props.onClick();
     });
     const cluePanel = renderer.root.findByProps({ role: "tabpanel" });
     assert.match(renderedText(cluePanel), /断裂的钟绳/);

@@ -512,7 +512,21 @@ export type CombatControls = {
   hidden: boolean;
   /** SPEC 0014 §4 (ADR 0098): only the jumps it can make now. */
   jumps: CombatJumpChoice[];
+  vitals: CombatVitals;
 };
+
+/** SPEC 0010 §7: the actor's own state the character panel shows beside its
+ * controls. A concentration Rules cannot name keeps a null name. */
+export type CombatVitals = {
+  temporaryHitPoints: number;
+  concentration: { name: string | null } | null;
+  lifeState: "alive" | "unconscious" | "dead";
+  deathSaves: { successes: number; failures: number };
+};
+
+/** SPEC 0010 §7: one of the controlled character's own conditions, by its
+ * SRD id; exhaustion keeps its level. */
+export type CharacterCondition = { id: string; level?: number };
 
 /** SRD 5.1 actions any creature can take on its turn; Rules owns their
  * definitions under these refs. */
@@ -678,7 +692,7 @@ function closedCombatControls(input: {
   inventory: AuthoritativeInventory | undefined;
 }): CombatControls {
   const value = input.value;
-  if (!isRecord(value) || !hasExactKeys(value, ["abilities", "hidden", "jumps", "movement", "offers", "prone", "turn"]) || !isRecord(value.abilities)
+  if (!isRecord(value) || !hasExactKeys(value, ["abilities", "hidden", "jumps", "movement", "offers", "prone", "turn", "vitals"]) || !isRecord(value.abilities)
     || typeof value.prone !== "boolean" || typeof value.hidden !== "boolean") {
     throw new TypeError("Authoritative combat controls are invalid.");
   }
@@ -745,7 +759,56 @@ function closedCombatControls(input: {
     movement,
     hidden: value.hidden,
     jumps,
+    vitals: closedCombatVitals(value.vitals, definitions),
   };
+}
+
+function closedCombatVitals(value: unknown, definitions: Record<string, unknown>): CombatVitals {
+  const count = (candidate: unknown) => {
+    if (typeof candidate !== "string" || !/^(0|[1-9][0-9]*)$/.test(candidate) || Number(candidate) > 1_000_000) {
+      throw new TypeError("Authoritative combat vitals are invalid.");
+    }
+    return Number(candidate);
+  };
+  if (!isRecord(value) || !hasExactKeys(value, ["concentration", "deathSaves", "lifeState", "temporaryHitPoints"])
+    || (value.lifeState !== "alive" && value.lifeState !== "unconscious" && value.lifeState !== "dead")
+    || !isRecord(value.deathSaves) || !hasExactKeys(value.deathSaves, ["failures", "successes"])
+    || (value.concentration !== null && !isRecord(value.concentration))) {
+    throw new TypeError("Authoritative combat vitals are invalid.");
+  }
+  let concentration: CombatVitals["concentration"] = null;
+  if (isRecord(value.concentration)) {
+    const abilityRef = nonEmptyString(value.concentration.abilityRef);
+    const spellId = nonEmptyString(value.concentration.sourceSpellId);
+    const definition = abilityRef === undefined ? undefined : definitions[abilityRef];
+    concentration = {
+      name: (spellId === undefined ? undefined : spellById(spellId)?.name)
+        ?? (isRecord(definition) ? safeProjectedText(definition.name, 200) : undefined)
+        ?? null,
+    };
+  }
+  return {
+    temporaryHitPoints: count(value.temporaryHitPoints),
+    concentration,
+    lifeState: value.lifeState,
+    deathSaves: { successes: count(value.deathSaves.successes), failures: count(value.deathSaves.failures) },
+  };
+}
+
+/** SPEC 0010 §7: the viewer's own conditions. Only set flags and an
+ * exhaustion level pass; who grapples the character stays with the map. */
+function safeOwnConditions(value: unknown): CharacterCondition[] | undefined {
+  if (!isRecord(value)) return undefined;
+  return Object.entries(value)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .flatMap(([id, state]): CharacterCondition[] => {
+      if (!/^[a-z][A-Za-z]{0,39}$/.test(id) || id === "grappledBy") return [];
+      if (id === "exhaustion") {
+        const level = Number(state);
+        return Number.isSafeInteger(level) && level >= 1 && level <= 6 ? [{ id, level }] : [];
+      }
+      return state === true ? [{ id }] : [];
+    });
 }
 
 const COMBAT_JUMP_REFS: ReadonlySet<unknown> = new Set(["action:long-jump", "action:high-jump"]);
@@ -2042,6 +2105,7 @@ export function projectAuthoritativeTableObservation(input: {
       )
     : undefined;
   const classId = nonEmptyString(readModel.controlledCharacter.classId);
+  const conditions = safeOwnConditions(readModel.controlledCharacter.conditions);
   const abilityScores = safeAbilityScores(readModel.controlledCharacter.abilityScores);
   const loadout = safeCharacterLoadout(readModel.controlledCharacter.loadout);
   const inventory = readModel.controlledCharacter.inventory === undefined
@@ -2326,6 +2390,7 @@ export function projectAuthoritativeTableObservation(input: {
         ? { experiencePoints }
         : {}),
       ...(safeHitPoints ? { hitPoints: safeHitPoints } : {}),
+      ...(conditions ? { conditions } : {}),
       ...(resources ? { resources } : {}),
       ...(resourceMaximums ? { resourceMaximums } : {}),
       ...(abilityScores ? { abilityScores } : {}),

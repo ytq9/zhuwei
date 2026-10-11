@@ -82,7 +82,7 @@ flowchart TD
 | [hall/page.tsx](../../app/hall/page.tsx)、[hall-client.tsx](../../app/hall/hall-client.tsx) | 大厅与房间目录交互 |
 | [table/[code]/page.tsx](../../app/table/[code]/page.tsx)、[table-client.tsx](../../app/table/[code]/table-client.tsx) | 玩家桌面宿主；React Query 周期读取 `fetchTable`，当前为约 3 秒轮询 |
 | [play-table.tsx](../../app/_runtime/components/play-table.tsx) | 行动输入、待决、骰子、旁白与桌面交互的主展示组件 |
-| [character-wizard.tsx](../../app/_runtime/components/character-wizard.tsx)、[inventory-panel.tsx](../../app/_runtime/components/inventory-panel.tsx)、[tactical-map.tsx](../../app/_runtime/components/tactical-map.tsx) | 建卡、物品与地图展示；只消费服务端结果与 Viewer 投影 |
+| [character-wizard.tsx](../../app/_runtime/components/character-wizard.tsx)、[character-panel.tsx](../../app/_runtime/components/character-panel.tsx)、[inventory-panel.tsx](../../app/_runtime/components/inventory-panel.tsx)、[tactical-map.tsx](../../app/_runtime/components/tactical-map.tsx) | 建卡、角色栏（状态、资源与行动/背包/角色标签）、物品与地图展示；只消费服务端结果与 Viewer 投影 |
 | [table/client.ts](../../app/_runtime/lib/table/client.ts)、[authoritative-client.ts](../../app/_runtime/lib/table/authoritative-client.ts) | 客户端命令调用与权威行动的提交/恢复状态 |
 | [api/game/route.ts](../../app/api/game/route.ts) | 唯一游戏/语音命令入口：白名单 `commands` 表，`POST` 先 `assertSameOrigin` 再 `requireApiUser`，然后分发 |
 | [auth.server.ts](../../app/_lib/auth.server.ts)、[api/_shared.ts](../../app/api/_shared.ts) | Cookie 会话、D1 token 摘要与用户验证；注册/登录/登出/会话路由在 `app/api/auth/` |
