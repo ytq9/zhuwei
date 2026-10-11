@@ -185,34 +185,48 @@ test("pins one host-selected KP profile when the room is created", async () => {
   assert.doesNotMatch(lobby, /LEGACY_KP_MODELS/);
 });
 
-test("keeps clocks, squads, rest voting, combat, voice and public projection in the live UI", async () => {
-  const [play, server] = await Promise.all([
+// ADR 0147: the live table keeps squads, rests (personal and the group
+// consent), combat turns, voice and the public projection through their
+// current entry points; the retired combat strip, squad queue and rest vote
+// are gone with their endpoints.
+test("keeps squads, rests, combat turns, voice and public projection in the live UI", async () => {
+  const [play, actions, server, client] = await Promise.all([
     source("app/_runtime/components/play-table.tsx"),
+    source("app/_runtime/components/tactical-map-actions.ts"),
     source("app/_runtime/lib/table/server.ts"),
+    source("app/_runtime/lib/table/client.ts"),
   ]);
   for (const token of [
     "transcribeAudio",
     "speakNarration",
     "inviteSquad",
-    "approveSquadQueue",
+    "answerSquad",
+    "leaveSquadNow",
     "passCaptain",
     "restNow",
     "cancelRest",
-    "joinCombat",
-    "resolveReact",
+    "groupRestConsent",
+    "combatChoice",
+    "TurnBar",
+    "useTacticalMapActions",
     "leaveTable",
   ]) {
     assert.match(play, new RegExp(`\\b${token}\\b`), `table UI omits ${token}`);
   }
+  for (const token of ["combatAbility", "endTurn", "moveOnMap"]) {
+    assert.match(actions, new RegExp(`\\b${token}\\b`), `map actions omit ${token}`);
+  }
   for (const token of [
     "clocks:",
-    "restHold:",
     "squads:",
-    "combat:",
     "partySplit",
     "placeNames",
   ]) {
     assert.match(server, new RegExp(token), `snapshot omits ${token}`);
+  }
+  for (const retired of ["restVote", "restHold", "squadQueue", "approveSquadQueue", "joinCombat", "resolveReact",
+    "leaveFight", "extraAttack", "castSpell", "useFeature", "useHitDie"]) {
+    assert.doesNotMatch(`${play}\n${server}\n${client}`, new RegExp(`\\b${retired}\\b`), `${retired} is retired`);
   }
   assert.match(server, /projectAuthoritativeTableObservation/);
   assert.doesNotMatch(play, /\btruth\b/);

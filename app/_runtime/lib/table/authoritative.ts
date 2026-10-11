@@ -1605,12 +1605,12 @@ export function buildAuthoritativeActionInput(input: {
       };
 }
 
+/** The table's own buttons that reach the Room without a sentence: ending
+ * the turn, starting or answering a rest, and interrupting one (ADR 0147).
+ * Abilities go through the combat controls, everything else is the player's
+ * sentence. */
 export type AuthoritativeButtonCommand =
-  | { kind: "joinCombat" }
-  | { kind: "extraAttack"; targetId: string }
   | { kind: "endTurn" }
-  | { kind: "leaveFight"; leaveKind: "disengage" | "flee" | "withdraw" | "surrender" }
-  | { kind: "resolveReact"; reactionId: string; use: boolean }
   | {
       kind: "restNow";
       restKind: "short" | "long";
@@ -1618,44 +1618,13 @@ export type AuthoritativeButtonCommand =
       hitDice?: number;
       arcaneRecoverySlotLevels?: number[];
     }
-  | { kind: "cancelRest" }
-  | {
-      kind: "castSpell";
-      spellId: string;
-      slot?: number;
-      targetIds?: string[];
-      choice?: string;
-      destinationFeet?: number;
-      originFeet?: number;
-      ritual?: boolean;
-    }
-  | { kind: "useFeature"; featureId: string }
-  | { kind: "useHitDie" };
+  | { kind: "cancelRest" };
 
 function safeButtonCommand(command: AuthoritativeButtonCommand): AuthoritativeButtonCommand {
   switch (command.kind) {
-    case "joinCombat":
     case "endTurn":
     case "cancelRest":
-    case "useHitDie":
       return { kind: command.kind };
-    case "extraAttack": {
-      const targetId = nonEmptyString(command.targetId);
-      if (!targetId) throw new TypeError("An explicit attack target is required.");
-      return { kind: command.kind, targetId };
-    }
-    case "leaveFight":
-      if (!["disengage", "flee", "withdraw", "surrender"].includes(command.leaveKind)) {
-        throw new TypeError("The selected way to leave combat is invalid.");
-      }
-      return { kind: command.kind, leaveKind: command.leaveKind };
-    case "resolveReact": {
-      const reactionId = nonEmptyString(command.reactionId);
-      if (!reactionId || typeof command.use !== "boolean") {
-        throw new TypeError("A reaction decision must identify the pending reaction.");
-      }
-      return { kind: command.kind, reactionId, use: command.use };
-    }
     case "restNow": {
       if (!["short", "long"].includes(command.restKind)) {
         throw new TypeError("The selected rest kind is invalid.");
@@ -1700,54 +1669,15 @@ function safeButtonCommand(command: AuthoritativeButtonCommand): AuthoritativeBu
           : { arcaneRecoverySlotLevels }),
       };
     }
-    case "castSpell": {
-      const spellId = nonEmptyString(command.spellId);
-      if (!spellId) throw new TypeError("A spell selection is required.");
-      const targetIds = Array.isArray(command.targetIds)
-        ? command.targetIds.map(nonEmptyString)
-        : undefined;
-      if (targetIds?.some((targetId) => targetId === undefined)) {
-        throw new TypeError("Spell targets must be explicit visible identifiers.");
-      }
-      return {
-        kind: command.kind,
-        spellId,
-        ...(finiteNumber(command.slot) !== undefined ? { slot: command.slot } : {}),
-        ...(targetIds ? { targetIds: targetIds as string[] } : {}),
-        ...(nonEmptyString(command.choice) ? { choice: nonEmptyString(command.choice)! } : {}),
-        ...(finiteNumber(command.destinationFeet) !== undefined
-          ? { destinationFeet: command.destinationFeet }
-          : {}),
-        ...(finiteNumber(command.originFeet) !== undefined ? { originFeet: command.originFeet } : {}),
-        ...(typeof command.ritual === "boolean" ? { ritual: command.ritual } : {}),
-      };
-    }
-    case "useFeature": {
-      const featureId = nonEmptyString(command.featureId);
-      if (!featureId) throw new TypeError("A feature selection is required.");
-      return { kind: command.kind, featureId };
-    }
+    default:
+      throw new TypeError("This table button is not available.");
   }
 }
 
 function buttonIntentText(command: AuthoritativeButtonCommand): string {
   switch (command.kind) {
-    case "joinCombat":
-      return "我明确加入当前遭遇；先攻及其他随机结果由房间权威生成。";
-    case "extraAttack":
-      return `我使用战争祭司的附赠攻击，目标为 ${command.targetId}。`;
     case "endTurn":
       return "我明确结束自己当前的战斗回合。";
-    case "leaveFight":
-      return command.leaveKind === "disengage"
-        ? "我明确采取撤离动作，并按规则处理随后移动。"
-        : command.leaveKind === "flee"
-          ? "我尝试从当前遭遇中逃离。"
-          : command.leaveKind === "withdraw"
-            ? "我尝试离开当前战场，但不投降。"
-            : "我明确放下抵抗并投降。";
-    case "resolveReact":
-      return `我明确${command.use ? "使用" : "放弃"}这次反应。`;
     case "restNow": {
       const mode = command.mode === "group" ? "队伍" : "个人";
       const kind = command.restKind === "long" ? "长休" : "短休";
@@ -1766,23 +1696,6 @@ function buttonIntentText(command: AuthoritativeButtonCommand): string {
     }
     case "cancelRest":
       return "我中断自己的休整；若当前是休整表决，则我明确拒绝。";
-    case "castSpell": {
-      const details = [
-        command.slot === undefined ? undefined : `使用 ${command.slot} 环法术位`,
-        command.targetIds === undefined || command.targetIds.length === 0
-          ? "尚未选择目标"
-          : `明确目标为 ${command.targetIds.join("、")}`,
-        command.choice === undefined ? undefined : `选择为 ${command.choice}`,
-        command.destinationFeet === undefined ? undefined : `目标位置为 ${command.destinationFeet} 尺`,
-        command.originFeet === undefined ? undefined : `区域中心为 ${command.originFeet} 尺`,
-        command.ritual === undefined ? undefined : command.ritual ? "以仪式施法" : "不是仪式施法",
-      ].filter((detail): detail is string => detail !== undefined);
-      return `我施放法术 ${command.spellId}${details.length ? `，${details.join("；")}` : ""}。`;
-    }
-    case "useFeature":
-      return `我使用特性 ${command.featureId}。`;
-    case "useHitDie":
-      return "我在当前合法的短休结算中选择花费一枚生命骰。";
   }
 }
 

@@ -92,19 +92,12 @@ export const retryNarration = ({ data }: Args) =>
 export const acknowledgeDelivery = ({ data }: Args) =>
   call<Result>("acknowledgeDelivery", data);
 export const resolveRoll = ({ data }: Args) => callWithStableTableSubmission("resolveRoll", data);
-export const joinCombat = ({ data }: Args) => callWithStableTableSubmission("joinCombat", data);
-export const extraAttack = ({ data }: Args) => callWithStableTableSubmission("extraAttack", data);
 export const endTurn = ({ data }: Args) => callWithStableTableSubmission("endTurn", data);
-export const leaveFight = ({ data }: Args) => callWithStableTableSubmission("leaveFight", data);
-export const resolveReact = ({ data }: Args) => callWithStableTableSubmission("resolveReact", data);
 export const restNow = ({ data }: { data: RestNowData }) =>
   callWithStableTableSubmission("restNow", data);
 export const cancelRest = ({ data }: Args) => callWithStableTableSubmission("cancelRest", data);
 export const controlActivity = ({ data }: { data: { code: string; activityId: string; attentionRootActionId: string; decision: "continue" | "stop" } }) =>
   callWithStableTableSubmission("controlActivity", data);
-export const castSpell = ({ data }: Args) => callWithStableTableSubmission("castSpell", data);
-export const useFeature = ({ data }: Args) => callWithStableTableSubmission("useFeature", data);
-export const useHitDie = ({ data }: Args) => callWithStableTableSubmission("useHitDie", data);
 export const kickMember = ({ data }: Args) => callWithStableTableSubmission("kickMember", data);
 export const leaveTable = ({ data }: Args) => callWithStableTableSubmission("leaveTable", data);
 export const inviteSquad = ({ data }: Args) => callWithStableTableSubmission("inviteSquad", data);
@@ -114,4 +107,3 @@ export const answerSquad = ({ data }: Args) => callWithStableTableSubmission("an
 export const leaveSquadNow = ({ data }: Args) =>
   callWithStableTableSubmission("leaveSquadNow", data);
 export const passCaptain = ({ data }: Args) => callWithStableTableSubmission("passCaptain", data);
-export const approveSquadQueue = ({ data }: Args) => call<Result>("approveSquadQueue", data);

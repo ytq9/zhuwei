@@ -162,8 +162,7 @@
 - 已确认（2026-10-11）：战斗外选好能力与目标后，句子放进输入框，由玩家补充后发送。
 - 已确认（2026-10-11）：先做第一期。
 - 已确认（2026-10-11）：地图改动已提交到 `cloudflare`，开始第二期。
-- 待确认：删除服务端与客户端的 `castSpell`、`useFeature`、`useHitDie` 入口。页面已不再调用它们，但 `tests/product/characters/authoritative-table.test.mjs`（SPEC 0004、0010 的验收门）固定了这些入口，删除前需要按规格工作流调整该门。
-- 待确认：删除生产中不显示的旧战斗条、小队排队条与休息投票。`tests/product/characters/interaction-contract.structure.test.mjs` 是 [SPEC 0011](../../specs/0011-reliability-correction-observability-and-evaluation.md) 的验收门，要求页面源码保留 `joinCombat`、`resolveReact`、`approveSquadQueue` 等入口；删除前需要按规格工作流调整该门，第一期未删。
+- 已确认（2026-10-11）：删除 `castSpell`、`useFeature`、`useHitDie` 接口与旧战斗条、小队排队条、休息投票，按 [ADR 0147](../../adr/0147-retire-unused-table-buttons-and-legacy-panels.md) 实施（见第 11 节）。
 
 ## 7. 第一期实施记录（2026-10-11，本地）
 
@@ -208,3 +207,13 @@
 - 删除未定义的 `bg-panel`。
 - 补漏：`tests/product/table/party-invite-control.test.mjs`（SPEC 0007 的验收门）自第一期起失败。它把页面上第一个可展开按钮当作桌边册入口，第一期在前面加了角色状态条，组队按钮也移到了"同伴"标签。只改了打开桌边册与"同伴"标签的步骤，断言未变，现已通过。
 - 验证：所有引用桌面组件、桌面适配层或 Rules 投影的 SPEC 门已逐个运行——13 个 Node 门与 8 个读取桌面状态的 Room 门（148 个用例）全部通过；第一至三期的界面测试全部通过；类型检查通过；浏览器检查了手机宽度下待决卡与选目标时的按钮层级和圆角。
+
+## 11. 删除旧入口（2026-10-11，本地）
+
+按 [ADR 0147](../../adr/0147-retire-unused-table-buttons-and-legacy-panels.md)：
+
+- 删除服务端、客户端与路由的 `joinCombat`、`extraAttack`、`leaveFight`、`resolveReact`、`castSpell`、`useFeature`、`useHitDie`、`approveSquadQueue`；桌面快照不再带 `combat`、`restVote`、`restHold`、`squadQueue`；页面删除旧战斗条、小队排队条、休息投票与保持提示、"队员发言先给队长看"的提示和排队回执分支。
+- 表格按钮命令只剩 `endTurn`、`restNow`、`cancelRest`，其他命令抛错拒绝。
+- 删除无调用者的 `app/_runtime/lib/kp/combat.ts`，并从 `tools/check-modules.mjs` 的第二权威允许名单移除。
+- 掷骰按钮里非权威掷骰的加值分支不再读旧遭遇；该分支与 `lib/dnd/boosts.ts` 在现役版本都不执行，删除另行处理。
+- 验收门：SPEC 0004 的 `authoritative-table`、SPEC 0011 的 `interaction-contract` 与模块检查改为检查现役入口；路由结构测试与夹具同步。

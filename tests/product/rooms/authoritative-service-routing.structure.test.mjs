@@ -10,7 +10,8 @@ async function source(path) {
 
 function exportedSection(server, name, nextName) {
   const start = server.indexOf(`export const ${name} =`);
-  const end = server.indexOf(`export const ${nextName} =`, start + 1);
+  // The last endpoint runs to the end of the file.
+  const end = nextName === null ? server.length : server.indexOf(`export const ${nextName} =`, start + 1);
   assert.notEqual(start, -1, `${name} export is missing`);
   assert.notEqual(end, -1, `${nextName} boundary is missing`);
   return server.slice(start, end);
@@ -72,7 +73,7 @@ test("authoritative party APIs use stable Room Action submissions and never lega
     ["cancelSquadInvite", "answerSquad"],
     ["answerSquad", "leaveSquadNow"],
     ["leaveSquadNow", "passCaptain"],
-    ["passCaptain", "approveSquadQueue"],
+    ["passCaptain", null],
   ];
   for (const [name, next] of boundaries) {
     const section = exportedSection(server, name, next);
@@ -81,7 +82,7 @@ test("authoritative party APIs use stable Room Action submissions and never lega
     if (name !== "cancelSquadInvite") {
       assert.match(
         branch,
-        /submitAuthoritativePartyTableAction|个人合法行动不再进入队长审批队列/,
+        /submitAuthoritativePartyTableAction/,
       );
     }
     assert.doesNotMatch(branch, /flagsOf|writeFlags|game_states|messages|runKpTurn|commitRulesV2Direct/);

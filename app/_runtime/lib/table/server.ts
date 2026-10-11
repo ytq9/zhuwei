@@ -8,7 +8,6 @@ import {
 import { getSql } from "@/lib/db";
 import { roomCode, uid } from "@/lib/utils";
 import { compileSheet, ensureGear } from "@/lib/dnd/compute";
-import type { FeatId } from "@/lib/dnd/resources";
 import type { CharacterSheet, DraftSheet } from "@/lib/dnd/types";
 import { GEAR_SLOTS, type GearSlot } from "@/lib/dnd/gear";
 import { getModule, listModules } from "@/lib/module";
@@ -60,7 +59,6 @@ import {
   synchronizeGrowthAfterAuthoritativeOutcome,
 } from "@/lib/table/authoritative-growth";
 import { buildRoomTelemetryEvent, failureCodeIsRetryable } from "@/lib/room/telemetry";
-import type { LeaveKind } from "@/lib/kp/combat";
 
 function asJson<T>(v: unknown, fallback: T): T {
   if (v == null) return fallback;
@@ -1155,12 +1153,8 @@ export const fetchTable = createServerFn({ method: "GET" })
           currentDeliveryId: projected?.currentDeliveryId,
           receipts: projected?.receipts ?? [],
           authoritative: authoritativeState,
-          restVote: null,
-          restHold: null,
           squads: projected?.squads ?? [],
           squadInvite: projected?.squadInvite ?? null,
-          squadQueue: [],
-          combat: null,
           ruleProjection: null,
         },
         module: {
@@ -1860,64 +1854,6 @@ export const resolveRoll = createServerFn({ method: "POST" })
     return { ok: false as const, error: "这间房属于 0.4 之前的开发数据，已不再支持" };
   });
 
-export const joinCombat = createServerFn({ method: "POST" })
-  .middleware([authMiddleware])
-  .validator((input: { code: string; submissionId?: string }) => input)
-  .handler(async ({ context, data }) => {
-    const room = await roomByCode(data.code);
-    if (!room) return { ok: false as const, error: "找不到这间房" };
-    await memberOf(room.id, context.userId);
-    const sql = await getSql();
-    const rules = await roomRuleset(sql, room.id);
-    if (rules?.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
-      const submissionId = authoritativeSubmissionId(data.submissionId);
-      if (!submissionId) return { ok: false as const, error: "行动缺少可重试提交标识" };
-      return submitAuthoritativeTableAction({
-        roomId: room.id,
-        userId: context.userId,
-        model: rules.kp_model,
-        modelProfileVersion: rules.kp_model_profile,
-        submissionId,
-        action: buildAuthoritativeButtonAction({
-          submissionId,
-          command: { kind: "joinCombat" },
-        }),
-      });
-    }
-    return { ok: false as const, error: "这间房属于 0.4 之前的开发数据，已不再支持" };
-  });
-
-export const extraAttack = createServerFn({ method: "POST" })
-  .middleware([authMiddleware])
-  .validator((input: { code: string; targetId: string; submissionId?: string }) => input)
-  .handler(async ({ context, data }) => {
-    const room = await roomByCode(data.code);
-    if (!room) return { ok: false as const, error: "找不到这间房" };
-    await memberOf(room.id, context.userId);
-    const sql = await getSql();
-    const rules = await roomRuleset(sql, room.id);
-    if (rules?.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
-      const submissionId = authoritativeSubmissionId(data.submissionId);
-      if (!submissionId) return { ok: false as const, error: "行动缺少可重试提交标识" };
-      try {
-        return submitAuthoritativeTableAction({
-          roomId: room.id,
-          userId: context.userId,
-          model: rules.kp_model,
-          modelProfileVersion: rules.kp_model_profile,
-          submissionId,
-          action: buildAuthoritativeButtonAction({
-            submissionId,
-            command: { kind: "extraAttack", targetId: data.targetId },
-          }),
-        });
-      } catch {
-        return { ok: false as const, submissionId, error: "必须明确选择一个可见目标" };
-      }
-    }
-    return { ok: false as const, error: "这间房属于 0.4 之前的开发数据，已不再支持" };
-  });
-
 export const endTurn = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .validator((input: { code: string; submissionId?: string }) => input)
@@ -1941,75 +1877,6 @@ export const endTurn = createServerFn({ method: "POST" })
           command: { kind: "endTurn" },
         }),
       });
-    }
-    return { ok: false as const, error: "这间房属于 0.4 之前的开发数据，已不再支持" };
-  });
-
-export const leaveFight = createServerFn({ method: "POST" })
-  .middleware([authMiddleware])
-  .validator((input: { code: string; kind: LeaveKind; submissionId?: string }) => input)
-  .handler(async ({ context, data }) => {
-    const room = await roomByCode(data.code);
-    if (!room) return { ok: false as const, error: "找不到这间房" };
-    await memberOf(room.id, context.userId);
-    const sql = await getSql();
-    const rules = await roomRuleset(sql, room.id);
-    if (rules?.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
-      const submissionId = authoritativeSubmissionId(data.submissionId);
-      if (!submissionId) return { ok: false as const, error: "行动缺少可重试提交标识" };
-      return submitAuthoritativeTableAction({
-        roomId: room.id,
-        userId: context.userId,
-        model: rules.kp_model,
-        modelProfileVersion: rules.kp_model_profile,
-        submissionId,
-        action: buildAuthoritativeButtonAction({
-          submissionId,
-          command: { kind: "leaveFight", leaveKind: data.kind },
-        }),
-      });
-    }
-    return { ok: false as const, error: "这间房属于 0.4 之前的开发数据，已不再支持" };
-  });
-
-export const resolveReact = createServerFn({ method: "POST" })
-  .middleware([authMiddleware])
-  .validator((input: {
-    code: string;
-    reactId: string;
-    use: boolean;
-    submissionId?: string;
-    pendingInputId?: string;
-  }) => input)
-  .handler(async ({ context, data }) => {
-    const room = await roomByCode(data.code);
-    if (!room) return { ok: false as const, error: "找不到这间房" };
-    await memberOf(room.id, context.userId);
-    const sql = await getSql();
-    const rules = await roomRuleset(sql, room.id);
-    if (rules?.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
-      const submissionId = authoritativeSubmissionId(data.submissionId);
-      if (!submissionId) return { ok: false as const, error: "行动缺少可重试提交标识" };
-      try {
-        return submitAuthoritativeTableAction({
-          roomId: room.id,
-          userId: context.userId,
-          model: rules.kp_model,
-          modelProfileVersion: rules.kp_model_profile,
-          submissionId,
-          action: buildAuthoritativeButtonAction({
-            submissionId,
-            pendingInputId: data.pendingInputId?.trim() || data.reactId,
-            command: {
-              kind: "resolveReact",
-              reactionId: data.reactId,
-              use: data.use,
-            },
-          }),
-        });
-      } catch {
-        return { ok: false as const, submissionId, error: "当前反应选择无效" };
-      }
     }
     return { ok: false as const, error: "这间房属于 0.4 之前的开发数据，已不再支持" };
   });
@@ -2097,123 +1964,6 @@ export const cancelRest = createServerFn({ method: "POST" })
           submissionId,
           ...(data.pendingInputId ? { pendingInputId: data.pendingInputId } : {}),
           command: { kind: "cancelRest" },
-        }),
-      });
-    }
-    return { ok: false as const, error: "这间房属于 0.4 之前的开发数据，已不再支持" };
-  });
-
-export const castSpell = createServerFn({ method: "POST" })
-  .middleware([authMiddleware])
-  .validator((input: {
-    code: string;
-    spellId: string;
-    slot?: number;
-    targetIds?: string[];
-    choice?: string;
-    destinationFeet?: number;
-    originFeet?: number;
-    ritual?: boolean;
-    submissionId?: string;
-    pendingInputId?: string;
-  }) => input)
-  .handler(async ({ context, data }) => {
-    const room = await roomByCode(data.code);
-    if (!room) return { ok: false as const, error: "找不到这间房" };
-    await memberOf(room.id, context.userId);
-    const sql = await getSql();
-    const rules = await roomRuleset(sql, room.id);
-    if (rules?.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
-      const submissionId = authoritativeSubmissionId(data.submissionId);
-      if (!submissionId) return { ok: false as const, error: "行动缺少可重试提交标识" };
-      try {
-        return submitAuthoritativeTableAction({
-          roomId: room.id,
-          userId: context.userId,
-          model: rules.kp_model,
-          modelProfileVersion: rules.kp_model_profile,
-          submissionId,
-          action: buildAuthoritativeButtonAction({
-            submissionId,
-            ...(data.pendingInputId ? { pendingInputId: data.pendingInputId } : {}),
-            command: {
-              kind: "castSpell",
-              spellId: data.spellId,
-              slot: data.slot,
-              targetIds: data.targetIds,
-              choice: data.choice,
-              destinationFeet: data.destinationFeet,
-              originFeet: data.originFeet,
-              ritual: data.ritual,
-            },
-          }),
-        });
-      } catch {
-        return { ok: false as const, submissionId, error: "法术选择或目标无效" };
-      }
-    }
-    return { ok: false as const, error: "这间房属于 0.4 之前的开发数据，已不再支持" };
-  });
-
-export const useFeature = createServerFn({ method: "POST" })
-  .middleware([authMiddleware])
-  .validator((input: {
-    code: string;
-    feat: FeatId;
-    submissionId?: string;
-    pendingInputId?: string;
-  }) => input)
-  .handler(async ({ context, data }) => {
-    const room = await roomByCode(data.code);
-    if (!room) return { ok: false as const, error: "找不到这间房" };
-    await memberOf(room.id, context.userId);
-    const sql = await getSql();
-    const rules = await roomRuleset(sql, room.id);
-    if (rules?.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
-      const submissionId = authoritativeSubmissionId(data.submissionId);
-      if (!submissionId) return { ok: false as const, error: "行动缺少可重试提交标识" };
-      return submitAuthoritativeTableAction({
-        roomId: room.id,
-        userId: context.userId,
-        model: rules.kp_model,
-        modelProfileVersion: rules.kp_model_profile,
-        submissionId,
-        action: buildAuthoritativeButtonAction({
-          submissionId,
-          ...(data.pendingInputId ? { pendingInputId: data.pendingInputId } : {}),
-          command: { kind: "useFeature", featureId: data.feat },
-        }),
-      });
-    }
-    return { ok: false as const, error: "这间房属于 0.4 之前的开发数据，已不再支持" };
-  });
-
-export const useHitDie = createServerFn({ method: "POST" })
-  .middleware([authMiddleware])
-  .validator((input: {
-    code: string;
-    submissionId?: string;
-    pendingInputId?: string;
-  }) => input)
-  .handler(async ({ context, data }) => {
-    const room = await roomByCode(data.code);
-    if (!room) return { ok: false as const, error: "找不到这间房" };
-    await memberOf(room.id, context.userId);
-    const sql = await getSql();
-    const rules = await roomRuleset(sql, room.id);
-    if (rules?.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
-      const submissionId = authoritativeSubmissionId(data.submissionId);
-      if (!submissionId) return { ok: false as const, error: "行动缺少可重试提交标识" };
-      return submitAuthoritativeTableAction({
-        roomId: room.id,
-        userId: context.userId,
-        model: rules.kp_model,
-        modelProfileVersion: rules.kp_model_profile,
-        submissionId,
-        action: buildAuthoritativeButtonAction({
-          submissionId,
-          ...(data.pendingInputId ? { pendingInputId: data.pendingInputId } : {}),
-          command: { kind: "useHitDie" },
         }),
       });
     }
@@ -2472,24 +2222,6 @@ export const passCaptain = createServerFn({ method: "POST" })
         submissionId,
         action: { kind: "transferLeadership", targetPrincipalId: data.toUserId },
       });
-    }
-    return { ok: false as const, error: "这间房属于 0.4 之前的开发数据，已不再支持" };
-  });
-
-export const approveSquadQueue = createServerFn({ method: "POST" })
-  .middleware([authMiddleware])
-  .validator((input: { code: string; queueId: string; accept: boolean }) => input)
-  .handler(async ({ context, data }) => {
-    const room = await roomByCode(data.code);
-    if (!room) return { ok: false as const, error: "找不到这间房" };
-    await memberOf(room.id, context.userId);
-    const sql = await getSql();
-    const rules = await roomRuleset(sql, room.id);
-    if (rules?.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
-      return {
-        ok: false as const,
-        error: "个人合法行动不再进入队长审批队列；成员可直接行动，移动或单独休息时会自动离队。",
-      };
     }
     return { ok: false as const, error: "这间房属于 0.4 之前的开发数据，已不再支持" };
   });

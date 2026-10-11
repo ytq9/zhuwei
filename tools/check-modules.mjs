@@ -9,14 +9,12 @@ const scanRoots = ["app", "worker", "db", "tools"];
 const rulesPublicValues = new Set(["step", "project", "replay"]);
 const legacyEnginePathPattern = /(?:^|\/)app\/_runtime\/lib\/rules\/engine(?:\.[cm]?[jt]s)?$/;
 const secondAuthorityFileAllowlist = new Set([
-  "app/_runtime/lib/kp/combat.ts",
   "app/_runtime/lib/room/durable-object.ts",
   "app/_runtime/lib/room/server.ts",
   "app/_runtime/lib/rules/index.ts",
   "app/_runtime/lib/table/server.ts",
 ]);
 const secondAuthorityExportAllowlist = new Map([
-  ["app/_runtime/lib/kp/combat.ts", new Set(["rollDiceExpr"])],
   ["app/_runtime/lib/room/server.ts", new Set(["roomProjection"])],
 ]);
 const trustedConsoleSinks = new Map([
@@ -731,7 +729,8 @@ function assertExactTableRulesetRouting(root) {
   const table = readSource(join(root, "app/_runtime/lib/table/server.ts"));
   const exportedSection = (name, nextName) => {
     const start = table.indexOf(`export const ${name} =`);
-    const end = table.indexOf(`export const ${nextName} =`, start + 1);
+    // The last service runs to the end of the file.
+    const end = nextName === null ? table.length : table.indexOf(`export const ${nextName} =`, start + 1);
     assert.notEqual(start, -1, `${name} table service entry is missing`);
     assert.notEqual(end, -1, `${nextName} table service boundary is missing`);
     return table.slice(start, end);
@@ -751,24 +750,17 @@ function assertExactTableRulesetRouting(root) {
     ["startGame", "sendAction"],
     ["sendAction", "retryNarration"],
     ["acknowledgeDelivery", "resolveRoll"],
-    ["resolveRoll", "joinCombat"],
-    ["joinCombat", "extraAttack"],
-    ["extraAttack", "endTurn"],
-    ["endTurn", "leaveFight"],
-    ["leaveFight", "resolveReact"],
-    ["resolveReact", "restNow"],
+    ["resolveRoll", "endTurn"],
+    ["endTurn", "restNow"],
     ["restNow", "cancelRest"],
-    ["cancelRest", "castSpell"],
-    ["castSpell", "useFeature"],
-    ["useFeature", "useHitDie"],
-    ["useHitDie", "kickMember"],
+    ["cancelRest", "kickMember"],
     ["kickMember", "leaveTable"],
     ["leaveTable", "inviteSquad"],
     ["inviteSquad", "cancelSquadInvite"],
     ["cancelSquadInvite", "answerSquad"],
     ["answerSquad", "leaveSquadNow"],
     ["leaveSquadNow", "passCaptain"],
-    ["passCaptain", "approveSquadQueue"],
+    ["passCaptain", null],
   ];
 
   for (const [name, nextName] of cases) {

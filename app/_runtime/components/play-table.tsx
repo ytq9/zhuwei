@@ -26,7 +26,7 @@ import { ensureGear, sheetProficiencies, skillBonus } from "@/lib/dnd/compute";
 import type { TacticalProjection } from "@/lib/rules/tactical-projection";
 import { abilityMod, cn, signed } from "@/lib/utils";
 import { transcribeAudio, speakNarration } from "@/lib/voice/client";
-import { resolveRoll, retryNarration, sendAction, joinCombat, endTurn, leaveFight, resolveReact, restNow, cancelRest, controlActivity, extraAttack, inviteSquad, answerSquad, leaveSquadNow, approveSquadQueue, passCaptain, leaveTable, cancelSquadInvite, kickMember } from "@/lib/table/client";
+import { resolveRoll, retryNarration, sendAction, restNow, cancelRest, controlActivity, inviteSquad, answerSquad, leaveSquadNow, passCaptain, leaveTable, cancelSquadInvite, kickMember } from "@/lib/table/client";
 import {
   tableActionAccepted,
   type TableActionResponse,
@@ -42,7 +42,6 @@ import {
   type NpcCombatTurnStatus,
 } from "@/lib/table/authoritative";
 import type { PendingRoll } from "@/lib/kp/pending-roll";
-import type { PublicCombat } from "@/lib/kp/combat";
 import type { KpModelId } from "@/lib/kp/models";
 import type { ViewerNarrationRecovery } from "@/lib/room/authority-types";
 import { narrationFailureCanRetry } from "@/lib/kp/public-failure-codes";
@@ -323,23 +322,8 @@ export type TableSnap = {
       npcCombatTurn?: NpcCombatTurnStatus;
       narrationRecovery?: ViewerNarrationRecovery;
     } | null;
-    restVote?: {
-      kind: "short" | "long";
-      fromName: string;
-      agreed: string[];
-      waiting: string[];
-    } | null;
-    restHold?: {
-      kind: "short" | "long";
-      resters: string[];
-      fromName: string;
-      needBeats: number;
-      remain: number;
-    } | null;
     squads?: { ids: string[]; captain: string }[];
     squadInvite?: { from: string; to: string; fromName: string } | null;
-    squadQueue?: { id: string; userId: string; name: string; body: string; beat: number }[];
-    combat?: PublicCombat | null;
     ruleProjection?: {
       viewer: {
         id: string;
@@ -733,12 +717,6 @@ export function PlayTable({
         setEditableFailedAction(composerSubmission && confirmedNotCommitted && !actionCommitted && res.retryable !== true);
         setSubmissionError(message);
         toast.error(message);
-      } else if ("queued" in res && res.queued) {
-        clearRememberedSubmission();
-        if (localId !== undefined) {
-          setLocalSays((ls) => ls.filter((x) => x.id !== localId));
-        }
-        toast.message("已入队内缓冲。队长本拍内未批准就会消失。");
       } else {
         clearRememberedSubmission();
         void qc.invalidateQueries({ queryKey: ["table", code] });
@@ -1028,9 +1006,7 @@ export function PlayTable({
       sheet={myCard.sheet}
       canEdit
       code={code}
-      inCombat={Boolean(snap.state.combat) || snap.state.authoritative?.inCombat === true}
-      restVote={snap.state.restVote}
-      restHold={snap.state.restHold}
+      inCombat={snap.state.authoritative?.inCombat === true}
       meId={snap.me.userId}
       partyCount={myGroupSize}
       activeRule={snap.state.ruleProjection?.viewer}
@@ -1195,26 +1171,6 @@ export function PlayTable({
             )}
           />
         ) : null}
-        {snap.state.combat ? (
-          <div className="shrink-0 overflow-y-auto border-b border-border px-4 py-3 lg:max-h-[30vh]">
-            <CombatStrip
-              code={code}
-              combat={snap.state.combat}
-              meId={snap.me.userId}
-              isHost={snap.me.is_host}
-              rulesV2={Boolean(snap.state.ruleProjection)}
-              myPlace={snap.state.places?.[snap.me.userId] ?? snap.state.sceneId ?? "wake"}
-              meSheet={
-                snap.characters.find((c) => c.userId === snap.me.userId)?.sheet
-              }
-              party={snap.characters.map((c) => ({
-                userId: c.userId,
-                name: c.sheet.name,
-                place: snap.state.places?.[c.userId],
-              }))}
-            />
-          </div>
-        ) : null}
         <div
           className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4"
           aria-busy={conversationWorkKind !== null}
@@ -1326,20 +1282,11 @@ export function PlayTable({
                   party={snap.characters}
                   where={snap.state.places ?? {}}
                   sceneId={snap.state.sceneId ?? "wake"}
-                  combat={snap.state.combat ?? null}
                   ruleBoosts={snap.state.ruleProjection?.viewer.availableRollBoosts}
                 />
               ))}
             </div>
           </div>
-        )}
-        {(snap.state.squadQueue?.length ?? 0) > 0 && (
-          <SquadQueueBar
-            code={code}
-            meId={snap.me.userId}
-            queue={snap.state.squadQueue ?? []}
-            squads={snap.state.squads ?? []}
-          />
         )}
         {currentPending ? (
           <div className="shrink-0 border-t border-border px-5 py-3">
@@ -1576,11 +1523,7 @@ export function PlayTable({
                 ? "正在听……松手后写入输入框"
                 : rec === "stt"
                   ? "正在转写……"
-                  : snap.state.squads?.some(
-                        (s) => s.ids.includes(snap.me.userId) && s.captain !== snap.me.userId,
-                      )
-                    ? "队员发言先给队长看。点右侧按钮送出。批准后才进桌。"
-                    : "你做什么、说什么。点右侧按钮送出，回车只换行。"
+                  : "你做什么、说什么。点右侧按钮送出，回车只换行。"
             }
             className="min-h-12 max-h-36 flex-1"
             rows={2}
@@ -2246,335 +2189,6 @@ function GroupRestConsentPanel({
   );
 }
 
-function CombatStrip({
-  code,
-  combat,
-  meId,
-  isHost,
-  rulesV2,
-  myPlace,
-  meSheet,
-  party,
-}: {
-  code: string;
-  combat: PublicCombat | null;
-  meId: string;
-  isHost: boolean;
-  rulesV2: boolean;
-  myPlace: string;
-  meSheet?: CharacterSheet;
-  party: { userId: string; name: string; place?: string }[];
-}) {
-  const [busy, setBusy] = useState<string | null>(null);
-  const qc = useQueryClient();
-  if (!combat) return null;
-  const here = combat.place === myPlace;
-  const mine = combat.order.find((o) => o.id === meId);
-  const inFight = Boolean(mine?.inCombat);
-  const myTurn = combat.activeId === meId;
-  const watchers = party.filter(
-    (p) =>
-      (p.place ?? myPlace) === combat.place &&
-      !combat.order.some((o) => o.id === p.userId && o.inCombat),
-  );
-
-  async function act(fn: () => Promise<TableActionResponse>, key: string) {
-    setBusy(key);
-    try {
-      const res = await fn();
-      if (!tableActionAccepted(res)) toast.error(String(res.error ?? "做不到"));
-      else void qc.invalidateQueries({ queryKey: ["table", code] });
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "做不到");
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  if (!here) {
-    return (
-      <div className="rounded-panel border border-border bg-elevated px-4 py-3 text-sm text-muted">
-        别处有人打起来了。你这边听不见刀声的细节。要介入，得先过去。
-      </div>
-    );
-  }
-
-  return (
-    <div className="rounded-panel border border-border bg-elevated px-4 py-3">
-      <p className="text-[11px] tracking-wide text-brass">
-        战斗 · 第 {combat.round} 轮 · {combat.place}
-        {combat.waiting === "init" ? " · 先攻" : ""}
-      </p>
-      <ol className="mt-2 flex flex-wrap gap-1.5">
-        {combat.order
-          .filter((o) => o.inCombat)
-          .map((o) => (
-            <li
-              key={o.id}
-              className={cn(
-                "rounded-full border px-2.5 py-0.5 text-xs",
-                o.id === combat.activeId
-                  ? "border-brass bg-brass/15 text-fg"
-                  : "border-border text-muted",
-              )}
-            >
-              {o.name}
-              {o.init != null ? ` ${o.init}` : ""}
-              {o.band === "melee" ? " ·贴身" : o.band === "far" ? " ·远" : " ·近"}
-              {o.cover === "half" ? " ·半掩" : o.cover === "three" ? " ·¾掩" : o.cover === "total" ? " ·全掩" : ""}
-              {o.kind === "npc" ? "" : o.id === meId ? " ·你" : ""}
-              {o.id === meId && o.spend
-                ? ` ·${o.spend.action ? "动作" : ""}${o.spend.bonus ? "附赠" : ""}${o.spend.reaction ? "反应" : ""}${!o.spend.action && !o.spend.bonus && !o.spend.reaction ? "耗尽" : ""}`
-                : ""}
-            </li>
-          ))}
-      </ol>
-      {combat.hazards.length > 0 && (
-        <ul className="mt-2 space-y-0.5 text-[11px] text-muted">
-          {combat.hazards.map((h) => (
-            <li key={h.id}>
-              {h.name}：{h.text}
-            </li>
-          ))}
-        </ul>
-      )}
-      {!rulesV2 && combat.reacts
-        ?.filter((r) => r.userId === meId)
-        .map((r) => (
-          <div key={r.id} className="mt-3 rounded-control border border-brass/40 px-3 py-2">
-            <p className="text-xs text-fg">{r.text}</p>
-            <div className="mt-2 flex gap-2">
-              <Button
-                disabled={Boolean(busy)}
-                onClick={() =>
-                  act(() => resolveReact({ data: { code, reactId: r.id, use: true } }), "rs")
-                }
-              >
-                使用护盾术
-              </Button>
-              <Button
-                disabled={Boolean(busy)}
-                onClick={() =>
-                  act(() => resolveReact({ data: { code, reactId: r.id, use: false } }), "rn")
-                }
-              >
-                不用
-              </Button>
-            </div>
-          </div>
-        ))}
-      {watchers.length > 0 && (
-        <p className="mt-2 text-[11px] text-subtle">
-          同处未参战：{watchers.map((w) => w.name).join("、")}
-        </p>
-      )}
-      <div className="mt-3 flex flex-wrap gap-2">
-        {here && !inFight && (
-          <Button
-            disabled={busy === "join"}
-            onClick={() => act(() => joinCombat({ data: { code } }), "join")}
-          >
-            {busy === "join" ? "加入……" : "加入战斗"}
-          </Button>
-        )}
-        {inFight && !mine?.init && combat.waiting === "init" && (
-          <p className="text-xs text-muted">先掷下面的先攻。</p>
-        )}
-        {rulesV2 && myTurn && inFight && meSheet?.hp.current === 0 && (
-          <Button
-            variant="secondary"
-            disabled={busy === "death-save"}
-            onClick={() =>
-              act(
-                () => sendAction({ data: { code, text: "进行本回合的死亡豁免" } }),
-                "death-save",
-              )
-            }
-          >
-            {busy === "death-save" ? "掷骰……" : "死亡豁免"}
-          </Button>
-        )}
-        {(myTurn || isHost) && combat.waiting === "turn" && inFight && (
-          <Button
-            disabled={busy === "end"}
-            onClick={() => act(() => endTurn({ data: { code } }), "end")}
-          >
-            {busy === "end" ? "……" : myTurn ? "结束回合" : "跳过这人"}
-          </Button>
-        )}
-        {!rulesV2 && inFight && (myTurn || isHost) && (
-          <>
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={Boolean(busy)}
-              onClick={() => act(() => leaveFight({ data: { code, kind: "disengage" } }), "dis")}
-            >
-              撤离
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={Boolean(busy)}
-              onClick={() => act(() => leaveFight({ data: { code, kind: "flee" } }), "flee")}
-            >
-              跑到远处
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={Boolean(busy)}
-              onClick={() => act(() => leaveFight({ data: { code, kind: "withdraw" } }), "out")}
-            >
-              退出战场
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={Boolean(busy)}
-              onClick={() => act(() => leaveFight({ data: { code, kind: "surrender" } }), "surr")}
-            >
-              投降
-            </Button>
-          </>
-        )}
-        {rulesV2 && inFight && myTurn && (
-          <p className="self-center text-[11px] text-muted">
-            攻击、施法、撤离或疾走请直接写进行动；规则内核会结算本回合资源。
-          </p>
-        )}
-      </div>
-      {(() => {
-        const warLeft = meSheet
-          ? left(ensureResources(meSheet).resources!.warPriest)
-          : 0;
-        const canWar =
-          myTurn &&
-          inFight &&
-          combat.waiting === "turn" &&
-          Boolean(mine?.spend?.attacked) &&
-          mine?.spend?.action === false &&
-          Boolean(mine?.spend?.bonus) &&
-          warLeft > 0 &&
-          meSheet?.subclassId === "war";
-        const foes = combat.order.filter(
-          (o) => o.kind === "npc" && o.inCombat,
-        );
-        if (!canWar || !foes.length) return null;
-        return (
-          <div className="mt-2 flex flex-wrap gap-2">
-            {foes.map((o) => (
-              <Button
-                key={o.id}
-                variant="secondary"
-                size="sm"
-                disabled={Boolean(busy)}
-                onClick={() =>
-                  act(
-                    () => extraAttack({ data: { code, targetId: o.id } }),
-                    `war-${o.id}`,
-                  )
-                }
-              >
-                {busy === `war-${o.id}`
-                  ? "……"
-                  : `战争祭司再攻 ${o.name}（${warLeft}）`}
-              </Button>
-            ))}
-          </div>
-        );
-      })()}
-      {myTurn && mine?.spend && (
-        <p className="mt-2 text-xs text-muted">
-          轮到你。剩：
-          {mine.spend.action ? " 动作" : ""}
-          {mine.spend.bonus ? " 附赠" : ""}
-          {mine.spend.reaction ? " 反应" : ""}
-          {!mine.spend.action ? "（动作已用，不能再祝福或主手攻击）" : ""}
-          {meSheet?.subclassId === "war" &&
-          mine.spend.attacked &&
-          !mine.spend.action &&
-          mine.spend.bonus &&
-          left(ensureResources(meSheet).resources!.warPriest) > 0
-            ? `。战争祭司还可再攻（${left(ensureResources(meSheet).resources!.warPriest)}）`
-            : ""}
-          。说攻击谁、施法或撤离。
-        </p>
-      )}
-      {inFight && !myTurn && combat.activeId && combat.waiting === "turn" && (
-        <p className="mt-2 text-xs text-subtle">
-          等待 {combat.order.find((o) => o.id === combat.activeId)?.name}
-        </p>
-      )}
-    </div>
-  );
-}
-
-function SquadQueueBar({
-  code,
-  meId,
-  queue,
-  squads,
-}: {
-  code: string;
-  meId: string;
-  queue: { id: string; userId: string; name: string; body: string; beat: number }[];
-  squads: { ids: string[]; captain: string }[];
-}) {
-  const [busy, setBusy] = useState<string | null>(null);
-  const captain = squads.some((s) => s.captain === meId);
-  async function act(id: string, accept: boolean) {
-    setBusy(id + String(accept));
-    try {
-      const res = await approveSquadQueue({ data: { code, queueId: id, accept } });
-      if (!res.ok) toast.error(res.error ?? "做不到");
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "做不到");
-    } finally {
-      setBusy(null);
-    }
-  }
-  return (
-    <div className="shrink-0 border-t border-border px-4 py-2">
-      <p className="text-[11px] tracking-wide text-brass">
-        队内缓冲 · 本拍未批准即消失
-      </p>
-      <ul className="mt-1.5 grid gap-1.5">
-        {queue.map((q) => (
-          <li
-            key={q.id}
-            className="rounded-control border border-border bg-elevated px-3 py-2"
-          >
-            <p className="text-xs text-subtle">{q.name}</p>
-            <p className="text-sm text-fg">{q.body}</p>
-            {captain ? (
-              <div className="mt-2 flex gap-2">
-                <Button
-                  size="sm"
-                  disabled={Boolean(busy)}
-                  onClick={() => act(q.id, true)}
-                >
-                  {busy === q.id + "true" ? "……" : "批准"}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  disabled={Boolean(busy)}
-                  onClick={() => act(q.id, false)}
-                >
-                  驳回
-                </Button>
-              </div>
-            ) : (
-              <p className="mt-1 text-[11px] text-subtle">等待队长批准</p>
-            )}
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
 function MessageBubble({
   m,
   mine,
@@ -2711,7 +2325,6 @@ function RollButton({
   party,
   where,
   sceneId,
-  combat,
   ruleBoosts,
 }: {
   code: string;
@@ -2719,7 +2332,6 @@ function RollButton({
   party: TableSnap["characters"];
   where: Record<string, string>;
   sceneId: string;
-  combat: PublicCombat | null;
   ruleBoosts?: Array<"guidance" | "inspiration" | "lucky">;
 }) {
   const qc = useQueryClient();
@@ -2750,11 +2362,11 @@ function RollButton({
         {
           where,
           sceneId,
-          inCombat: Boolean(combat),
-          activeId: combat?.activeId ?? null,
-          spendAction: Object.fromEntries(
-            (combat?.order ?? []).map((o) => [o.id, o.spend?.action !== false]),
-          ),
+          // Only rolls outside the authority reach here; the table no longer
+          // carries a legacy encounter for them (ADR 0147).
+          inCombat: false,
+          activeId: null,
+          spendAction: {},
         },
       );
   const [on, setOn] = useState<Record<string, boolean>>(() =>
@@ -3101,8 +2713,6 @@ function CharacterDetail({
   canEdit,
   code,
   inCombat,
-  restVote,
-  restHold,
   meId,
   partyCount,
   activeRule,
@@ -3117,8 +2727,6 @@ function CharacterDetail({
   canEdit: boolean;
   code: string;
   inCombat: boolean;
-  restVote?: TableSnap["state"]["restVote"];
-  restHold?: TableSnap["state"]["restHold"];
   meId?: string;
   partyCount?: number;
   activeRule?: NonNullable<TableSnap["state"]["ruleProjection"]>["viewer"];
@@ -3244,8 +2852,6 @@ function CharacterDetail({
         canEdit={canEdit}
         code={code}
         inCombat={inCombat}
-        restVote={restVote}
-        restHold={restHold}
         meId={meId}
         partyCount={partyCount ?? 1}
         activeRule={activeRule}
@@ -3294,8 +2900,6 @@ function ResourcePanel({
   canEdit,
   code,
   inCombat,
-  restVote,
-  restHold,
   meId,
   partyCount,
   activeRule,
@@ -3306,8 +2910,6 @@ function ResourcePanel({
   canEdit: boolean;
   code: string;
   inCombat: boolean;
-  restVote?: TableSnap["state"]["restVote"];
-  restHold?: TableSnap["state"]["restHold"];
   meId?: string;
   partyCount: number;
   activeRule?: NonNullable<TableSnap["state"]["ruleProjection"]>["viewer"];
@@ -3325,7 +2927,6 @@ function ResourcePanel({
     ?? r.hitDice.die;
   const con = abilityMod(authoritativeCharacter?.abilityScores?.con ?? sheet.scores.con);
   const needVote = partyCount > 1;
-  const myAgreed = Boolean(meId && restVote?.agreed.includes(meId));
   const authoritativeRest = authoritativeActivities?.find((activity) =>
     activity.status === "active" && activity.restKind !== undefined);
 
@@ -3504,67 +3105,6 @@ function ResourcePanel({
           >
             提前结束自己的休息
           </Button>
-        </div>
-      ) : null}
-      {canEdit && restHold ? (
-        <div className="mb-3 rounded-control border border-brass/40 bg-brass/10 px-3 py-2">
-          <p className="text-xs text-fg">
-            {restHold.fromName}那边正在{restHold.kind === "long" ? "长休" : "短休"}（共 {restHold.needBeats} 拍）。
-            {meId && restHold.resters.includes(meId)
-              ? ` 你在歇。另一边再走 ${restHold.remain} 拍后你醒来，时间对齐。`
-              : ` 你可继续行动。再 ${restHold.remain} 拍后他们醒来。`}
-          </p>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="mt-2"
-            disabled={Boolean(busy)}
-            onClick={() => go("wake", () => cancelRest({ data: { code } }))}
-          >
-            打断休息
-          </Button>
-        </div>
-      ) : null}
-      {canEdit && restVote ? (
-        <div className="mb-3 rounded-control border border-brass/40 bg-brass/10 px-3 py-2">
-          <p className="text-xs text-fg">
-            {restVote.fromName} 提议{restVote.kind === "long" ? "长休" : "短休"}。还差 {restVote.waiting.length} 人同意。
-          </p>
-          {myAgreed ? (
-            <p className="mt-1 text-[11px] text-subtle">你已同意，等其他人。</p>
-          ) : (
-            <div className="mt-2 flex gap-2">
-              <Button
-                size="sm"
-                disabled={Boolean(busy) || inCombat}
-                onClick={() =>
-                  go("ok", () =>
-                    restNow({
-                      data: {
-                        code,
-                        kind: restVote.kind,
-                        mode: "group",
-                        hitDice: restVote.kind === "short" ? dice : undefined,
-                        ...(restVote.kind === "short"
-                          ? { arcaneRecoverySlotLevels }
-                          : {}),
-                      },
-                    }),
-                  )
-                }
-              >
-                {busy === "ok" ? "……" : "同意"}
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={Boolean(busy)}
-                onClick={() => go("no", () => cancelRest({ data: { code } }))}
-              >
-                反对
-              </Button>
-            </div>
-          )}
         </div>
       ) : null}
       <p className="text-xs font-medium">休整</p>

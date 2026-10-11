@@ -12,7 +12,8 @@ async function source(path) {
 
 function exportedSection(server, name, nextName) {
   const start = server.indexOf(`export const ${name} =`);
-  const end = server.indexOf(`export const ${nextName} =`, start + 1);
+  // The last endpoint runs to the end of the file.
+  const end = nextName === null ? server.length : server.indexOf(`export const ${nextName} =`, start + 1);
   assert.notEqual(start, -1, `${name} export is missing`);
   assert.notEqual(end, -1, `${nextName} boundary is missing`);
   return server.slice(start, end);
@@ -89,7 +90,7 @@ test("every authoritative party endpoint rejects an unavailable room profile bef
     ["cancelSquadInvite", "answerSquad"],
     ["answerSquad", "leaveSquadNow"],
     ["leaveSquadNow", "passCaptain"],
-    ["passCaptain", "approveSquadQueue"],
+    ["passCaptain", null],
   ]) {
     const endpoint = exportedSection(server, name, nextName);
     assert.match(endpoint, /submitAuthoritativePartyTableAction\(\{/);
@@ -917,17 +918,10 @@ test("current-only Table endpoints contain no retired mechanics or active-state 
   const cases = [
     ["startGame", "sendAction"],
     ["sendAction", "retryNarration"],
-    ["resolveRoll", "joinCombat"],
-    ["joinCombat", "extraAttack"],
-    ["extraAttack", "endTurn"],
-    ["endTurn", "leaveFight"],
-    ["leaveFight", "resolveReact"],
-    ["resolveReact", "restNow"],
+    ["resolveRoll", "endTurn"],
+    ["endTurn", "restNow"],
     ["restNow", "cancelRest"],
-    ["cancelRest", "castSpell"],
-    ["castSpell", "useFeature"],
-    ["useFeature", "useHitDie"],
-    ["useHitDie", "kickMember"],
+    ["cancelRest", "kickMember"],
   ];
 
   for (const [name, nextName] of cases) {
@@ -1100,40 +1094,36 @@ test("authoritative table buttons become trusted semantic actions without client
   const base = {
     submissionId: "submission:button",
   };
-  const cases = [
-    [{ kind: "joinCombat" }, "我明确加入当前遭遇；先攻及其他随机结果由房间权威生成。"],
-    [{ kind: "extraAttack", targetId: "npc:warden" }, "我使用战争祭司的附赠攻击，目标为 npc:warden。"],
-    [{ kind: "leaveFight", leaveKind: "surrender" }, "我明确放下抵抗并投降。"],
-    [{
-      kind: "castSpell",
-      spellId: "bless",
-      slot: 2,
-      targetIds: ["character:bob", "character:alice"],
-      choice: "allies",
-      originFeet: 30,
-      ritual: false,
-    }, "我施放法术 bless，使用 2 环法术位；明确目标为 character:bob、character:alice；选择为 allies；区域中心为 30 尺；不是仪式施法。"],
-    [{ kind: "useFeature", featureId: "secondWind" }, "我使用特性 secondWind。"],
-    [{ kind: "useHitDie" }, "我在当前合法的短休结算中选择花费一枚生命骰。"],
-  ];
-  for (const [command, text] of cases) {
-    assert.deepEqual(buildAuthoritativeButtonAction({
-      ...base,
-      command,
-      actor: "principal:forged",
-      actorId: "character:forged",
-      principal: "principal:forged",
-      principalId: "principal:forged",
-      dice: [20],
-      faces: [20],
-      events: [{ type: "forged" }],
-      state: { hitPoints: 999 },
-      profile: "forged",
-    }), {
-      kind: "intent",
-      submissionId: "submission:button",
-      text,
-    });
+  // ADR 0147: the table's own buttons are ending the turn and resting; a
+  // forged mechanic beside them never reaches the action, and a retired button
+  // is refused rather than turned into a sentence.
+  const forged = {
+    actor: "principal:forged",
+    actorId: "character:forged",
+    principal: "principal:forged",
+    principalId: "principal:forged",
+    dice: [20],
+    faces: [20],
+    events: [{ type: "forged" }],
+    state: { hitPoints: 999 },
+    profile: "forged",
+  };
+  for (const [command, expected] of [
+    [{ kind: "endTurn" }, { kind: "combatEndTurn" }],
+    [{ kind: "cancelRest" }, { kind: "restInterrupt" }],
+    [{ kind: "restNow", restKind: "long", mode: "group" },
+      { kind: "restStart", restKind: "long", mode: "group", hitDiceToSpend: 0, arcaneRecoverySlotLevels: [] }],
+  ]) {
+    assert.deepEqual(buildAuthoritativeButtonAction({ ...base, ...forged, command }), { ...expected, submissionId: "submission:button" });
+  }
+  for (const command of [
+    { kind: "joinCombat" },
+    { kind: "castSpell", spellId: "bless" },
+    { kind: "useFeature", featureId: "secondWind" },
+    { kind: "useHitDie" },
+    { kind: "resolveReact", reactionId: "reaction:shield", use: false },
+  ]) {
+    assert.throws(() => buildAuthoritativeButtonAction({ ...base, command }), /not available/);
   }
 
   assert.deepEqual(buildAuthoritativeButtonAction({
@@ -1168,23 +1158,20 @@ test("authoritative table buttons become trusted semantic actions without client
     submissionId: "submission:button",
   });
 
+  // A button answering a pending question (the group rest consent) becomes
+  // that answer with the player's own words, never a direct mechanic.
   assert.deepEqual(buildAuthoritativeButtonAction({
     ...base,
-    submissionId: "submission:reaction",
-    pendingInputId: "pending:shield",
-    command: { kind: "resolveReact", reactionId: "reaction:shield", use: false },
-    actor: "principal:forged",
-    rolls: [20],
+    ...forged,
+    submissionId: "submission:rest",
+    pendingInputId: "pending:rest",
+    command: { kind: "cancelRest" },
   }), {
     kind: "answer",
-    submissionId: "submission:reaction",
-    pendingInputId: "pending:shield",
-    answer: {
-      kind: "resolveReact",
-      reactionId: "reaction:shield",
-      use: false,
-    },
-    displayText: "我明确放弃这次反应。",
+    submissionId: "submission:rest",
+    pendingInputId: "pending:rest",
+    answer: { kind: "cancelRest" },
+    displayText: "我中断自己的休整；若当前是休整表决，则我明确拒绝。",
   });
 });
 
@@ -1303,16 +1290,9 @@ test("Arcane Recovery exposes every legal 1-5 slot deficit and freezes a bounded
 test("every authoritative table button uses only the current Room Action seam", async () => {
   const server = await source("app/_runtime/lib/table/server.ts");
   const boundaries = [
-    ["joinCombat", "extraAttack"],
-    ["extraAttack", "endTurn"],
-    ["endTurn", "leaveFight"],
-    ["leaveFight", "resolveReact"],
-    ["resolveReact", "restNow"],
+    ["endTurn", "restNow"],
     ["restNow", "cancelRest"],
-    ["cancelRest", "castSpell"],
-    ["castSpell", "useFeature"],
-    ["useFeature", "useHitDie"],
-    ["useHitDie", "kickMember"],
+    ["cancelRest", "kickMember"],
   ];
   for (const [name, nextName] of boundaries) {
     const section = exportedSection(server, name, nextName);
@@ -1327,7 +1307,7 @@ test("every authoritative table button uses only the current Room Action seam", 
     assert.doesNotMatch(v2Branch, forbiddenPattern);
   }
 
-  const resolve = exportedSection(server, "resolveRoll", "joinCombat");
+  const resolve = exportedSection(server, "resolveRoll", "endTurn");
   assert.match(resolve, /submissionId\?: string/);
   const resolveV2 = resolve.indexOf("roomInfo?.ruleset_version === AUTHORITATIVE_RULESET_VERSION");
   assert.notEqual(resolveV2, -1, "resolveRoll authoritative branch is missing");
@@ -1365,8 +1345,8 @@ test("authoritative button submission ids survive transport retries and clear on
   let sequence = 0;
   const ids = [];
   const base = {
-    command: "castSpell",
-    data: { code: "ROOM42", spellId: "bless", targetIds: ["character:bob"] },
+    command: "restNow",
+    data: { code: "ROOM42", kind: "short", mode: "personal", hitDice: 1 },
     storage,
     createSubmissionId: () => `submission:${++sequence}`,
   };
@@ -1436,16 +1416,13 @@ test("authoritative button submission ids survive transport retries and clear on
   const client = await source("app/_runtime/lib/table/client.ts");
   for (const command of [
     "resolveRoll",
-    "joinCombat",
-    "extraAttack",
     "endTurn",
-    "leaveFight",
-    "resolveReact",
     "restNow",
     "cancelRest",
-    "castSpell",
-    "useFeature",
-    "useHitDie",
+    "setGear",
+    "useInventoryItem",
+    "moveOnMap",
+    "combatAbility",
   ]) {
     assert.match(
       client,
