@@ -13,6 +13,8 @@ supersedes:
   - spec: "0015"
     scope: "旧 Form Catalog、environmental-stunt/详细材料阈值、model-visible compound/DAG"
 revisions:
+  - date: 2026-10-11
+    scope: "§7.2：补丁修订一段的重复字段说法按 ADR 0139 统一：原稿重复字段值相同按一次读取，值不同时唯一草稿为 null、仅准完整替换"
   - date: 2026-10-10
     scope: "§7.2：提案工具参数中同一字段重复且值相同时按一次读取，值不同时退回模型重写一次（ADR 0139）"
   - date: 2026-10-10
