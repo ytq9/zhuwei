@@ -115,7 +115,7 @@ export type SpellEffectDefinition = {
   value?: number;
   perSlotAbove?: number;
   /** SRD acts that end the effect early on its target (SPEC 0012 §10.1). */
-  endsWhen?: readonly ("harmedBySourceSide" | "targetAttacked" | "targetAttacksOrCasts" | "targetDonsArmor")[];
+  endsWhen?: readonly ("bonusDieUsed" | "harmedBySourceSide" | "targetAttacked" | "targetAttacksOrCasts" | "targetDonsArmor")[];
   modifier?: SpellModifier;
 };
 

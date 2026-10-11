@@ -11,6 +11,8 @@ supersedes:
     scope: "纯战斗机械，以及 B07–B15、B17–B22、B29–B30、B35–B40、B49、B53 的战斗段"
 revisions:
   - date: 2026-10-11
+    scope: "§10.1：加值骰（祝福术、神导术）随所加的 d20 一起请求并计入总值；神导术自动用于下一次属性检定，自动的躲藏察觉不消耗它（ADR 0152）"
+  - date: 2026-10-11
     scope: "§10.1：法术写明的数值修正（AC、基础 AC、速度、反应、下一次攻击优势、生命值上限）由 Rules 施加并读进同一有效值来源，同种不叠加；“下次回合结束”在主体自己回合内开始时指下一个回合（ADR 0151）"
   - date: 2026-10-11
     scope: "§§9.2、10.1、10.2：法术写明的持续状态由 Rules 施加，可随专注、回合结束的重复豁免和写明的提前结束条件结束；开始施放新的专注法术时旧专注立即结束；非伤害能力在遭遇中可以指向任何生物（ADR 0150）"
@@ -26,7 +28,7 @@ revisions:
     scope: "§13：遭遇结束时每个活着的 NPC 参战者得到本人对这场战斗的记忆；NPC 在遭遇结束后按本人视角开战建立新遭遇（ADR 0118）"
   - date: 2026-10-05
     scope: "§§1、3.3、13：NPC 一方的投降、接受投降、停战和重新动手由该 NPC 本人决定，主持 KP 只记录玩家角色自己的投降；对手停手而站着时 Rules 也向玩家提议结束（ADR 0117）"
-adr: ["0117", "0118", "0123", "0149", "0150", "0151"]
+adr: ["0117", "0118", "0123", "0149", "0150", "0151", "0152"]
 parts:
   - "0012-part-b-abilities-damage-and-conclusion.md"
 gates_verified_on: 2026-10-05
@@ -45,6 +47,7 @@ gates:
   - "tests/kp/combat/npc-combat-stance.test.mjs"
   - "tests/kp/combat/spell-condition-effects.test.mjs"
   - "tests/kp/combat/spell-modifier-effects.test.mjs"
+  - "tests/kp/combat/spell-bonus-dice.test.mjs"
 ---
 # SPEC 0012：权威战斗机械
 

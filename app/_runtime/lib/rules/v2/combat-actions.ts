@@ -38,7 +38,7 @@ import {
   conditionMovementCost,
 } from "./condition-mechanics";
 import { effectiveConditions, isWorldEffectRecord, modifierEffectDefinition, planModifierEffect, planWorldEffect, planWorldEffectEnd, repeatSaveEffects, worldEffectDefinition, worldEffectEndDefinition, worldEffectEndDrafts, worldEffectsEndingWhen } from "./world-effects";
-import { attacksAgainstHaveAdvantage, effectiveArmorClass as modifiedArmorClass, reactionsBlocked, wearsBodyArmor } from "./effect-modifiers";
+import { attacksAgainstHaveAdvantage, d20BonusDie, effectiveArmorClass as modifiedArmorClass, reactionsBlocked, wearsBodyArmor } from "./effect-modifiers";
 import { combatPhaseExpiryAnchor, initiativePhaseOrder, phaseSlotForEntity } from "./effect-phase";
 
 import { canonicalSha256, sameCanonical } from "../profiles/canonical";
@@ -322,6 +322,19 @@ function randomRequest(resolutionId: string, index: number, spec: DiceSpec): Com
   return { ...core, requestHash: canonicalSha256(core) };
 }
 
+/** SPEC 0012 §10.1 (SRD Bless, Guidance): the bonus die the roller adds to
+ * this d20 roll, asked for with it under `<purposeKey>:bonus`. */
+function bonusDieSpecs(state: AuthoritativeWorldState, purposeKey: string, rollerId: string, roll: "attack" | "check" | "save"): DiceSpec[] {
+  const die = d20BonusDie(state, rollerId, roll);
+  return die === undefined ? [] : [{ purposeKey: `${purposeKey}:bonus`, dice: [{ count: "1", sides: String(die.sides) }],
+    frozenParameters: { entityId: rollerId, roll, effectIds: die.effectIds, spentEffectIds: die.spentEffectIds } }];
+}
+
+/** What the bonus die asked for with a d20 roll showed; 0 without one. */
+function bonusDieTotal(faces: AuthorityFaces, purposeKey: string): number {
+  return (faces.get(`${purposeKey}:bonus`) ?? []).reduce((sum, face) => sum + face, 0);
+}
+
 function awaitRandomness(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
@@ -331,8 +344,19 @@ function awaitRandomness(
   prefix: Draft[] = [],
 ): StepResult {
   // A roll with no dice is not asked for: an unarmed strike's damage is flat
-  // (ADR 0113), and its resolution reads no faces for it.
-  const specs = allSpecs.filter((spec) => spec.dice.length > 0);
+  // (ADR 0113), and its resolution reads no faces for it. A bonus die that
+  // lasts one roll goes with the first roll that asks for it, and is spent
+  // as it is asked for (SRD Guidance).
+  const spent = new Set<string>();
+  const specs = allSpecs.filter((spec) => {
+    if (spec.dice.length === 0) return false;
+    const once = spec.frozenParameters.spentEffectIds;
+    if (!Array.isArray(once) || once.length === 0) return true;
+    if (once.some((effectId) => spent.has(String(effectId)))) return false;
+    once.forEach((effectId) => spent.add(String(effectId)));
+    return true;
+  });
+  if (spent.size > 0) prefix = [...prefix, ...worldEffectEndDrafts(state, [...spent], "bonusDieUsed")];
   const phaseHash = canonicalSha256({ operation, specs }).slice("sha256:".length, "sha256:".length + 24);
   const resolutionId = `resolution:${rootActionId}:${phaseHash}`;
   const requests = specs.map((spec, index) => randomRequest(resolutionId, index, spec));
@@ -1596,6 +1620,8 @@ function startEncounter(
       purposeKey,
       checkMode: conditionCheck.mode,
     });
+    // Initiative is a Dexterity check (SRD Guidance); a group rolls as one.
+    if (group.combatantEntityIds.length === 1) specs.push(...bonusDieSpecs(state, purposeKey, firstId, "check"));
     specs.push({
       purposeKey,
       dice: attackDice(conditionCheck.mode),
@@ -1724,7 +1750,8 @@ function joinEncounter(
     const purposeKey = `initiative:${entityId}`;
     groups.push({ entryId, combatantEntityIds: [entityId], modifier, purposeKey, checkMode: conditionCheck.mode });
     specs.push({ purposeKey, dice: attackDice(conditionCheck.mode),
-      frozenParameters: { encounterId, entryId, combatantEntityIds: [entityId], modifier, mode: conditionCheck.mode } });
+      frozenParameters: { encounterId, entryId, combatantEntityIds: [entityId], modifier, mode: conditionCheck.mode } },
+      ...bonusDieSpecs(state, purposeKey, entityId, "check"));
   }
   drafts.push({ eventType: "EncounterJoined", payload: { encounterId, entityIds: [...joining].sort(),
     hostilities: structuredClone(rawHostilities) as JsonRecord[],
@@ -1764,7 +1791,7 @@ function insertInitiative(
     const roll = selectedD20(faces.get(raw.purposeKey) ?? [], String(raw.checkMode));
     if (roll === undefined) throw new RulesValidationError("initiative face is unavailable");
     return { entryId: raw.entryId, combatantEntityIds: (raw.combatantEntityIds as unknown[]).map(String), roll,
-      modifier: Number(raw.modifier), total: roll + Number(raw.modifier) };
+      modifier: Number(raw.modifier), total: roll + Number(raw.modifier) + bonusDieTotal(faces, String(raw.purposeKey)) };
   }).sort((left, right) => right.total - left.total);
   const totals = new Map<string, number>();
   for (const entry of encounter.initiative.entries as unknown[]) {
@@ -3299,7 +3326,7 @@ function takeCombatJump(
     const purposeKey = `check:jump-${kind}:${id}`;
     checks.push({ kind, purposeKey, ability, skill, dc: 10, modifier, mode: check.mode, helped: usesHelp });
     specs.push({ purposeKey, dice: attackDice(check.mode), frozenParameters: { sourceEntityId: id, ability, skill, dc: 10,
-      goal: kind === "clear" ? "越过障碍" : "跳跃落地", modifier, mode: check.mode } });
+      goal: kind === "clear" ? "越过障碍" : "跳跃落地", modifier, mode: check.mode } }, ...bonusDieSpecs(state, purposeKey, id, "check"));
   }
   const operation = { kind: "resolveCombatJump", sourceEntityId: id, abilityRef, option: structuredClone(option), checks };
   return specs.length === 0
@@ -3345,7 +3372,7 @@ function combatJumpOutcome(
   const checks = (operation.checks as JsonRecord[]).map((check) => {
     const rolls = faces.get(String(check.purposeKey)) ?? [];
     const roll = selectedD20(rolls, String(check.mode));
-    const total = roll + Number(check.modifier);
+    const total = roll + Number(check.modifier) + bonusDieTotal(faces, String(check.purposeKey));
     return { kind: check.kind, ability: check.ability, skill: check.skill, dc: 10, mode: check.mode, rolls, roll,
       modifier: Number(check.modifier), total, success: total >= 10 };
   });
@@ -3442,7 +3469,7 @@ function takeHidingAction(
       modifier,
       mode: check.mode,
     },
-  }]);
+  }, ...bonusDieSpecs(state, purposeKey, id, "check")]);
 }
 
 function resolveHidingAction(
@@ -3463,7 +3490,7 @@ function resolveHidingAction(
   if (source === undefined) return rejected("privateOrUnknownReference", "Hide or Search source is unavailable.");
   const roll = selectedD20(faces.get(String(operation.purposeKey)) ?? [], String(operation.checkMode));
   const modifier = Number(operation.modifier);
-  const total = roll + modifier;
+  const total = roll + modifier + bonusDieTotal(faces, String(operation.purposeKey));
   const resolutionId = String(resolution.resolutionId);
   if (operation.action === "hide") {
     // The Stealth total stays on the hider's own record; observers learn only
@@ -3673,7 +3700,7 @@ function beginMedicineStabilization(
       modifier,
       mode: conditionCheck.mode,
     },
-  }]);
+  }, ...bonusDieSpecs(state, purposeKey, entityId(source), "check")]);
 }
 
 type SpecialMeleeSkill = "athletics" | "acrobatics";
@@ -3777,6 +3804,8 @@ function beginSpecialMeleeContest(
       : { reactionContext: structuredClone(options.reactionContext) }),
   }, [
     { purposeKey: `check:${contestKind}:${entityId(source)}`, dice: attackDice(sourceCheck.mode), frozenParameters: { ability: "athletics", entityId: entityId(source), modifier: specialMeleeSkillModifier(profiles, state, source, "athletics"), mode: sourceCheck.mode, outcome: contestKind } },
+    ...bonusDieSpecs(state, `check:${contestKind}:${entityId(source)}`, entityId(source), "check"),
+    ...bonusDieSpecs(state, `check:${contestKind}:${entityId(target)}`, entityId(target), "check"),
     { purposeKey: `check:${contestKind}:${entityId(target)}`, dice: attackDice(targetCheck.mode), frozenParameters: { ability: defenderContestAbility, entityId: entityId(target), modifier: specialMeleeSkillModifier(profiles, state, target, defenderContestAbility), mode: targetCheck.mode, tieWinner: entityId(target) } },
   ], options.prefix ?? []);
 }
@@ -4181,12 +4210,13 @@ function prepareAbilitySavingThrow(
   const mode = savingThrow.mode;
   const dc = Number(save.dc ?? (isRecord(source.spellcasting) ? source.spellcasting.spellSaveDc : 10));
   const modifier = combatSavingThrowModifier(profiles, state.combatRuntime.entities[targetId]!, ability);
+  const purposeKey = `save:${saveStem(abilityRef)}:${targetId}`;
   return {
     frozen: { ability, dc, mode, automaticFailure: savingThrow.automaticFailure, modifier },
     specs: savingThrow.automaticFailure ? [] : [{
-      purposeKey: `save:${saveStem(abilityRef)}:${targetId}`, dice: attackDice(mode),
+      purposeKey, dice: attackDice(mode),
       frozenParameters: { targetEntityId: targetId, ability, dc, modifier, mode, halfOnSuccess: save.halfOnSuccess === true },
-    }],
+    }, ...bonusDieSpecs(state, purposeKey, targetId, "save")],
   };
 }
 
@@ -4206,11 +4236,13 @@ function resolveAbilitySavingThrows(
     const frozen = isRecord(mechanical.savingThrows) ? mechanical.savingThrows[targetId] : undefined;
     if (!isRecord(frozen) || frozen.ability !== ability) return undefined;
     const mode = String(frozen.mode);
-    const rolls = faces.get(`save:${saveStem(abilityRef)}:${targetId}`) ?? [];
+    const purposeKey = `save:${saveStem(abilityRef)}:${targetId}`;
+    const rolls = faces.get(purposeKey) ?? [];
     const dc = Number(frozen.dc);
     const roll = frozen.automaticFailure === true ? null : selectedD20(rolls, mode);
-    const total = roll === null ? null : roll + Number(frozen.modifier);
-    saves[targetId] = { ability, dc, mode, rolls, roll, total,
+    const bonusDie = roll === null ? 0 : bonusDieTotal(faces, purposeKey);
+    const total = roll === null ? null : roll + Number(frozen.modifier) + bonusDie;
+    saves[targetId] = { ability, dc, mode, rolls, roll, total, ...(bonusDie === 0 ? {} : { bonusDie }),
       automaticFailure: frozen.automaticFailure === true, success: total !== null && total >= dc };
   }
   return saves;
@@ -4341,12 +4373,13 @@ function prepareAbilityExecution(
         else mechanical.attack = frozenAttack;
         deferDamageForShield ||= shieldEffects(state, targetId).length === 0
           && reactionAvailable(state, target) && reactionSpellRefs(state, target, "shield").length > 0;
-        specs.push(selection.aimedPoint === undefined ? {
+        const attackSpec = selection.aimedPoint === undefined ? {
           purposeKey: `attack:${purposeStem(abilityRef)}${manyAttacks ? `:${targetId}` : ""}`,
           dice: attackDice(mode),
           frozenParameters: { sourceEntityId: entityId(source), targetEntityId: targetId,
             ...frozenAttack, attackBonus: attackBonus(source, definition) },
-        } : aimedAttackSpec(abilityRef, source, definition, selection.aimedPoint));
+        } : aimedAttackSpec(abilityRef, source, definition, selection.aimedPoint);
+        specs.push(attackSpec, ...bonusDieSpecs(state, attackSpec.purposeKey, entityId(source), "attack"));
       }
       if (isRecord(definition.save)) {
         const prepared = prepareAbilitySavingThrow(profiles, state, source, abilityRef, definition.save, targetId);
@@ -4407,7 +4440,8 @@ function prepareAbilityExecution(
         potentialDamage: true,
       };
       concentrationReserves.push(reserve);
-      specs.push({ purposeKey: reserve.purposeKey, dice: attackDice(reserve.mode), frozenParameters: reserve });
+      specs.push({ purposeKey: reserve.purposeKey, dice: attackDice(reserve.mode), frozenParameters: reserve },
+        ...bonusDieSpecs(state, reserve.purposeKey, targetId, "save"));
     }
   }
 
@@ -5836,7 +5870,7 @@ function resolveMedicineStabilization(
     || roll === undefined) {
     return rejected("privateOrUnknownReference", "Medicine continuation target is unavailable.");
   }
-  const total = roll + Number(operation.modifier);
+  const total = roll + Number(operation.modifier) + bonusDieTotal(faces, String(operation.purposeKey));
   const succeeded = total >= 10;
   const mechanicalResult = {
     medicine: {
@@ -5912,7 +5946,7 @@ function continueAfterDamageConcentration(
     ...(afterDamageSpellFrame === undefined
       ? {}
       : { afterDamageSpellFrame: structuredClone(afterDamageSpellFrame) }),
-  }, conditionedChecks.map((check) => ({
+  }, conditionedChecks.flatMap((check) => [{
     purposeKey: String(check.purposeKey),
     dice: attackDice(check.mode),
     frozenParameters: {
@@ -5924,7 +5958,7 @@ function continueAfterDamageConcentration(
       sourceAbilityRef: check.sourceAbilityRef,
       mode: check.mode,
     },
-  })), drafts);
+  }, ...bonusDieSpecs(state, String(check.purposeKey), String(check.targetEntityId), "save")]), drafts);
 }
 
 function resolveDamageConcentration(
@@ -5955,7 +5989,7 @@ function resolveDamageConcentration(
     if (target === undefined || !isRecord(target.concentration) || roll === undefined) {
       return rejected("privateOrUnknownReference", "Damage-concentration target is unavailable.");
     }
-    const total = roll + Number(check.modifier);
+    const total = roll + Number(check.modifier) + bonusDieTotal(faces, String(check.purposeKey));
     const succeeded = total >= Number(check.dc);
     concentrationResults[String(check.targetEntityId)] = {
       roll,
@@ -6272,7 +6306,7 @@ function resolveCounterspellAttempt(
       kind: "spellcastingAbilityCheck2014",
       mode: conditionCheck.mode,
     },
-  }]);
+  }, ...bonusDieSpecs(state, `check:counterspell:${entityId(caster)}`, entityId(caster), "check")]);
 }
 
 function resolveShieldSpell(
@@ -6571,7 +6605,7 @@ function testConcentration(
       modifier,
       mode,
     },
-  }]);
+  }, ...bonusDieSpecs(state, purposeKey, String(input.sourceEntityId), "save")]);
 }
 
 function resolveEnvironmentalConcentration(
@@ -6593,7 +6627,7 @@ function resolveEnvironmentalConcentration(
   if (source === undefined || !isRecord(source.concentration) || roll === undefined) {
     return rejected("privateOrUnknownReference", "Environmental concentration continuation is unavailable.");
   }
-  const total = roll + Number(operation.modifier);
+  const total = roll + Number(operation.modifier) + bonusDieTotal(faces, String(operation.purposeKey));
   const succeeded = total >= 10;
   const drafts: Draft[] = [{
     eventType: "ConcentrationTested",
@@ -6856,7 +6890,7 @@ function resolveCounterspellCheckRandomness(
   const roll = selectedD20(faces.get(`check:counterspell:${entityId(caster)}`) ?? [], String(resolution.operation.checkMode));
   if (roll === undefined) return rejected("invalidRulesInput", "Counterspell ability-check face is unavailable.");
   const dc = 10 + Number(frame.effect.targetCast.spellLevel ?? 0);
-  const total = roll + abilityModifier(caster, ability);
+  const total = roll + abilityModifier(caster, ability) + bonusDieTotal(faces, `check:counterspell:${entityId(caster)}`);
   const succeeded = total >= dc;
   const drafts: Draft[] = [spellEventDraft("SpellResolved", frame, {
     kind: "counterspell2014",
@@ -6988,9 +7022,9 @@ function resolveCombatAbilityRandomnessOnce(
       : undefined;
     const defenderAbilityName = frozen?.ability === "acrobatics" ? "acrobatics" : "athletics";
     const sourceTotal = selectedD20(faces.get(`check:${contestKind}:${operation.sourceEntityId}`) ?? [], String(operation.sourceCheckMode))
-      + specialMeleeSkillModifier(profiles, state, source, "athletics");
+      + specialMeleeSkillModifier(profiles, state, source, "athletics") + bonusDieTotal(faces, `check:${contestKind}:${operation.sourceEntityId}`);
     const targetTotal = selectedD20(faces.get(targetPurpose) ?? [], String(operation.targetCheckMode))
-      + specialMeleeSkillModifier(profiles, state, target, defenderAbilityName);
+      + specialMeleeSkillModifier(profiles, state, target, defenderAbilityName) + bonusDieTotal(faces, targetPurpose);
     const winnerEntityId = sourceTotal > targetTotal ? String(operation.sourceEntityId) : targetId;
     const mechanicalResult = { contest: {
       kind: "opposedAbilityCheck2014",
@@ -7055,7 +7089,8 @@ function resolveCombatAbilityRandomnessOnce(
       attackHit = mechanicalResult.attack.hit === true;
     } else {
       const mode = String(mechanicalResult.attack.mode);
-      const rolls = faces.get(`attack:${purposeStem(String(operation.abilityRef))}`) ?? [];
+      const purposeKey = `attack:${purposeStem(String(operation.abilityRef))}`;
+      const rolls = faces.get(purposeKey) ?? [];
       const effectiveArmorClass = Number(mechanicalResult.attack.effectiveArmorClass);
       const attack = resolveCombatAttackRoll(
         source,
@@ -7063,6 +7098,7 @@ function resolveCombatAbilityRandomnessOnce(
         effectiveArmorClass,
         rolls,
         mode as "normal" | "advantage" | "disadvantage",
+        bonusDieTotal(faces, purposeKey),
       );
       // SPEC 0012 §6.3 (ADR 0097 decision 4): nobody stood at the guessed
       // point, so the attack misses whatever the roll.
@@ -7078,10 +7114,11 @@ function resolveCombatAbilityRandomnessOnce(
       const frozen = mechanicalResult.attacks[targetId];
       if (!isRecord(frozen)) return rejected("invalidRulesInput", "A selected target lacks its frozen attack.");
       if (operation.attackAlreadyResolved !== true) {
-        const rolls = faces.get(`attack:${purposeStem(String(operation.abilityRef))}:${targetId}`) ?? [];
+        const purposeKey = `attack:${purposeStem(String(operation.abilityRef))}:${targetId}`;
+        const rolls = faces.get(purposeKey) ?? [];
         mechanicalResult.attacks[targetId] = { ...frozen, rolls, ...resolveCombatAttackRoll(
           source, definition, Number(frozen.effectiveArmorClass), rolls,
-          String(frozen.mode) as "normal" | "advantage" | "disadvantage",
+          String(frozen.mode) as "normal" | "advantage" | "disadvantage", bonusDieTotal(faces, purposeKey),
         ) };
       }
     }
@@ -8451,12 +8488,12 @@ function continueAfterTurnEnded(
     turnOrderEntityIds: nextOrder,
     targetEntityIds: deathSaveTargets,
     modes: Object.fromEntries(deathSaveTargets.map((id) => [id, conditionSavingThrow(state, id, "death").mode])),
-  }, deathSaveTargets.map((targetId) => ({
+  }, deathSaveTargets.flatMap((targetId) => [{
     purposeKey: `death-save:${targetId}`,
     dice: attackDice(conditionSavingThrow(state, targetId, "death").mode),
     frozenParameters: { targetEntityId: targetId, mode: conditionSavingThrow(state, targetId, "death").mode,
       naturalOneFailures: 2, successThreshold: 10, deathFailureThreshold: 3 },
-  })), drafts);
+  }, ...bonusDieSpecs(state, `death-save:${targetId}`, targetId, "save")]), drafts);
 }
 
 type TurnEndRepeatSave = { effectId: string; ability: string; dc: number; modifier: number;
@@ -8479,10 +8516,10 @@ function beginTurnEndRepeatSaves(
       mode: roll.mode, automaticFailure: roll.automaticFailure };
   });
   const operation = { kind: "resolveTurnEndRepeatSaves", encounterId, targetEntityId, saves };
-  const specs: DiceSpec[] = saves.filter((save) => !save.automaticFailure).map((save) => ({
+  const specs: DiceSpec[] = saves.filter((save) => !save.automaticFailure).flatMap((save) => [{
     purposeKey: `save:repeat:${save.effectId}`, dice: attackDice(save.mode),
     frozenParameters: { targetEntityId, effectId: save.effectId, ability: save.ability, dc: save.dc, modifier: save.modifier, mode: save.mode },
-  }));
+  }, ...bonusDieSpecs(state, `save:repeat:${save.effectId}`, targetEntityId, "save")]);
   if (specs.length === 0) {
     return continueAfterTurnEnded(profiles, state, root, encounterId, turnEndRepeatSaveDrafts(targetEntityId, saves, new Map()));
   }
@@ -8493,11 +8530,13 @@ function turnEndRepeatSaveDrafts(targetEntityId: string, saves: readonly TurnEnd
   return saves.flatMap((save) => {
     const rolls = save.automaticFailure ? [] : faces.get(`save:repeat:${save.effectId}`) ?? [];
     const roll = save.automaticFailure ? null : selectedD20(rolls, save.mode);
-    const total = roll === null ? null : roll + save.modifier;
+    const bonusDie = roll === null ? 0 : bonusDieTotal(faces, `save:repeat:${save.effectId}`);
+    const total = roll === null ? null : roll + save.modifier + bonusDie;
     const succeeded = total !== null && total >= save.dc;
     return [
       { eventType: "EffectSaveRepeated", payload: { effectId: save.effectId, targetEntityId, ability: save.ability, dc: save.dc,
-        modifier: save.modifier, mode: save.mode, rolls: [...rolls], roll, total, automaticFailure: save.automaticFailure, succeeded } },
+        modifier: save.modifier, mode: save.mode, rolls: [...rolls], roll, total, automaticFailure: save.automaticFailure, succeeded,
+        ...(bonusDie === 0 ? {} : { bonusDie }) } },
       ...(succeeded ? [{ eventType: "EffectEnded", payload: { effectId: save.effectId, targetEntityId, reason: "repeatSaveSucceeded" },
         visibilityPolicyId: "visibility:room-authority-only", secrecy: "internal" } as Draft] : []),
     ] as Draft[];
@@ -8540,6 +8579,8 @@ function resolveDeathSavesAndRound(
     if (target === undefined || natural === undefined) return rejected("privateOrUnknownReference", "Death-save target is unavailable.");
     const patch = structuredClone(target);
     const saves = isRecord(patch.deathSaves) ? patch.deathSaves : { successes: 0, failures: 0 };
+    // SRD Bless: a bonus die counts toward 10; a natural 1 or 20 decides by itself.
+    const roll = natural + bonusDieTotal(faces, `death-save:${targetId}`);
     if (natural === 1) saves.failures = Number(saves.failures ?? 0) + 2;
     else if (natural === 20) {
       if (isRecord(patch.hitPoints)) patch.hitPoints.current = "1";
@@ -8550,7 +8591,7 @@ function resolveDeathSavesAndRound(
       patch.lifeState = "alive";
       saves.successes = 0;
       saves.failures = 0;
-    } else if (natural >= 10) saves.successes = Number(saves.successes ?? 0) + 1;
+    } else if (roll >= 10) saves.successes = Number(saves.successes ?? 0) + 1;
     else saves.failures = Number(saves.failures ?? 0) + 1;
     if (Number(saves.successes) >= 3) {
       patch.conditions = { ...(isRecord(patch.conditions) ? patch.conditions : {}), stable: true, unconscious: true };
@@ -8560,7 +8601,7 @@ function resolveDeathSavesAndRound(
     }
     patch.deathSaves = saves;
     if (Number(saves.failures) >= 3) patch.lifeState = "dead";
-    drafts.push({ eventType: "DeathSaveResolved", payload: { entityId: targetId, roll: natural, natural, successes: Number(saves.successes ?? 0), failures: Number(saves.failures ?? 0), entityPatch: patch }, resolutionId: String(resolution.resolutionId) });
+    drafts.push({ eventType: "DeathSaveResolved", payload: { entityId: targetId, roll, natural, successes: Number(saves.successes ?? 0), failures: Number(saves.failures ?? 0), entityPatch: patch }, resolutionId: String(resolution.resolutionId) });
     if (patch.lifeState === "dead") {
       if (isRecord(target.concentration)) drafts.push({
         eventType: "ConcentrationEnded",
@@ -8781,7 +8822,7 @@ function establishInitiative(
       combatantEntityIds: [...raw.combatantEntityIds],
       roll,
       modifier: Number(raw.modifier),
-      total: roll + Number(raw.modifier),
+      total: roll + Number(raw.modifier) + bonusDieTotal(faces, raw.purposeKey),
     };
   }).sort((left, right) => right.total - left.total);
   // SPEC 0012 §5.2: players order only their own characters that tie with
@@ -9734,6 +9775,7 @@ function answerReaction(
   }, [
     { purposeKey: `attack:opportunity:${entityId(reactor)}`, dice: attackDice(mode.mode), frozenParameters: { sourceEntityId: entityId(reactor),
       targetEntityId: entityId(target), mode: mode.mode, attackBonus: attackBonus(reactor, definition), armorClass } },
+    ...bonusDieSpecs(state, `attack:opportunity:${entityId(reactor)}`, entityId(reactor), "attack"),
     { purposeKey: `damage:opportunity:${entityId(reactor)}`, dice: damageDice(definition, true),
       frozenParameters: { targetEntityId: entityId(target), components: structuredClone(definition.damage), reservedCriticalDice: true } },
     ...(save?.specs ?? []),
@@ -9762,13 +9804,14 @@ function resolveOpportunityAndMovement(
   const mode = operation.mode === "advantage" || operation.mode === "disadvantage" ? operation.mode : "normal";
   const rolls = faces.get(`attack:opportunity:${operation.sourceEntityId}`) ?? [];
   const roll = selectedD20(rolls, mode);
-  const total = roll + attackBonus(source, operation.definition);
+  const bonusDie = bonusDieTotal(faces, `attack:opportunity:${operation.sourceEntityId}`);
+  const total = roll + attackBonus(source, operation.definition) + bonusDie;
   const armorClass = Number.isSafeInteger(operation.armorClass) ? Number(operation.armorClass) : Number(target.armorClass);
   const hit = roll !== 1 && (roll === 20 || total >= armorClass);
   const critical = hit && (roll === 20 || operation.criticalIfHit === true);
   const mechanicalResult: JsonRecord = {
     ...(isNonEmptyString(operation.attackAbilityRef) ? { attackAbilityRef: operation.attackAbilityRef } : {}),
-    attack: { mode, ...(rolls.length > 1 ? { rolls: [...rolls] } : {}), roll, total, hit },
+    attack: { mode, ...(rolls.length > 1 ? { rolls: [...rolls] } : {}), roll, total, hit, ...(bonusDie === 0 ? {} : { bonusDie }) },
   };
   // SPEC 0012 §7.2: the chosen melee attack retains its on-hit effects and
   // effect save even when it is delivered through an opportunity reaction.

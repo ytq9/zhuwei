@@ -42,7 +42,7 @@ function invoke(f, parameters) {
 }
 
 for (const scenario of [
-  { spellId: "guidance", cantrip: true, parameters: { targetEntityId: ACTOR } },
+  { spellId: "spiritual", parameters: { targetEntityId: OTHER } },
   { spellId: "silence", parameters: { areaOrigin: { x: "100", y: "100", elevation: "0" } } },
   { spellId: "silence", ritual: true,
     parameters: { ritual: true, areaOrigin: { x: "100", y: "100", elevation: "0" } } },

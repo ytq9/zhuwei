@@ -36,7 +36,8 @@ export function resolveCombatAttackRoll(
   armorClass: number,
   rolls: readonly number[],
   mode: "normal" | "advantage" | "disadvantage",
-): { selected: number; attackBonus: number; total: number; hit: boolean } {
+  bonusDie = 0,
+): { selected: number; attackBonus: number; total: number; hit: boolean; bonusDie?: number } {
   if (rolls.length === 0 || !rolls.every((roll) => Number.isInteger(roll) && roll >= 1 && roll <= 20)) {
     throw new RulesValidationError("d20 faces missing");
   }
@@ -44,11 +45,14 @@ export function resolveCombatAttackRoll(
     ? Math.max(...rolls)
     : mode === "disadvantage" ? Math.min(...rolls) : rolls[0];
   const attackBonus = combatAttackBonus(source, definition);
-  const total = selected + attackBonus;
+  // SPEC 0012 §10.1 (SRD Bless): a bonus die adds to the total; a natural 1
+  // or 20 still decides by itself.
+  const total = selected + attackBonus + bonusDie;
   return {
     selected,
     attackBonus,
     total,
     hit: selected === 20 || (selected !== 1 && total >= armorClass),
+    ...(bonusDie === 0 ? {} : { bonusDie }),
   };
 }

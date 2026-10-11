@@ -70,3 +70,19 @@ export function attacksAgainstHaveAdvantage(state: AuthoritativeWorldState, enti
 export function hitPointMaximumBonus(state: AuthoritativeWorldState, entityId: string): number {
   return Math.max(0, ...modifiersOf(state, entityId, "hitPointMaximumBonus").map((modifier) => modifier.amount));
 }
+
+export type D20BonusDie = { sides: number; effectIds: string[]; spentEffectIds: string[] };
+
+/** SRD Bless, Guidance: the die a creature adds to a d20 roll of this kind --
+ * the largest one, a lasting one before one the roll would use up. A die that
+ * lasts for one roll only is spent by it. */
+export function d20BonusDie(state: AuthoritativeWorldState, entityId: string, roll: "attack" | "check" | "save"): D20BonusDie | undefined {
+  const candidates = modifierEffectsOn(state, entityId).flatMap((effect) => effect.modifier.kind === "d20BonusDie"
+    && effect.modifier.rolls.includes(roll) ? [{ effect, sides: effect.modifier.sides,
+      once: effect.lifecycle?.endsWhen?.includes("bonusDieUsed") === true }] : []);
+  if (candidates.length === 0) return undefined;
+  const sides = Math.max(...candidates.map((candidate) => candidate.sides));
+  const chosen = candidates.filter((candidate) => candidate.sides === sides)
+    .sort((left, right) => Number(left.once) - Number(right.once))[0]!;
+  return { sides, effectIds: [chosen.effect.effectId], spentEffectIds: chosen.once ? [chosen.effect.effectId] : [] };
+}

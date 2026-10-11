@@ -107,7 +107,8 @@ export const SPELL_DEFINITIONS = {
   guidance: {
     id: "guidance", level: 0, actionCost: "action", castingSeconds: 6,
     range: touch, targets: targets("willing-creature", 1), duration: timed(60, { concentration: true }),
-    resolution: { mode: "automatic", effects: [effect("guidance", "一次属性检定 +1d4", "modifier")] },
+    resolution: { mode: "automatic", effects: [{ ...effect("guidance", "一次属性检定 +1d4", "modifier"),
+      modifier: { kind: "d20BonusDie", sides: 4, rolls: ["check"] }, endsWhen: ["bonusDieUsed"] }] },
   },
   "sacred-flame": {
     id: "sacred-flame", level: 0, actionCost: "action", castingSeconds: 6,
@@ -191,7 +192,8 @@ export const SPELL_DEFINITIONS = {
   bless: {
     id: "bless", level: 1, actionCost: "action", castingSeconds: 6,
     range: feet(30), targets: targets("creature", 3, { perSlotAbove: 1 }), duration: timed(60, { concentration: true }),
-    resolution: { mode: "automatic", effects: [effect("bless", "攻击与豁免 +1d4", "modifier")] },
+    resolution: { mode: "automatic", effects: [{ ...effect("bless", "攻击与豁免 +1d4", "modifier"),
+      modifier: { kind: "d20BonusDie", sides: 4, rolls: ["attack", "save"] } }] },
   },
   "guiding-bolt": {
     id: "guiding-bolt", level: 1, actionCost: "action", castingSeconds: 6,

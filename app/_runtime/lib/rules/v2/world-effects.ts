@@ -16,7 +16,7 @@ export type WorldEffectDuration =
   | { kind: "untilEnded" }
   | { kind: "turnBoundary"; subject: "source" | "target"; edge: "turnStart" | "turnEnd" };
 /** SPEC 0012 §10.1: how a granted condition can end besides its duration. */
-export const WORLD_EFFECT_ENDINGS = ["harmedBySourceSide", "targetAttacked", "targetAttacksOrCasts", "targetDonsArmor"] as const;
+export const WORLD_EFFECT_ENDINGS = ["bonusDieUsed", "harmedBySourceSide", "targetAttacked", "targetAttacksOrCasts", "targetDonsArmor"] as const;
 export type WorldEffectEnding = typeof WORLD_EFFECT_ENDINGS[number];
 export type WorldEffectLifecycle = {
   /** Ends when its source's concentration ends (SPEC 0012 §10.2). */
