@@ -49,10 +49,12 @@ async function renderTable(snap) {
     throw new Error(`render failed: ${error?.stack ?? error}\n${errors.join("\n")}`);
   } finally { console.error = previousError; }
   if (errors.some(line => /error occurred|TypeError|ReferenceError/.test(line))) throw new Error(`render errors:\n${errors.join("\n").slice(0, 3000)}`);
-  // The party panel lives in the journal drawer; open it the way a player does.
-  const toggle = renderer.root.findAll(node => typeof node.type === "string" && node.props["aria-expanded"] !== undefined && typeof node.props.onClick === "function")[0];
-  assert.ok(toggle, "journal toggle");
+  // The other players are on the journal's 同伴 tab; open it the way a player does.
+  const toggle = renderer.root.findByProps({ "data-table-journal-trigger": true });
   await act(async () => { toggle.props.onClick(); });
+  const partyTab = renderer.root.findAll(node => node.props.role === "tab" && node.props.id === "table-journal-tab-party")[0];
+  assert.ok(partyTab, "the journal lists the other players");
+  await act(async () => { partyTab.props.onClick(); });
   return renderer;
 }
 function buttonsLabelled(renderer, label) {
